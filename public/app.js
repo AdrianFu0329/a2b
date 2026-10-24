@@ -142,8 +142,8 @@ function addMapLayers() {
     // The upcoming turn, drawn on the route as a white arrow, above the map's labels so it's never hidden.
     map.addSource('maneuver', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('turn-head')) map.addImage('turn-head', arrowHeadImage(), { pixelRatio: 2 });
-    map.addLayer({ id: 'maneuver-casing', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'butt', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6, 19, 12] } });
-    map.addLayer({ id: 'maneuver-line', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'butt', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.5, 16, 3.5, 19, 7] } });
+    map.addLayer({ id: 'maneuver-casing', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6, 19, 12] } });
+    map.addLayer({ id: 'maneuver-line', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.5, 16, 3.5, 19, 7] } });
     map.addLayer({
       id: 'maneuver-head', type: 'symbol', source: 'maneuver', filter: ['==', ['geometry-type'], 'Point'],
       layout: {
@@ -171,16 +171,22 @@ function fitTo(bounds, opts) {
 
 const emptyFc = () => ({ type: 'FeatureCollection', features: [] });
 
-// A white triangle with a dark outline, pointing up (north) so 'icon-rotate' can turn it to the road's bearing.
+// A white triangle with rounded corners and a dark outline, pointing up (north) so 'icon-rotate' can turn it
+// to the road's bearing.
 function arrowHeadImage() {
   const size = 64;
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d');
+  const pts = [[size / 2, 6], [size - 7, size - 6], [7, size - 6]];
+  const r = 7; // corner radius
   g.beginPath();
-  g.moveTo(size / 2, 4);
-  g.lineTo(size - 6, size - 4);
-  g.lineTo(6, size - 4);
+  // Start half way along the last edge so every corner is drawn with arcTo.
+  g.moveTo((pts[2][0] + pts[0][0]) / 2, (pts[2][1] + pts[0][1]) / 2);
+  for (let i = 0; i < 3; i++) {
+    const p = pts[i], q = pts[(i + 1) % 3];
+    g.arcTo(p[0], p[1], q[0], q[1], r);
+  }
   g.closePath();
   g.lineJoin = 'round';
   g.lineWidth = 6;
