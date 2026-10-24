@@ -350,7 +350,10 @@ function wireUi() {
   $('btn-leave-later').onclick = openLater;
 
   // Drive
-  $('btn-eta').onclick = () => $('eta-menu').classList.toggle('hidden');
+  $('btn-eta').onclick = () => {
+    const opening = $('eta-menu').classList.toggle('hidden') === false;
+    if (opening) $('alert').classList.add('hidden'); // the alert card would sit on top of the menu
+  };
   $('btn-stop').onclick = () => endDrive(false);
   $('btn-overview').onclick = overview;
   $('btn-share-drive').onclick = shareDrive;
@@ -1224,6 +1227,7 @@ function alertRange(type) {
 
 function showAlert(r, ahead) {
   const card = $('alert');
+  if (!$('eta-menu').classList.contains('hidden')) return; // trip menu is open; the voice alert is enough
   const t = REPORT_TYPES[r.type];
   const ms = ahead == null ? 10_000 : 12_000;
   card.dataset.until = String(Date.now() + ms);
