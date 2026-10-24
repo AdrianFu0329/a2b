@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS trips (
   token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, dest_name TEXT, dest_lat REAL NOT NULL, dest_lng REAL NOT NULL,
   lat REAL, lng REAL, heading REAL, eta INTEGER, route TEXT, updated_at INTEGER NOT NULL, ended INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS trips_user ON trips (user_id, updated_at)
+CREATE INDEX IF NOT EXISTS trips_user ON trips (user_id, updated_at);
+CREATE TABLE IF NOT EXISTS login_failures (email TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures (email, at)
 `;
 
 let ready = null;

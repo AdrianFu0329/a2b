@@ -162,6 +162,7 @@ export function openSettings() {
     <div class="set-group"><h3>Sound and alerts</h3>
       ${toggleRow('voice', 'Voice directions')}
       ${toggleRow('alerts', 'Report alerts while driving', 'Police, crashes, hazards and closures ahead')}
+      ${toggleRow('speed_warning', 'Speeding warning', 'Speedometer turns red above the posted limit')}
     </div>
     <div class="set-group"><h3>Navigation</h3>
       ${toggleRow('avoid_tolls', 'Avoid toll roads')}

@@ -68,14 +68,14 @@ const MANEUVER = {
   24: 'slight_left', 25: 'merge', 26: 'roundabout', 27: 'roundabout_exit', 28: 'ferry', 29: 'ferry', 37: 'merge_right', 38: 'merge_left',
 };
 
-export function buildRouteRequest({ from, to, avoid = {}, units = 'metric', lang = 'en-US', heading, exclude = [] }) {
+export function buildRouteRequest({ from, to, via = [], avoid = {}, units = 'metric', lang = 'en-US', heading, exclude = [] }) {
   const start = { lat: from[1], lon: from[0] };
   if (Number.isFinite(heading)) {
     start.heading = Math.round(heading);
     start.heading_tolerance = 60;
   }
   return {
-    locations: [start, { lat: to[1], lon: to[0] }],
+    locations: [start, ...via.map(([lng, lat]) => ({ lat, lon: lng, type: 'break' })), { lat: to[1], lon: to[0] }],
     costing: 'auto',
     costing_options: {
       auto: {
@@ -85,7 +85,7 @@ export function buildRouteRequest({ from, to, avoid = {}, units = 'metric', lang
       },
     },
     exclude_locations: exclude.slice(0, 40).map(([lng, lat]) => ({ lat, lon: lng })),
-    alternates: 2,
+    alternates: via.length ? 0 : 2, // Valhalla only offers alternatives between two points
     units: units === 'imperial' ? 'miles' : 'kilometers',
     language: lang,
     directions_options: { units: units === 'imperial' ? 'miles' : 'kilometers', language: lang },
@@ -108,11 +108,41 @@ export async function fetchRoutes(env, opts) {
   return [data.trip, ...(data.alternates ?? []).map((a) => a.trip)].filter(Boolean).map((t) => normalizeTrip(t, opts.units));
 }
 
+// One continuous route, even with stops: legs are joined end to end and each stop becomes a "stop" step.
 export function normalizeTrip(trip, units = 'metric') {
-  const leg = trip.legs[0];
-  const coords = decodePolyline(leg.shape, 6);
   const unit = units === 'imperial' ? 1609.344 : 1000;
-  const steps = leg.maneuvers.map((m) => ({
+  const coords = [];
+  const steps = [];
+  const shapes = [];
+  trip.legs.forEach((leg, li) => {
+    const pts = decodePolyline(leg.shape, 6);
+    const offset = Math.max(0, coords.length - 1); // each leg starts where the last one ended
+    shapes.push({ shape: leg.shape, offset });
+    coords.push(...(li === 0 ? pts : pts.slice(1)));
+    const last = li === trip.legs.length - 1;
+    for (const m of leg.maneuvers) {
+      const arriving = m.type >= 4 && m.type <= 6;
+      if (arriving && !last) {
+        steps.push({ ...step(m, unit, offset), type: 'stop', alert: 'You will reach your stop.', pre: 'You have reached your stop.' });
+      } else steps.push(step(m, unit, offset));
+    }
+  });
+  return {
+    coords,
+    shapes,
+    distance: trip.summary.length * unit,
+    duration: trip.summary.time,
+    toll: Boolean(trip.summary.has_toll),
+    highway: Boolean(trip.summary.has_highway),
+    ferry: Boolean(trip.summary.has_ferry),
+    stops: trip.legs.length - 1,
+    via: viaName(steps),
+    steps,
+  };
+}
+
+function step(m, unit, offset) {
+  return {
     type: MANEUVER[m.type] ?? 'straight',
     instruction: m.instruction,
     alert: m.verbal_transition_alert_instruction || m.verbal_succinct_transition_instruction || m.instruction,
@@ -120,21 +150,50 @@ export function normalizeTrip(trip, units = 'metric') {
     post: m.verbal_post_transition_instruction || null,
     street: (m.street_names ?? m.begin_street_names ?? [])[0] || '',
     exit: m.roundabout_exit_count ?? null,
-    begin: m.begin_shape_index,
-    end: m.end_shape_index,
+    begin: m.begin_shape_index + offset,
+    end: m.end_shape_index + offset,
     length: m.length * unit,
     time: m.time,
-  }));
-  return {
-    coords,
-    distance: trip.summary.length * unit,
-    duration: trip.summary.time,
-    toll: Boolean(trip.summary.has_toll),
-    highway: Boolean(trip.summary.has_highway),
-    ferry: Boolean(trip.summary.has_ferry),
-    via: viaName(steps),
-    steps,
   };
+}
+
+// Posted speed limits along a route, from OpenStreetMap via Valhalla's trace_attributes.
+// Returned as runs: [[first shape index, km/h or null], ...], one entry per change.
+export async function fetchSpeedLimits(env, shapes) {
+  const perLeg = await Promise.all(shapes.map(({ shape }) => fetchLegLimits(env, shape)));
+  const runs = [];
+  perLeg.forEach((legRuns, i) => {
+    for (const [at, v] of legRuns ?? [[0, null]]) {
+      if (!runs.length || runs.at(-1)[1] !== v) runs.push([at + shapes[i].offset, v]);
+    }
+  });
+  return runs.some((r) => r[1] != null) ? runs : null;
+}
+
+async function fetchLegLimits(env, shape) {
+  const base = env.ROUTING_URL || 'https://valhalla1.openstreetmap.de/route';
+  const res = await fetch(base.replace(/\/route$/, '/trace_attributes'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'user-agent': UA },
+    body: JSON.stringify({
+      encoded_polyline: shape,
+      shape_match: 'edge_walk',
+      costing: 'auto',
+      filters: { attributes: ['edge.speed_limit', 'edge.begin_shape_index'], action: 'include' },
+    }),
+    signal: AbortSignal.timeout(4000),
+  });
+  if (!res.ok) return null;
+  return speedLimitRuns((await res.json()).edges ?? []);
+}
+
+export function speedLimitRuns(edges) {
+  const runs = [];
+  for (const e of edges) {
+    const v = typeof e.speed_limit === 'number' && e.speed_limit > 0 && e.speed_limit < 200 ? e.speed_limit : null;
+    if (!runs.length || runs.at(-1)[1] !== v) runs.push([e.begin_shape_index ?? 0, v]);
+  }
+  return runs.some((r) => r[1] != null) ? runs : null;
 }
 
 // "via Main St": the street the route spends the longest on.

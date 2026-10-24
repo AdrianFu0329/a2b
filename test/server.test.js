@@ -6,29 +6,9 @@ import { hashPassword, verifyPassword, normalizeEmail } from '../src/lib/auth.js
 import { extendedExpiry, shouldRemove } from '../src/lib/reports.js';
 import { buildRouteRequest, photonToPlace } from '../src/lib/providers.js';
 import { REPORT_TYPES } from '../public/report-types.js';
+import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 
 // ---------- Fake upstream services ----------
-function encode(coords, precision = 6) {
-  const f = 10 ** precision;
-  let out = '', pLat = 0, pLng = 0;
-  const one = (v) => {
-    v = v < 0 ? ~(v << 1) : v << 1;
-    let s = '';
-    while (v >= 0x20) {
-      s += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
-      v >>= 5;
-    }
-    return s + String.fromCharCode(v + 63);
-  };
-  for (const [lng, lat] of coords) {
-    const la = Math.round(lat * f), ln = Math.round(lng * f);
-    out += one(la - pLat) + one(ln - pLng);
-    pLat = la;
-    pLng = ln;
-  }
-  return out;
-}
-
 const LINE = Array.from({ length: 21 }, (_, i) => [13.4, 52.5 + 0.00045 * i]); // ~1 km north
 let lastRouteBody = null;
 
@@ -49,7 +29,14 @@ globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   if (u.includes('/route')) {
     lastRouteBody = JSON.parse(init.body);
+    if (lastRouteBody.locations.length === 3) {
+      const a = fakeTrip(LINE.slice(0, 11), 60), b = fakeTrip(LINE.slice(10), 60);
+      return Response.json({ trip: { summary: { length: 2, time: 120 }, legs: [a.legs[0], b.legs[0]] } });
+    }
     return Response.json({ trip: fakeTrip(LINE, 120), alternates: [{ trip: fakeTrip(LINE.slice(0, 15), 90) }] });
+  }
+  if (u.includes('/trace_attributes')) {
+    return Response.json({ edges: [{ begin_shape_index: 0, speed_limit: 50 }, { begin_shape_index: 5, speed_limit: 50 }, { begin_shape_index: 10, speed_limit: 30 }, { begin_shape_index: 15 }] });
   }
   if (u.includes('/reverse')) return Response.json({ features: [{ geometry: { coordinates: [13.4, 52.5] }, properties: { name: 'Somewhere', city: 'Berlin', country: 'Germany' } }] });
   if (u.includes('/api/')) return Response.json({ features: [{ geometry: { coordinates: [13.41, 52.52] }, properties: { name: 'Alexanderplatz', city: 'Berlin', country: 'Germany', osm_value: 'square' } }] });
@@ -130,6 +117,15 @@ test('sign up, log in, sessions', async () => {
   assert.equal((await carol('GET', '/api/me')).body.user.name, 'Bob');
   await carol('POST', '/api/auth/logout', {});
   assert.equal((await carol('GET', '/api/me')).body.user, null);
+});
+
+test('repeated wrong passwords are throttled', async () => {
+  const c = client();
+  await c('POST', '/api/auth/signup', { email: 'dave@test.com', password: 'password4', name: 'Dave' });
+  for (let i = 0; i < 8; i++) assert.equal((await c('POST', '/api/auth/login', { email: 'dave@test.com', password: 'guess' + i })).status, 401);
+  assert.equal((await c('POST', '/api/auth/login', { email: 'dave@test.com', password: 'password4' })).status, 429);
+  await worker.scheduled({}, env); // housekeeping only clears failures older than the window
+  assert.equal((await c('POST', '/api/auth/login', { email: 'dave@test.com', password: 'password4' })).status, 429);
 });
 
 test('JSON is required for writes (blocks cross-site form posts)', async () => {
@@ -214,6 +210,26 @@ test('routes avoid reported closures and account for reported traffic', async ()
   assert.deepEqual(full.reports.map((x) => x.type), ['traffic']);
   assert.equal(r.body.routes[0].duration, 90, 'fastest first');
   assert.equal(full.steps[0].street, 'Test Street');
+  assert.deepEqual(full.limits, [[0, 50], [10, 30], [15, null]]);
+  assert.equal(full.shapes, undefined, 'encoded shapes stay on the server');
+});
+
+test('a stop splits the drive into legs but stays one route', async () => {
+  const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], via: [[13.4, 52.5045]] });
+  assert.equal(lastRouteBody.locations.length, 3);
+  assert.equal(lastRouteBody.locations[1].type, 'break');
+  assert.equal(lastRouteBody.alternates, 0);
+  const [route] = r.body.routes;
+  assert.equal(route.coords.length, 21, 'shared point between legs appears once');
+  assert.equal(route.stops, 1);
+  assert.deepEqual(route.steps.map((s) => s.type), ['depart', 'stop', 'depart', 'arrive']);
+  assert.deepEqual(route.steps.map((s) => s.begin), [0, 10, 10, 20]);
+  // The fake service answers every leg the same way; the second leg's runs are shifted by its offset (10).
+  assert.deepEqual(route.limits, [[0, 50], [10, 30], [15, null], [10, 50], [20, 30], [25, null]]);
+});
+
+test('polylines round-trip', () => {
+  assert.deepEqual(decodePolyline(encode(LINE)), LINE);
 });
 
 test('search and reverse geocoding', async () => {

@@ -113,6 +113,7 @@
       <button id="btn-recenter-drive" class="round hidden" aria-label="Recenter"><svg viewBox="0 0 24 24"><path d="M12 2.5 19.5 20 12 16l-7.5 4Z" fill="currentColor"/></svg><span>Recenter</span></button>
     </div>
     <div class="speedo" id="speedo"><b>0</b><small>km/h</small></div>
+    <div class="limit hidden" id="limit" aria-label="Speed limit"><b></b></div>
     <button id="btn-report-drive" class="report-fab" aria-label="Report"><svg viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4Z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M12 9.5v4.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="12" cy="17" r="1.4" fill="#fff"/></svg></button>
     <div id="alert" class="alert-card hidden" role="alert"></div>
     <div id="eta-bar" class="eta-bar">
@@ -122,6 +123,7 @@
         <span class="eta-col"><b id="eta-dist">--</b><small id="eta-dist-unit">km</small></span>
       </button>
       <div id="eta-menu" class="eta-menu hidden">
+        <button id="btn-add-stop" class="menu-row"><span class="m-ic addstop"></span><span id="add-stop-label">Add a stop</span></button>
         <button id="btn-share-drive" class="menu-row"><span class="m-ic share"></span>Share drive</button>
         <button id="btn-overview" class="menu-row"><span class="m-ic overview"></span>Overview</button>
         <button id="btn-stop" class="menu-row danger"><span class="m-ic stop"></span>Stop</button>

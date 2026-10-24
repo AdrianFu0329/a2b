@@ -3,12 +3,14 @@ import {
   hashPassword, verifyPassword, normalizeEmail, validatePassword, cleanName, createSession, currentUser, destroySession,
   sessionCookie, publicUser,
 } from './lib/auth.js';
-import { searchPlaces, reverseGeocode, fetchRoutes, annotateWithReports, httpError, bbox } from './lib/providers.js';
+import { searchPlaces, reverseGeocode, fetchRoutes, fetchSpeedLimits, annotateWithReports, httpError, bbox } from './lib/providers.js';
 import { reportsRepo } from './lib/reports.js';
 
 const MAX_BODY = 64 * 1024;
+const LOGIN_WINDOW_MS = 15 * 60_000;
+const LOGIN_MAX_FAILURES = 8;
 const RECENTS_KEPT = 20;
-const SETTINGS_KEYS = { voice: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean' };
+const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean' };
 
 export default {
   async fetch(request, env) {
@@ -23,6 +25,18 @@ export default {
       if (!e.status || e.status >= 500) console.error(e);
       return json({ error: e.message || String(e) }, e.status && e.status < 600 ? e.status : 500);
     }
+  },
+
+  // Daily housekeeping (see [triggers] in wrangler.toml). Reports are kept: they count towards drivers' stats.
+  async scheduled(_event, env) {
+    if (!env.DB) return;
+    await ensureSchema(env.DB);
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
+      env.DB.prepare('DELETE FROM trips WHERE updated_at < ?').bind(now - 2 * 86400_000),
+      env.DB.prepare('DELETE FROM login_failures WHERE at < ?').bind(now - LOGIN_WINDOW_MS),
+    ]);
   },
 };
 
@@ -58,8 +72,15 @@ async function route(request, env, url) {
   if (path === '/api/auth/login' && method === 'POST') {
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
-    const row = email && (await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first());
-    if (!row || !(await verifyPassword(String(body.password ?? ''), row.pass_hash, row.pass_salt))) throw httpError('Wrong email or password.', 401);
+    if (!email) throw httpError('Wrong email or password.', 401);
+    const recent = await db.prepare('SELECT COUNT(*) AS n FROM login_failures WHERE email = ? AND at > ?').bind(email, Date.now() - LOGIN_WINDOW_MS).first();
+    if (recent.n >= LOGIN_MAX_FAILURES) throw httpError('Too many wrong passwords. Try again in 15 minutes.', 429);
+    const row = await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
+    if (!row || !(await verifyPassword(String(body.password ?? ''), row.pass_hash, row.pass_salt))) {
+      await db.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)').bind(email, Date.now()).run();
+      throw httpError('Wrong email or password.', 401);
+    }
+    await db.prepare('DELETE FROM login_failures WHERE email = ?').bind(email).run();
     return withSession(request, db, row, 200);
   }
 
@@ -184,14 +205,22 @@ async function route(request, env, url) {
     if (!from || !to) throw httpError('Route needs a start and a destination.', 400);
     const area = bbox([from, to], 0.05);
     const exclude = body.avoid_closures === false ? [] : await reports.closuresNear(area);
+    const via = (Array.isArray(body.via) ? body.via : []).slice(0, 3).map(lngLat).filter(Boolean);
     const routes = await fetchRoutes(env, {
-      from, to, exclude,
+      from, to, via, exclude,
       avoid: body.avoid ?? {},
       units: body.units === 'imperial' ? 'imperial' : 'metric',
       lang: typeof body.lang === 'string' && /^[a-z]{2}(-[A-Z]{2})?$/.test(body.lang) ? body.lang : 'en-US',
       heading: Number(body.heading),
     });
-    const live = await reports.inBox(bbox(routes.flatMap((r) => [r.coords[0], r.coords.at(-1)]).concat([from, to]), 0.2), user?.id);
+    const [live] = await Promise.all([
+      reports.inBox(bbox(routes.flatMap((r) => [r.coords[0], r.coords.at(-1)]).concat([from, to]), 0.2), user?.id),
+      // Speed limits are a nice-to-have: a slow or failing lookup never holds up the route.
+      ...routes.map(async (r) => {
+        r.limits = await fetchSpeedLimits(env, r.shapes).catch(() => null);
+      }),
+    ]);
+    for (const r of routes) delete r.shapes;
     annotateWithReports(routes, live);
     routes.sort((a, b) => a.duration - b.duration);
     return json({ routes, closures_avoided: exclude.length });
@@ -224,7 +253,7 @@ async function route(request, env, url) {
     const u = needUser();
     const body = await readJson(request);
     const dest = cleanPlace(body.destination ?? {});
-    const token = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 16);
+    const token = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
     await db
       .prepare('INSERT INTO trips (token, user_id, dest_name, dest_lat, dest_lng, eta, route, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(token, u.id, dest.name, dest.lat, dest.lng, Number(body.eta) || null, JSON.stringify(simplify(body.route ?? [])), Date.now())

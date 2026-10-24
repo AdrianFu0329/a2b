@@ -15,6 +15,10 @@ database_name = "a2b"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
+# Daily cleanup of expired sessions, old shared drives and login throttling records.
+[triggers]
+crons = ["17 3 * * *"]
+
 [vars]
 # Free public servers, fine for personal use. For real traffic, self-host and point these at your own.
 ROUTING_URL = "https://valhalla1.openstreetmap.de/route"

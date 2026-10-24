@@ -17,7 +17,7 @@ const REROUTE_GAP_MS = 8000;
 const SHARE_PUSH_MS = 15_000;
 
 let map;
-let carMarker, destMarker, dropMarker;
+let carMarker, destMarker, dropMarker, stopMarker;
 const routeLabels = [];
 const reports = new Map(); // id -> report
 const reportMarkers = new Map(); // id -> maplibregl.Marker
@@ -27,6 +27,7 @@ let themeNow = null;
 
 // Preview / drive state
 let dest = null;
+let stops = []; // places to visit on the way, in order, not yet reached
 let routes = [];
 let selected = 0;
 let nav = null;
@@ -125,7 +126,10 @@ function addMapLayers() {
   if (!map.getSource('routes')) {
     map.addSource('routes', { type: 'geojson', data: emptyFc() });
     map.addSource('watch-route', { type: 'geojson', data: emptyFc() });
-    const before = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+    // Above every road (some styles put a few labels early), but below the labels drawn on top of roads.
+    const layers = map.getStyle().layers;
+    const lastShape = layers.findLastIndex((l) => l.type !== 'symbol');
+    const before = layers.slice(lastShape + 1).find((l) => l.type === 'symbol')?.id;
     map.addLayer({ id: 'routes-alt-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#5f6b76', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 14] } }, before);
     map.addLayer({ id: 'routes-alt', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#a9b5c3', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 16, 10] } }, before);
     map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#1747b3', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
@@ -204,6 +208,7 @@ function estSpeed(prev, lngLat, t) {
 function handleFix(fix, first = false) {
   state.pos = fix;
   local.set('lastPos', fix.lngLat.map((v) => Math.round(v * 1e4) / 1e4));
+  if (mode === 'watch') return; // the viewer's own position isn't part of someone else's drive
   if (!carMarker._map) carMarker.setLngLat(fix.lngLat).addTo(map);
   updateSpeedo(fix.speed);
   if (mode === 'drive') return driveTick(fix);
@@ -336,8 +341,8 @@ function wireUi() {
     showSearchHome();
     $('search-input').focus();
   };
-  $('tile-home').onclick = () => (state.home ? (closeScreen('search'), openPreview({ ...state.home, name: 'Home' })) : openSearchFor('home'));
-  $('tile-work').onclick = () => (state.work ? (closeScreen('search'), openPreview({ ...state.work, name: 'Work' })) : openSearchFor('work'));
+  $('tile-home').onclick = () => (state.home ? pickPlace({ ...state.home, name: 'Home' }) : openSearchFor('home'));
+  $('tile-work').onclick = () => (state.work ? pickPlace({ ...state.work, name: 'Work' }) : openSearchFor('work'));
 
   // Preview
   $('btn-go').onclick = startDrive;
@@ -349,6 +354,11 @@ function wireUi() {
   $('btn-stop').onclick = () => endDrive(false);
   $('btn-overview').onclick = overview;
   $('btn-share-drive').onclick = shareDrive;
+  $('btn-add-stop').onclick = () => {
+    $('eta-menu').classList.add('hidden');
+    if (stops.length) return removeStop();
+    openSearchFor('stop');
+  };
   $('btn-arrived-done').onclick = () => {
     $('arrived').classList.add('hidden');
     backToBrowse();
@@ -396,7 +406,7 @@ function openSearchFor(target) {
   $('search').classList.remove('hidden');
   $('search-input').value = '';
   $('search-clear').classList.add('hidden');
-  const label = { home: 'Set your Home address', work: 'Set your Work address', save: 'Search for a place to save' }[target];
+  const label = { home: 'Set your Home address', work: 'Set your Work address', save: 'Search for a place to save', stop: 'Add a stop on your way' }[target];
   $('search-target').textContent = label ?? '';
   $('search-target').classList.toggle('hidden', !label);
   $('search-input').placeholder = target ? 'Search for an address' : 'Where to?';
@@ -490,6 +500,11 @@ async function pickPlace(p) {
     closeScreen('search');
     return saveAsFavourite(p);
   }
+  if (searchTarget === 'stop') {
+    searchTarget = null;
+    closeScreen('search');
+    return addStop(p);
+  }
   closeScreen('search');
   openPreview(p);
 }
@@ -558,12 +573,13 @@ async function openPreview(place) {
   }
 }
 
-async function requestRoutes(from, to, heading) {
+async function requestRoutes(from, to, heading, via = []) {
   const s = state.settings;
   const { routes: rs } = await api('/api/route', {
     method: 'POST',
     body: {
       from, to, heading,
+      via: via.map((p) => [p.lng, p.lat]),
       units: s.units,
       lang: navigator.language || 'en-US',
       avoid: { tolls: s.avoid_tolls, highways: s.avoid_highways, ferries: s.avoid_ferries },
@@ -711,6 +727,8 @@ function startDrive() {
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
   live = null;
+  stops = [];
+  renderStopMenu();
   alerted.clear();
   driveStarted = Date.now();
   routeLabels.splice(0).forEach((m) => m.remove());
@@ -760,11 +778,18 @@ function driveTick(fix) {
   carMarker.setLngLat(live.snapped).setRotation(heading);
   renderBanner();
   renderEta();
+  renderLimit(live.limit, fix.speed);
   drawRoutes();
   if (follow) driveCamera(false, heading);
   if (live.prompt) speak(live.prompt);
   checkAlerts();
   if (share) pushShare();
+
+  const stopStep = nav.steps.findIndex((st) => st.type === 'stop');
+  if (stops.length && stopStep >= 0 && live.stepIndex >= stopStep) {
+    toast(`Reached ${stops.shift().name}`);
+    renderStopMenu();
+  }
 
   $('offroute').classList.toggle('hidden', !live.offRoute);
   if (live.offRoute) reroute(fix);
@@ -788,9 +813,24 @@ function renderBanner() {
   let street = next.street || next.instruction.replace(/\.$/, '');
   if (next.type === 'roundabout' && next.exit) street = `${ordinal(next.exit)} exit${next.street ? ` · ${next.street}` : ''}`;
   if (next.type.startsWith('arrive')) street = dest?.name || 'Destination';
+  if (next.type === 'stop') street = stops[0]?.name || 'Your stop';
   $('turn-street').textContent = street;
   $('then').classList.toggle('hidden', !then);
   if (then) $('then-icon').innerHTML = turnIcon(then.type);
+}
+
+// Posted limit sign next to the speedometer; the speedometer goes red when clearly over it.
+function renderLimit(kmh, speed) {
+  const sign = $('limit');
+  const imperial = state.settings.units === 'imperial';
+  sign.classList.toggle('hidden', !kmh);
+  $('speedo').classList.remove('fast');
+  if (!kmh) return;
+  const shown = imperial ? Math.round(kmh / 1.609344 / 5) * 5 : kmh;
+  sign.querySelector('b').textContent = shown;
+  sign.classList.toggle('us', imperial);
+  const over = (speed ?? 0) * 3.6 > kmh * 1.05 + 3;
+  $('speedo').classList.toggle('fast', over && state.settings.speed_warning !== false);
 }
 
 function ordinal(n) {
@@ -814,23 +854,49 @@ function renderEta() {
   $('eta-dist-unit').textContent = u;
 }
 
-async function reroute(fix) {
-  if (rerouting || Date.now() - lastReroute < REROUTE_GAP_MS || !dest) return;
+async function reroute(fix, { force = false, note } = {}) {
+  if (rerouting || (!force && Date.now() - lastReroute < REROUTE_GAP_MS) || !dest) return;
   rerouting = true;
   lastReroute = Date.now();
   try {
-    const rs = await requestRoutes(fix.lngLat, [dest.lng, dest.lat], fix.heading ?? undefined);
+    const rs = await requestRoutes(fix.lngLat, [dest.lng, dest.lat], fix.heading ?? undefined, stops);
     if (mode !== 'drive') return;
     nav = new Navigator(rs[0], { units: state.settings.units });
     nav.spoken.add('depart');
     computeOnRoute();
     if (sim) startSimulation(rs[0]);
-    speak('Route recalculated.');
+    speak(note ?? 'Route recalculated.');
     if (share) pushShare(true);
   } catch (e) {
     toast(e.message);
   } finally {
     rerouting = false;
+  }
+}
+
+async function addStop(place) {
+  if (mode !== 'drive' || !state.pos) return;
+  stops = [place];
+  renderStopMenu();
+  toast(`Adding a stop at ${place.name}…`);
+  await reroute(state.pos, { force: true, note: `Stop added. Going via ${place.name}.` });
+  if (stopMarker) stopMarker.remove();
+  stopMarker = new maplibregl.Marker({ element: el('div', 'drop-pin', DROP_PIN), anchor: 'bottom' }).setLngLat([place.lng, place.lat]).addTo(map);
+}
+
+async function removeStop() {
+  stops = [];
+  stopMarker?.remove();
+  stopMarker = null;
+  renderStopMenu();
+  if (state.pos) await reroute(state.pos, { force: true, note: 'Stop removed.' });
+}
+
+function renderStopMenu() {
+  $('add-stop-label').textContent = stops.length ? `Remove stop (${stops[0].name})` : 'Add a stop';
+  if (!stops.length && stopMarker) {
+    stopMarker.remove();
+    stopMarker = null;
   }
 }
 
@@ -864,10 +930,14 @@ async function endDrive(arrived) {
   nav = null;
   live = null;
   onRoute = [];
+  stops = [];
+  renderStopMenu();
   wakeLock?.release?.().catch(() => {});
   wakeLock = null;
   $('alert').classList.add('hidden');
   $('offroute').classList.add('hidden');
+  $('limit').classList.add('hidden');
+  $('speedo').classList.remove('fast');
   if (!arrived) backToBrowse();
   else {
     mode = 'browse';
@@ -927,6 +997,7 @@ function pushShare(withRoute = false) {
 // Someone opened a /drive/<token> link: show where that driver is.
 async function startWatching(token) {
   mode = 'watch';
+  carMarker.remove();
   $('browse-ui').classList.add('hidden');
   const sheet = $('watch');
   sheet.classList.remove('hidden');

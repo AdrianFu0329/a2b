@@ -7,7 +7,7 @@ const ANGLES = {
 
 export function turnIcon(type, color = '#fff') {
   const s = `stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"`;
-  if (type?.startsWith('arrive')) {
+  if (type?.startsWith('arrive') || type === 'stop') {
     return `<svg viewBox="0 0 48 48"><path d="M14 42V8m0 0h20l-4 8 4 8H14" ${s}/></svg>`;
   }
   if (type === 'uturn_left' || type === 'uturn_right') {

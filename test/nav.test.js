@@ -78,6 +78,13 @@ test('navigator tracks the next turn, ETA and voice cues', () => {
   assert.equal(s5.arrived, true);
 });
 
+test('speed limit follows the route position', () => {
+  const nav = new Navigator({ ...lRoute(), limits: [[0, 50], [20, 30]] });
+  assert.equal(nav.update({ position: [13.4, 52.502] }).limit, 50);
+  assert.equal(nav.update({ position: [13.403, 52.509] }).limit, 30);
+  assert.equal(new Navigator(lRoute()).update({ position: A }).limit, null);
+});
+
 test('off-route needs several bad fixes in a row', () => {
   const nav = new Navigator(lRoute());
   nav.update({ position: A });

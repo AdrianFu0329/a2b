@@ -107,8 +107,22 @@ export class Navigator {
       remainingTime,
       arrived: this.arrived,
       prompt: this.prompt(nextIndex, distToNext, speed ?? 0),
+      limit: this.limitAt(this.seg - 1),
       routeBearing: bearing(this.coords[this.seg - 1], this.coords[Math.min(this.seg, this.coords.length - 1)]),
     };
+  }
+
+  // Posted limit (km/h) on the segment starting at shape index i, from the route's runs.
+  limitAt(i) {
+    const runs = this.route.limits;
+    if (!runs?.length) return null;
+    let lo = 0, hi = runs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (runs[mid][0] <= i) lo = mid;
+      else hi = mid - 1;
+    }
+    return runs[lo][0] <= i ? runs[lo][1] : null;
   }
 
   remainingTime(k) {
@@ -135,7 +149,7 @@ export class Navigator {
     const legLen = prev ? this.cum[step.begin] - this.cum[prev.begin] : Infinity;
     if (d <= near && !this.spoken.has(`${j}:near`)) {
       this.spoken.add(`${j}:near`).add(`${j}:far`);
-      return step.type.startsWith('arrive') ? step.pre : step.alert;
+      return step.type.startsWith('arrive') || step.type === 'stop' ? step.pre : step.alert;
     }
     if (d <= far && d > near * 2 && legLen > far * 0.8 && !this.spoken.has(`${j}:far`)) {
       this.spoken.add(`${j}:far`);

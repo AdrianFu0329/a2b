@@ -3,7 +3,7 @@
 export const $ = (id) => document.getElementById(id);
 
 export const DEFAULT_SETTINGS = {
-  voice: true, alerts: true, units: 'metric', theme: 'auto', avoid_tolls: false, avoid_highways: false, avoid_ferries: false,
+  voice: true, alerts: true, speed_warning: true, units: 'metric', theme: 'auto', avoid_tolls: false, avoid_highways: false, avoid_ferries: false,
 };
 
 export const state = {

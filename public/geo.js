@@ -67,6 +67,27 @@ export function decodePolyline(str, precision = 6) {
   return coords;
 }
 
+export function encodePolyline(coords, precision = 6) {
+  const factor = 10 ** precision;
+  const one = (v) => {
+    v = v < 0 ? ~(v << 1) : v << 1;
+    let out = '';
+    while (v >= 0x20) {
+      out += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+      v >>= 5;
+    }
+    return out + String.fromCharCode(v + 63);
+  };
+  let out = '', pLat = 0, pLng = 0;
+  for (const [lng, lat] of coords) {
+    const la = Math.round(lat * factor), ln = Math.round(lng * factor);
+    out += one(la - pLat) + one(ln - pLng);
+    pLat = la;
+    pLng = ln;
+  }
+  return out;
+}
+
 export function formatDistance(m, units = 'metric') {
   if (units === 'imperial') {
     const ft = m * 3.28084;
