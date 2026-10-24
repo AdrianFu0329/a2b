@@ -142,14 +142,14 @@ function addMapLayers() {
     // The upcoming turn, drawn on the route as a white arrow, above the map's labels so it's never hidden.
     map.addSource('maneuver', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('turn-head')) map.addImage('turn-head', arrowHeadImage(), { pixelRatio: 2 });
-    map.addLayer({ id: 'maneuver-casing', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'butt', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 7, 16, 17, 19, 34] } });
-    map.addLayer({ id: 'maneuver-line', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'butt', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 4, 16, 11, 19, 22] } });
+    map.addLayer({ id: 'maneuver-casing', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'butt', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 11, 19, 22] } });
+    map.addLayer({ id: 'maneuver-line', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'butt', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2.5, 16, 6.5, 19, 13] } });
     map.addLayer({
       id: 'maneuver-head', type: 'symbol', source: 'maneuver', filter: ['==', ['geometry-type'], 'Point'],
       layout: {
         'icon-image': 'turn-head', 'icon-rotate': ['get', 'bearing'], 'icon-rotation-alignment': 'map', 'icon-pitch-alignment': 'map',
         'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
-        'icon-size': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 16, 1.5, 19, 3],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 12, 0.4, 16, 0.95, 19, 1.9],
       },
     });
     map.addLayer({ id: 'watch-route', type: 'line', source: 'watch-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': 6, 'line-opacity': 0.85 } }, before);
@@ -209,10 +209,10 @@ function drawManeuverArrow() {
   arrowFor = key;
   const at = nav.cum[next.begin];
   const exit = next.type === 'roundabout' ? nav.steps[live.nextIndex + 1] : null;
-  const end = Math.min(nav.total, exit ? nav.cum[exit.begin] + 25 : at + 28);
-  const line = sliceAlong(nav.coords, nav.cum, Math.max(0, at - 40), end);
+  const end = Math.min(nav.total, exit ? nav.cum[exit.begin] + 18 : at + 20);
+  const line = sliceAlong(nav.coords, nav.cum, Math.max(0, at - 30), end);
   const tip = line.at(-1);
-  const prev = sliceAlong(nav.coords, nav.cum, end - 8, end)[0]; // last few metres give the head's direction
+  const prev = sliceAlong(nav.coords, nav.cum, end - 6, end)[0]; // last few metres give the head's direction
   src.setData({
     type: 'FeatureCollection',
     features: [
