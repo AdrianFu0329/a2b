@@ -36,6 +36,16 @@ export function pointAtDistance(coords, cum, d) {
   return { point: interpolate(coords[lo - 1], coords[lo], t), seg: lo };
 }
 
+// The stretch of route between two distances from the start (metres), with interpolated ends.
+export function sliceAlong(coords, cum, d0, d1) {
+  const a = pointAtDistance(coords, cum, d0);
+  const b = pointAtDistance(coords, cum, d1);
+  const out = [a.point];
+  for (let i = a.seg; i < b.seg; i++) out.push(coords[i]);
+  out.push(b.point);
+  return out;
+}
+
 // Reports that sit on the route (within `maxDist` metres of it), sorted by distance from the start.
 export function reportsAlong(route, reports, maxDist = 40) {
   const cum = route.cum ?? cumulative(route.coords);

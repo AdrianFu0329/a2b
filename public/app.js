@@ -1,7 +1,7 @@
 import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
-import { Navigator, Simulator, reportsAlong } from './nav.js';
-import { turnIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
+import { Navigator, Simulator, reportsAlong, sliceAlong } from './nav.js';
+import { turnIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
   isSaved, setHomeWork, armBack,
@@ -139,6 +139,19 @@ function addMapLayers() {
     map.addLayer({ id: 'routes-alt', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#a9b5c3', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 16, 10] } }, before);
     map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
     map.addLayer({ id: 'routes-main', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
+    // The upcoming turn, drawn on the route as a white arrow, above the map's labels so it's never hidden.
+    map.addSource('maneuver', { type: 'geojson', data: emptyFc() });
+    if (!map.hasImage('turn-head')) map.addImage('turn-head', arrowHeadImage(), { pixelRatio: 2 });
+    map.addLayer({ id: 'maneuver-casing', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'butt', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 7, 16, 17, 19, 34] } });
+    map.addLayer({ id: 'maneuver-line', type: 'line', source: 'maneuver', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-cap': 'butt', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 4, 16, 11, 19, 22] } });
+    map.addLayer({
+      id: 'maneuver-head', type: 'symbol', source: 'maneuver', filter: ['==', ['geometry-type'], 'Point'],
+      layout: {
+        'icon-image': 'turn-head', 'icon-rotate': ['get', 'bearing'], 'icon-rotation-alignment': 'map', 'icon-pitch-alignment': 'map',
+        'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 16, 1.5, 19, 3],
+      },
+    });
     map.addLayer({ id: 'watch-route', type: 'line', source: 'watch-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': 6, 'line-opacity': 0.85 } }, before);
     for (const id of ['routes-alt', 'routes-alt-casing']) {
       map.on('click', id, (e) => mode === 'preview' && selectRoute(e.features[0].properties.idx));
@@ -146,6 +159,7 @@ function addMapLayers() {
       map.on('mouseleave', id, () => (map.getCanvas().style.cursor = ''));
     }
   }
+  arrowFor = null; // a new style starts with an empty arrow source
   drawRoutes();
 }
 
@@ -156,6 +170,57 @@ function fitTo(bounds, opts) {
 }
 
 const emptyFc = () => ({ type: 'FeatureCollection', features: [] });
+
+// A white triangle with a dark outline, pointing up (north) so 'icon-rotate' can turn it to the road's bearing.
+function arrowHeadImage() {
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.beginPath();
+  g.moveTo(size / 2, 4);
+  g.lineTo(size - 6, size - 4);
+  g.lineTo(6, size - 4);
+  g.closePath();
+  g.lineJoin = 'round';
+  g.lineWidth = 6;
+  g.strokeStyle = ROUTE[themeNow].casing;
+  g.stroke();
+  g.fillStyle = '#ffffff';
+  g.fill();
+  return g.getImageData(0, 0, size, size);
+}
+
+// Turn arrow on the map for the next maneuver: from just before the turn to just after it
+// (for a roundabout, all the way round to the exit).
+const NO_ARROW = new Set(['straight', 'depart', 'arrive', 'arrive_left', 'arrive_right', 'stop', 'ferry']);
+let arrowFor = null;
+function drawManeuverArrow() {
+  const src = map?.getSource('maneuver');
+  if (!src) return;
+  const next = mode === 'drive' && nav && live ? nav.steps[live.nextIndex] : null;
+  if (!next || NO_ARROW.has(next.type) || live.distToNext > 1500) {
+    if (arrowFor !== null) src.setData(emptyFc());
+    arrowFor = null;
+    return;
+  }
+  const key = `${nav.total}:${live.nextIndex}`;
+  if (arrowFor === key) return;
+  arrowFor = key;
+  const at = nav.cum[next.begin];
+  const exit = next.type === 'roundabout' ? nav.steps[live.nextIndex + 1] : null;
+  const end = Math.min(nav.total, exit ? nav.cum[exit.begin] + 25 : at + 28);
+  const line = sliceAlong(nav.coords, nav.cum, Math.max(0, at - 40), end);
+  const tip = line.at(-1);
+  const prev = sliceAlong(nav.coords, nav.cum, end - 8, end)[0]; // last few metres give the head's direction
+  src.setData({
+    type: 'FeatureCollection',
+    features: [
+      { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: line } },
+      { type: 'Feature', properties: { bearing: bearing(prev, tip) }, geometry: { type: 'Point', coordinates: tip } },
+    ],
+  });
+}
 
 function drawRoutes() {
   const src = map?.getSource('routes');
@@ -171,6 +236,7 @@ function drawRoutes() {
     features = [{ type: 'Feature', properties: { idx: 0, selected: true }, geometry: { type: 'LineString', coordinates: rest } }];
   }
   src.setData({ type: 'FeatureCollection', features });
+  drawManeuverArrow();
 }
 
 function remainingCoords(n, along, snapped) {
@@ -852,6 +918,18 @@ function renderBanner() {
   $('turn-street').textContent = street;
   $('then').classList.toggle('hidden', !then);
   if (then) $('then-icon').innerHTML = turnIcon(then.type);
+  renderLanes(next, distToNext);
+}
+
+// Which lanes to be in, shown as you get close to the turn.
+let lanesFor = null;
+function renderLanes(next, distToNext) {
+  const box = $('lanes');
+  const show = Boolean(next.lanes) && distToNext < 1000;
+  box.classList.toggle('hidden', !show);
+  if (!show || lanesFor === next) return;
+  lanesFor = next;
+  box.innerHTML = next.lanes.map((l) => `<span class="lane">${laneIcon(l)}</span>`).join('');
 }
 
 // Posted limit sign next to the speedometer; the speedometer goes red when clearly over it.

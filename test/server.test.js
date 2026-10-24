@@ -4,7 +4,7 @@ import worker from '../src/worker.js';
 import { createD1 } from './d1-shim.js';
 import { hashPassword, verifyPassword, normalizeEmail } from '../src/lib/auth.js';
 import { extendedExpiry, shouldRemove } from '../src/lib/reports.js';
-import { buildRouteRequest, photonToPlace } from '../src/lib/providers.js';
+import { buildRouteRequest, photonToPlace, lanes } from '../src/lib/providers.js';
 import { REPORT_TYPES } from '../public/report-types.js';
 import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 
@@ -91,6 +91,15 @@ test('route requests carry avoid options, heading and closures', () => {
   assert.equal(body.locations[0].heading, 92);
   assert.deepEqual(body.exclude_locations, [{ lat: 6, lon: 5 }]);
   assert.equal(body.units, 'miles');
+});
+
+test('turn lanes keep only junctions with a lane to follow', () => {
+  assert.deepEqual(lanes([{ directions: 8, active: 8 }, { directions: 66 }]), [{ d: 8, use: 8 }, { d: 66, use: 0 }]);
+  assert.deepEqual(lanes([{ directions: 2, valid: 2 }, { directions: 64, active: 64 }]), [{ d: 2, use: 2 }, { d: 64, use: 64 }]);
+  assert.equal(lanes([{ directions: 2 }, { directions: 2 }]), null, 'no lane marked: nothing to show');
+  assert.equal(lanes([{ directions: 2, active: 2 }]), null, 'a single lane is not guidance');
+  assert.equal(lanes(undefined), null);
+  assert.equal(buildRouteRequest({ from: [1, 2], to: [3, 4] }).turn_lanes, true);
 });
 
 test('search results get a readable name and address', () => {

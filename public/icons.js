@@ -10,15 +10,19 @@ export function turnIcon(type, color = '#fff') {
   if (type?.startsWith('arrive') || type === 'stop') {
     return `<svg viewBox="0 0 48 48"><path d="M14 42V8m0 0h20l-4 8 4 8H14" ${s}/></svg>`;
   }
-  if (type === 'uturn_left' || type === 'uturn_right') {
-    const flip = type === 'uturn_right' ? ' transform="matrix(-1 0 0 1 48 0)"' : '';
-    return `<svg viewBox="0 0 48 48"><g${flip}><path d="M30 42V20a8 8 0 0 0-16 0v12" ${s}/><path d="m7 26 7 8 7-8" ${s}/></g></svg>`;
-  }
   if (type === 'roundabout') {
     return `<svg viewBox="0 0 48 48"><circle cx="24" cy="20" r="9" ${s}/><path d="M24 44V29M30.4 13.6 38 6m0 0h-8m8 0v8" ${s}/></svg>`;
   }
   if (type === 'ferry') {
     return `<svg viewBox="0 0 48 48"><path d="M6 32h36l-5 8H11Zm8 0V20h20v12M24 20v-8" ${s}/></svg>`;
+  }
+  return `<svg viewBox="0 0 48 48">${arrowPaths(type, s)}</svg>`;
+}
+
+function arrowPaths(type, s) {
+  if (type === 'uturn_left' || type === 'uturn_right') {
+    const flip = type === 'uturn_right' ? ' transform="matrix(-1 0 0 1 48 0)"' : '';
+    return `<g${flip}><path d="M30 42V20a8 8 0 0 0-16 0v12" ${s}/><path d="m7 26 7 8 7-8" ${s}/></g>`;
   }
   const a = ((ANGLES[type] ?? 0) * Math.PI) / 180;
   const bx = 24, by = 24;
@@ -29,7 +33,25 @@ export function turnIcon(type, color = '#fff') {
     return `${(ex + 9 * Math.sin(b)).toFixed(1)} ${(ey - 9 * Math.cos(b)).toFixed(1)}`;
   };
   const stemTop = Math.abs(a) > 1.8 ? 30 : 24;
-  return `<svg viewBox="0 0 48 48"><path d="M${bx} 44V${stemTop}L${ex.toFixed(1)} ${ey.toFixed(1)}" ${s}/><path d="M${back(0.7)}L${ex.toFixed(1)} ${ey.toFixed(1)}L${back(-0.7)}" ${s}/></svg>`;
+  return `<path d="M${bx} 44V${stemTop}L${ex.toFixed(1)} ${ey.toFixed(1)}" ${s}/><path d="M${back(0.7)}L${ex.toFixed(1)} ${ey.toFixed(1)}L${back(-0.7)}" ${s}/>`;
+}
+
+// Lane arrow bits (see lanes() in src/lib/providers.js) -> the arrow drawn for them.
+const LANE_ARROWS = [
+  [1 | 2, 'straight'], [4, 'sharp_left'], [8, 'left'], [16, 'slight_left'], [32, 'slight_right'], [64, 'right'],
+  [128, 'sharp_right'], [256, 'uturn_left'], [512, 'merge_left'], [1024, 'merge_right'],
+];
+
+// One lane: every arrow painted on it, with the ones to follow in white and the rest dimmed.
+export function laneIcon({ d, use }) {
+  const dim = [], lit = [];
+  for (const [bits, type] of LANE_ARROWS) {
+    if (!(d & bits)) continue;
+    (use & bits ? lit : dim).push(type);
+  }
+  if (!dim.length && !lit.length) dim.push('straight');
+  const stroke = (c) => `stroke="${c}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"`;
+  return `<svg viewBox="0 0 48 48">${dim.map((t) => arrowPaths(t, stroke('rgba(255,255,255,.38)'))).join('')}${lit.map((t) => arrowPaths(t, stroke('#fff'))).join('')}</svg>`;
 }
 
 export const CAR = `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="currentColor" fill-opacity=".2"/><path d="M24 7 37 38l-13-7-13 7Z" fill="currentColor" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>`;

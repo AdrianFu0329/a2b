@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { distance, bearing, angleDiff, decodePolyline, formatDistance, formatDuration, cumulative } from '../public/geo.js';
-import { Navigator, Simulator, pointAlong, pointAtDistance, reportsAlong, spokenDistance } from '../public/nav.js';
+import { Navigator, Simulator, pointAlong, pointAtDistance, reportsAlong, spokenDistance, sliceAlong } from '../public/nav.js';
 
 // An L-shaped test route: 1 km north, then 500 m east. Roughly 0.009° lat = 1 km.
 const A = [13.4, 52.5], B = [13.4, 52.509], C = [13.4074, 52.509];
@@ -76,6 +76,16 @@ test('navigator tracks the next turn, ETA and voice cues', () => {
   assert.equal(s4.arrived, false);
   const s5 = nav.update({ position: C, heading: 90, speed: 3 });
   assert.equal(s5.arrived, true);
+});
+
+test('a slice of the route runs around the corner', () => {
+  const r = lRoute();
+  const cum = cumulative(r.coords);
+  const part = sliceAlong(r.coords, cum, 965, 1025); // 35 m before the turn to ~25 m after
+  assert.ok(Math.abs(distance(part[0], B) - 35) < 2);
+  assert.ok(part.some((p) => distance(p, B) < 0.5), 'includes the corner itself');
+  assert.ok(Math.abs(part.at(-1)[1] - B[1]) < 1e-9 && part.at(-1)[0] > B[0]);
+  assert.ok(Math.abs(bearing(part.at(-2), part.at(-1)) - 90) < 1);
 });
 
 test('speed limit follows the route position', () => {

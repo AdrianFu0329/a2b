@@ -89,6 +89,7 @@ export function buildRouteRequest({ from, to, via = [], avoid = {}, units = 'met
     units: units === 'imperial' ? 'miles' : 'kilometers',
     language: lang,
     directions_options: { units: units === 'imperial' ? 'miles' : 'kilometers', language: lang },
+    turn_lanes: true,
   };
 }
 
@@ -150,11 +151,21 @@ function step(m, unit, offset) {
     post: m.verbal_post_transition_instruction || null,
     street: (m.street_names ?? m.begin_street_names ?? [])[0] || '',
     exit: m.roundabout_exit_count ?? null,
+    lanes: lanes(m.lanes),
     begin: m.begin_shape_index + offset,
     end: m.end_shape_index + offset,
     length: m.length * unit,
     time: m.time,
   };
+}
+
+// Lanes at a turn, left to right: `d` = arrows painted on the lane, `use` = the arrows that lead along the route
+// (Valhalla's "active" plus "valid" lanes). Bit flags as in Valhalla: 1 none, 2 through, 4 sharp left, 8 left,
+// 16 slight left, 32 slight right, 64 right, 128 sharp right, 256 u-turn, 512 merge left, 1024 merge right.
+export function lanes(list) {
+  if (!Array.isArray(list) || list.length < 2) return null;
+  const out = list.map((l) => ({ d: l.directions || 1, use: (l.active ?? 0) | (l.valid ?? 0) }));
+  return out.some((l) => l.use) ? out : null;
 }
 
 // Posted speed limits along a route, from OpenStreetMap via Valhalla's trace_attributes.

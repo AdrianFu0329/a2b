@@ -21,7 +21,9 @@ badge for the fastest, tolls, ferries, the number of reports on the way, and ext
 the routes are **Go now** and **Leave later** ("leave at" or "arrive by", saved to your calendar with a reminder).
 
 **Driving.**
-- Green banner: the next turn, how far away it is, the street, and the turn after it when that one comes soon.
+- Banner: the next turn, how far away it is, the street, and the turn after it when that one comes soon.
+- **Lane guidance**: approaching a junction, the banner shows every lane with the ones to be in lit up.
+- A white **turn arrow** drawn on the map at the next turn (all the way round for roundabouts).
 - Spoken directions: an early warning ("In 400 meters, turn right onto…"), then a "now" cue.
 - Bottom bar: arrival time, minutes left and distance left.
 - Speedometer, plus the posted speed limit. The speedometer turns red when you're over it.
@@ -166,7 +168,8 @@ test/                 node --test: navigation engine and the full API on an in-m
 - **Phones pause web pages in the background.** Keep A2B on screen while driving (it keeps the screen awake). A native
   wrapper (e.g. Capacitor) would allow background navigation and CarPlay/Android Auto later.
 - **Voices** are your phone's built-in text-to-speech voices.
-- **Lane guidance and offline maps** aren't built yet.
+- **Lane guidance** appears where OpenStreetMap has lane data for the junction. That's common on main roads and highways, patchier on small streets.
+- **Offline maps** aren't built yet.
 
 Always keep your eyes on the road, and only use the app when it is safe and legal.
 

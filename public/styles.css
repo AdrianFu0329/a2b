@@ -217,6 +217,10 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bott
 .banner-text { min-width: 0; }
 .turn-dist { font-size: 32px; font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; }
 .turn-street { font-size: 19px; font-weight: 600; opacity: 0.95; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.lanes { display: flex; justify-content: center; gap: 2px; padding: 6px 12px 8px; background: var(--banner); border-top: 1px solid rgba(255, 255, 255, 0.12); }
+.lane { width: 48px; height: 46px; display: grid; place-items: center; border-radius: 8px; }
+.lane + .lane { border-left: 2px dashed rgba(255, 255, 255, 0.3); border-radius: 0; }
+.lane svg { width: 38px; height: 38px; }
 .then { background: var(--banner-2); display: flex; align-items: center; gap: 8px; padding: 6px 16px; font-weight: 600; }
 .then-icon svg { width: 26px; height: 26px; }
 .offroute {
