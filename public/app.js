@@ -12,6 +12,11 @@ const STYLES = {
   day: 'https://tiles.openfreemap.org/styles/liberty',
   night: 'https://tiles.openfreemap.org/styles/dark',
 };
+// Route line colours per map theme: brand plum, lighter at night so it stands out on the dark map.
+const ROUTE = {
+  day: { main: '#9b2c6b', casing: '#4a0f31' },
+  night: { main: '#d0569a', casing: '#5e1640' },
+};
 const REPORT_REFRESH_MS = 60_000;
 const REROUTE_GAP_MS = 8000;
 const SHARE_PUSH_MS = 15_000;
@@ -114,7 +119,7 @@ function nightNow() {
 function applyTheme(initial = false) {
   const t = state.settings.theme === 'auto' ? (nightNow() ? 'night' : 'day') : state.settings.theme;
   document.documentElement.dataset.theme = t;
-  document.querySelector('meta[name=theme-color]').content = t === 'night' ? '#161b22' : '#ffffff';
+  document.querySelector('meta[name=theme-color]').content = t === 'night' ? '#161b22' : '#751b4f';
   if (themeNow !== t) {
     themeNow = t;
     if (!initial && map) map.setStyle(STYLES[t]);
@@ -132,9 +137,9 @@ function addMapLayers() {
     const before = layers.slice(lastShape + 1).find((l) => l.type === 'symbol')?.id;
     map.addLayer({ id: 'routes-alt-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#5f6b76', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 14] } }, before);
     map.addLayer({ id: 'routes-alt', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#a9b5c3', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 16, 10] } }, before);
-    map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#1747b3', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
-    map.addLayer({ id: 'routes-main', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#2f7bff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
-    map.addLayer({ id: 'watch-route', type: 'line', source: 'watch-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#2f7bff', 'line-width': 6, 'line-opacity': 0.8 } }, before);
+    map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
+    map.addLayer({ id: 'routes-main', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
+    map.addLayer({ id: 'watch-route', type: 'line', source: 'watch-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': 6, 'line-opacity': 0.85 } }, before);
     for (const id of ['routes-alt', 'routes-alt-casing']) {
       map.on('click', id, (e) => mode === 'preview' && selectRoute(e.features[0].properties.idx));
       map.on('mouseenter', id, () => (map.getCanvas().style.cursor = 'pointer'));

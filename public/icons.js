@@ -32,11 +32,11 @@ export function turnIcon(type, color = '#fff') {
   return `<svg viewBox="0 0 48 48"><path d="M${bx} 44V${stemTop}L${ex.toFixed(1)} ${ey.toFixed(1)}" ${s}/><path d="M${back(0.7)}L${ex.toFixed(1)} ${ey.toFixed(1)}L${back(-0.7)}" ${s}/></svg>`;
 }
 
-export const CAR = `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="#2f7bff" fill-opacity=".18"/><path d="M24 7 37 38l-13-7-13 7Z" fill="#2f7bff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>`;
+export const CAR = `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="currentColor" fill-opacity=".2"/><path d="M24 7 37 38l-13-7-13 7Z" fill="currentColor" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>`;
 
 export const DEST_PIN = `<svg viewBox="0 0 36 46"><path d="M18 44s15-15.4 15-26A15 15 0 0 0 3 18c0 10.6 15 26 15 26Z" fill="#e5484d" stroke="#fff" stroke-width="2.5"/><circle cx="18" cy="18" r="5.5" fill="#fff"/></svg>`;
 
-export const DROP_PIN = `<svg viewBox="0 0 36 46"><path d="M18 44s15-15.4 15-26A15 15 0 0 0 3 18c0 10.6 15 26 15 26Z" fill="#2563eb" stroke="#fff" stroke-width="2.5"/><circle cx="18" cy="18" r="5.5" fill="#fff"/></svg>`;
+export const DROP_PIN = `<svg viewBox="0 0 36 46"><path d="M18 44s15-15.4 15-26A15 15 0 0 0 3 18c0 10.6 15 26 15 26Z" fill="#a8306d" stroke="#fff" stroke-width="2.5"/><circle cx="18" cy="18" r="5.5" fill="#fff"/></svg>`;
 
 export const PLACE_ICONS = {
   pin: '<svg viewBox="0 0 24 24"><path d="M12 22s7-7.2 7-12.5a7 7 0 0 0-14 0C5 14.8 12 22 12 22Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></svg>',
