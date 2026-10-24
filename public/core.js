@@ -133,6 +133,15 @@ export async function setHomeWork(which, place) {
   } else local.set(which, p);
 }
 
+// ---------- Back button ----------
+// While a screen is open (or a drive is on), keep one extra history entry so the phone's Back button
+// closes that screen instead of leaving the app.
+export function armBack() {
+  try {
+    if (!history.state?.a2bBack) history.pushState({ a2bBack: true }, '');
+  } catch {}
+}
+
 // ---------- Small UI helpers ----------
 let toastTimer;
 export function toast(msg, ms = 2600) {

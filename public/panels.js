@@ -1,6 +1,6 @@
 // "My A2B" menu, sign in / sign up, settings, saved places, leaderboard and about.
 
-import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace } from './core.js';
+import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack } from './core.js';
 
 let ctx; // callbacks from app.js
 let authMode = 'signup';
@@ -49,6 +49,7 @@ export function openMenu() {
   renderProfile();
   $('menu').classList.remove('hidden');
   $('menu-backdrop').classList.remove('hidden');
+  armBack();
   if (state.user) refreshMe().then(renderProfile);
 }
 
@@ -85,6 +86,7 @@ export function openAuth(reason = null, mode = 'signup') {
   $('auth-why').textContent = REASONS[reason] ?? 'Join other drivers. Report what you see on the road and get thanked for it.';
   $('auth-error').classList.add('hidden');
   $('auth').classList.remove('hidden');
+  armBack();
 }
 
 function setAuthMode(mode) {
@@ -143,6 +145,7 @@ function openPanel(title, html) {
   $('panel-title').textContent = title;
   $('panel-body').innerHTML = html;
   $('panel').classList.remove('hidden');
+  armBack();
   return $('panel-body');
 }
 

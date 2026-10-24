@@ -4,7 +4,7 @@ import { Navigator, Simulator, reportsAlong } from './nav.js';
 import { turnIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
-  isSaved, setHomeWork,
+  isSaved, setHomeWork, armBack,
 } from './core.js';
 import { initPanels, openMenu, openAuth, renderAvatar, refreshMe } from './panels.js';
 
@@ -368,6 +368,7 @@ function wireUi() {
   $('btn-report-back').onclick = () => renderReportGrid();
   $('btn-report-send').onclick = sendReport;
 
+  window.addEventListener('popstate', onBack);
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeTop();
   });
@@ -387,14 +388,35 @@ function closeScreen(id) {
   if (id === 'report-sheet') reportDraft = null;
 }
 
+const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'later', 'arrived', 'preview'];
+
+// Closes the top-most screen; returns false when nothing was open.
 function closeTop() {
-  for (const id of ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'later', 'preview']) {
-    if (!$(id).classList.contains('hidden')) return id === 'ctx' ? hideContextMenu() : closeScreen(id);
+  for (const id of OVERLAYS) {
+    if ($(id).classList.contains('hidden')) continue;
+    if (id === 'ctx') hideContextMenu();
+    else if (id === 'arrived') $('btn-arrived-done').click();
+    else closeScreen(id);
+    return true;
   }
   if (!$('menu').classList.contains('hidden')) {
     $('menu').classList.add('hidden');
     $('menu-backdrop').classList.add('hidden');
+    return true;
   }
+  if (!$('eta-menu').classList.contains('hidden')) {
+    $('eta-menu').classList.add('hidden');
+    return true;
+  }
+  return false;
+}
+
+function onBack() {
+  const closed = closeTop();
+  // Back while driving opens the trip options rather than dropping out of the app.
+  if (!closed && mode === 'drive') $('eta-menu').classList.remove('hidden');
+  const open = OVERLAYS.some((id) => !$(id).classList.contains('hidden')) || !$('menu').classList.contains('hidden');
+  if (open || mode === 'drive') armBack();
 }
 
 // ================= Search =================
@@ -402,6 +424,7 @@ let searchTarget = null; // null = navigate | 'home' | 'work' | 'save'
 let searchSeq = 0;
 
 function openSearchFor(target) {
+  armBack();
   searchTarget = target;
   $('search').classList.remove('hidden');
   $('search-input').value = '';
@@ -537,6 +560,7 @@ function updateSaveStar() {
 
 // ================= Preview: destination + route options =================
 async function openPreview(place) {
+  armBack();
   hideContextMenu();
   mode = 'preview';
   dest = place;
@@ -666,6 +690,7 @@ function openLater() {
   const r = routes[selected];
   if (!r) return toast('Wait for the route first.');
   $('later').classList.remove('hidden');
+  armBack();
   const input = $('later-time');
   const d = new Date(Date.now() + 3600_000);
   d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0);
@@ -738,6 +763,7 @@ function startDrive() {
   $('eta-menu').classList.add('hidden');
   $('alert').classList.add('hidden');
   document.body.classList.add('driving');
+  armBack();
   follow = true;
   $('btn-recenter-drive').classList.add('hidden');
   // Speak inside the tap so mobile browsers allow audio for the rest of the drive.
@@ -1124,6 +1150,7 @@ function showReportCard(r) {
       ${r.mine ? '<button class="btn danger" data-vote="gone">Remove my report</button>' : '<button class="btn ghost" data-vote="gone">Not there</button><button class="btn primary" data-vote="thanks">👍 Thanks</button>'}
     </div>`;
   card.classList.remove('hidden');
+  armBack();
   card.querySelector('[data-x]').onclick = () => card.classList.add('hidden');
   card.querySelectorAll('[data-vote]').forEach((b) => (b.onclick = () => vote(r, b.dataset.vote).then(() => card.classList.add('hidden'))));
 }
@@ -1211,6 +1238,7 @@ function openReportMenu() {
   $('report-where').textContent = state.pos ? 'At your current location' : 'At the middle of the map (location is off)';
   renderReportGrid();
   $('report-sheet').classList.remove('hidden');
+  armBack();
 }
 
 function renderReportGrid() {
