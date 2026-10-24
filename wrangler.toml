@@ -1,0 +1,21 @@
+name = "a2b"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+# The web app (public/) is served as static assets; everything under /api/* hits the Worker.
+[assets]
+directory = "./public"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "a2b"
+# Paste the id printed by `npx wrangler d1 create a2b` here before deploying.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[vars]
+# Free public servers, fine for personal use. For real traffic, self-host and point these at your own.
+ROUTING_URL = "https://valhalla1.openstreetmap.de/route"
+GEOCODER_URL = "https://photon.komoot.io"

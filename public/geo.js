@@ -1,0 +1,92 @@
+// Small geometry helpers on [lng, lat] pairs. Shared by the app and the Worker.
+
+const R = 6371008.8;
+const rad = (d) => (d * Math.PI) / 180;
+const deg = (r) => (r * 180) / Math.PI;
+
+export function distance(a, b) {
+  const dLat = rad(b[1] - a[1]);
+  const dLng = rad(b[0] - a[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+export function bearing(a, b) {
+  const y = Math.sin(rad(b[0] - a[0])) * Math.cos(rad(b[1]));
+  const x = Math.cos(rad(a[1])) * Math.sin(rad(b[1])) - Math.sin(rad(a[1])) * Math.cos(rad(b[1])) * Math.cos(rad(b[0] - a[0]));
+  return (deg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// Signed smallest difference between two headings, in degrees (-180..180].
+export function angleDiff(a, b) {
+  let d = (((b - a) % 360) + 540) % 360 - 180;
+  if (d === -180) d = 180;
+  return d;
+}
+
+export function interpolate(a, b, t) {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+
+// Closest point to p on segment a-b, using a local flat projection (fine at street scale).
+export function projectOnSegment(p, a, b) {
+  const k = Math.cos(rad(p[1]));
+  const ax = a[0] * k, ay = a[1], bx = b[0] * k, by = b[1], px = p[0] * k, py = p[1];
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  const point = interpolate(a, b, t);
+  return { t, point, dist: distance(p, point) };
+}
+
+export function cumulative(coords) {
+  const out = new Float64Array(coords.length);
+  for (let i = 1; i < coords.length; i++) out[i] = out[i - 1] + distance(coords[i - 1], coords[i]);
+  return out;
+}
+
+// Decodes Google/Valhalla encoded polylines into [lng, lat] pairs. Valhalla uses precision 6.
+export function decodePolyline(str, precision = 6) {
+  const factor = 10 ** precision;
+  const coords = [];
+  let i = 0, lat = 0, lng = 0;
+  while (i < str.length) {
+    for (const which of [0, 1]) {
+      let shift = 0, result = 0, byte;
+      do {
+        byte = str.charCodeAt(i++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+      const delta = result & 1 ? ~(result >> 1) : result >> 1;
+      if (which === 0) lat += delta;
+      else lng += delta;
+    }
+    coords.push([lng / factor, lat / factor]);
+  }
+  return coords;
+}
+
+export function formatDistance(m, units = 'metric') {
+  if (units === 'imperial') {
+    const ft = m * 3.28084;
+    if (ft < 1000) return `${Math.max(0, Math.round(ft / 50) * 50)} ft`;
+    const mi = m / 1609.344;
+    return `${mi < 10 ? mi.toFixed(1) : Math.round(mi)} mi`;
+  }
+  if (m < 950) return `${Math.max(0, Math.round(m / 10) * 10)} m`;
+  const km = m / 1000;
+  return `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
+}
+
+export function formatDuration(s) {
+  const min = Math.max(1, Math.round(s / 60));
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+export function formatClock(date) {
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}

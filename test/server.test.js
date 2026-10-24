@@ -1,0 +1,251 @@
+import { test, before } from 'node:test';
+import assert from 'node:assert/strict';
+import worker from '../src/worker.js';
+import { createD1 } from './d1-shim.js';
+import { hashPassword, verifyPassword, normalizeEmail } from '../src/lib/auth.js';
+import { extendedExpiry, shouldRemove } from '../src/lib/reports.js';
+import { buildRouteRequest, photonToPlace } from '../src/lib/providers.js';
+import { REPORT_TYPES } from '../public/report-types.js';
+
+// ---------- Fake upstream services ----------
+function encode(coords, precision = 6) {
+  const f = 10 ** precision;
+  let out = '', pLat = 0, pLng = 0;
+  const one = (v) => {
+    v = v < 0 ? ~(v << 1) : v << 1;
+    let s = '';
+    while (v >= 0x20) {
+      s += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+      v >>= 5;
+    }
+    return s + String.fromCharCode(v + 63);
+  };
+  for (const [lng, lat] of coords) {
+    const la = Math.round(lat * f), ln = Math.round(lng * f);
+    out += one(la - pLat) + one(ln - pLng);
+    pLat = la;
+    pLng = ln;
+  }
+  return out;
+}
+
+const LINE = Array.from({ length: 21 }, (_, i) => [13.4, 52.5 + 0.00045 * i]); // ~1 km north
+let lastRouteBody = null;
+
+function fakeTrip(coords, time) {
+  return {
+    summary: { length: 1, time, has_toll: false, has_highway: false, has_ferry: false },
+    legs: [{
+      shape: encode(coords),
+      maneuvers: [
+        { type: 1, instruction: 'Drive north on Test Street.', verbal_pre_transition_instruction: 'Drive north on Test Street.', street_names: ['Test Street'], begin_shape_index: 0, end_shape_index: coords.length - 1, length: 1, time },
+        { type: 4, instruction: 'You have arrived.', verbal_pre_transition_instruction: 'You have arrived at your destination.', begin_shape_index: coords.length - 1, end_shape_index: coords.length - 1, length: 0, time: 0 },
+      ],
+    }],
+  };
+}
+
+globalThis.fetch = async (url, init = {}) => {
+  const u = String(url);
+  if (u.includes('/route')) {
+    lastRouteBody = JSON.parse(init.body);
+    return Response.json({ trip: fakeTrip(LINE, 120), alternates: [{ trip: fakeTrip(LINE.slice(0, 15), 90) }] });
+  }
+  if (u.includes('/reverse')) return Response.json({ features: [{ geometry: { coordinates: [13.4, 52.5] }, properties: { name: 'Somewhere', city: 'Berlin', country: 'Germany' } }] });
+  if (u.includes('/api/')) return Response.json({ features: [{ geometry: { coordinates: [13.41, 52.52] }, properties: { name: 'Alexanderplatz', city: 'Berlin', country: 'Germany', osm_value: 'square' } }] });
+  throw new Error(`unexpected fetch ${u}`);
+};
+
+// ---------- Tiny client over the Worker ----------
+const env = { DB: createD1(), ROUTING_URL: 'https://routing.test/route', GEOCODER_URL: 'https://geo.test' };
+
+function client() {
+  let cookie = '';
+  return async (method, path, body) => {
+    const headers = {};
+    if (cookie) headers.cookie = cookie;
+    if (body !== undefined) headers['content-type'] = 'application/json';
+    const res = await worker.fetch(new Request(`https://a2b.test${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }), env);
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = set.split(';')[0];
+    return { status: res.status, body: await res.json(), cookie: set };
+  };
+}
+
+let alice, bob;
+before(async () => {
+  alice = client();
+  bob = client();
+});
+
+// ---------- Pure helpers ----------
+test('passwords hash and verify', async () => {
+  const { hash, salt } = await hashPassword('correct horse');
+  assert.ok(await verifyPassword('correct horse', hash, salt));
+  assert.ok(!(await verifyPassword('wrong horse', hash, salt)));
+  assert.equal(normalizeEmail('  Me@Example.COM '), 'me@example.com');
+  assert.equal(normalizeEmail('nope'), null);
+});
+
+test('report lifetimes and removal rules', () => {
+  const now = 1_000_000;
+  const life = REPORT_TYPES.police.life * 60_000;
+  assert.equal(extendedExpiry('police', now + life, now), now + life * 1.5);
+  assert.equal(extendedExpiry('police', now + life * 3, now), now + life * 3, 'capped at three lifetimes');
+  assert.ok(!shouldRemove({ still: 0, gone: 1 }));
+  assert.ok(shouldRemove({ still: 0, gone: 2 }));
+  assert.ok(!shouldRemove({ still: 2, gone: 3 }));
+});
+
+test('route requests carry avoid options, heading and closures', () => {
+  const body = buildRouteRequest({ from: [1, 2], to: [3, 4], avoid: { tolls: true, highways: true }, heading: 91.6, exclude: [[5, 6]], units: 'imperial' });
+  assert.equal(body.costing_options.auto.use_tolls, 0);
+  assert.equal(body.costing_options.auto.use_highways, 0);
+  assert.equal(body.locations[0].heading, 92);
+  assert.deepEqual(body.exclude_locations, [{ lat: 6, lon: 5 }]);
+  assert.equal(body.units, 'miles');
+});
+
+test('search results get a readable name and address', () => {
+  const p = photonToPlace({ geometry: { coordinates: [1, 2] }, properties: { street: 'Main St', housenumber: '5', city: 'Springfield', country: 'USA' } });
+  assert.deepEqual(p, { name: 'Main St 5', address: 'Springfield, USA', lat: 2, lng: 1, category: 'place' });
+});
+
+// ---------- Worker routes ----------
+test('sign up, log in, sessions', async () => {
+  let r = await alice('POST', '/api/auth/signup', { email: 'alice@test.com', password: 'password1', name: 'Alice' });
+  assert.equal(r.status, 201);
+  assert.match(r.cookie, /HttpOnly; SameSite=Lax/);
+  assert.match(r.cookie, /Secure/);
+  r = await alice('GET', '/api/me');
+  assert.equal(r.body.user.name, 'Alice');
+
+  assert.equal((await bob('POST', '/api/auth/signup', { email: 'alice@test.com', password: 'password1' })).status, 409);
+  assert.equal((await bob('POST', '/api/auth/signup', { email: 'bob@test.com', password: 'short' })).status, 400);
+  assert.equal((await bob('POST', '/api/auth/signup', { email: 'bob@test.com', password: 'password2', name: 'Bob' })).status, 201);
+  assert.equal((await client()('POST', '/api/auth/login', { email: 'bob@test.com', password: 'nope-nope' })).status, 401);
+
+  const carol = client();
+  assert.equal((await carol('POST', '/api/auth/login', { email: 'BOB@test.com', password: 'password2' })).status, 200);
+  assert.equal((await carol('GET', '/api/me')).body.user.name, 'Bob');
+  await carol('POST', '/api/auth/logout', {});
+  assert.equal((await carol('GET', '/api/me')).body.user, null);
+});
+
+test('JSON is required for writes (blocks cross-site form posts)', async () => {
+  const res = await worker.fetch(new Request('https://a2b.test/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'email=a&password=b' }), env);
+  assert.equal(res.status, 415);
+});
+
+test('profile: home, work and settings', async () => {
+  const r = await alice('PATCH', '/api/me', { home: { name: 'Home', address: '1 Road', lat: 52.5, lng: 13.4 }, settings: { units: 'imperial', voice: false, bogus: 1, theme: 'purple' } });
+  assert.deepEqual(r.body.user.home, { name: 'Home', address: '1 Road', lat: 52.5, lng: 13.4 });
+  assert.deepEqual(r.body.user.settings, { units: 'imperial', voice: false });
+  assert.equal((await alice('PATCH', '/api/me', { password: 'newpassword', current_password: 'wrong' })).status, 403);
+});
+
+test('saved and recent places', async () => {
+  await alice('POST', '/api/places', { kind: 'recent', name: 'Cafe', lat: 52.51, lng: 13.41 });
+  await alice('POST', '/api/places', { kind: 'recent', name: 'Cafe again', lat: 52.51, lng: 13.41 });
+  const saved = await alice('POST', '/api/places', { kind: 'saved', name: 'Gym', lat: 52.49, lng: 13.39 });
+  let r = await alice('GET', '/api/places');
+  assert.equal(r.body.recent.length, 1, 'same spot is merged');
+  assert.equal(r.body.recent[0].name, 'Cafe again');
+  assert.equal(r.body.saved[0].name, 'Gym');
+  await alice('PATCH', `/api/places/${saved.body.place.id}`, { name: 'My gym' });
+  assert.equal((await bob('DELETE', `/api/places/${saved.body.place.id}`)).status, 200);
+  r = await alice('GET', '/api/places');
+  assert.equal(r.body.saved[0].name, 'My gym', "Bob can't delete Alice's place");
+  assert.equal((await client()('GET', '/api/places')).status, 401);
+});
+
+test('reports: create, merge, thank, dismiss', async () => {
+  assert.equal((await client()('POST', '/api/reports', { type: 'police', lat: 52.505, lng: 13.4 })).status, 401);
+  assert.equal((await alice('POST', '/api/reports', { type: 'unicorn', lat: 52.505, lng: 13.4 })).status, 400);
+
+  const made = await alice('POST', '/api/reports', { type: 'police', subtype: 'hidden', lat: 52.505, lng: 13.4, comment: '  behind the bridge ' });
+  assert.equal(made.status, 201);
+  assert.equal(made.body.points, REPORT_TYPES.police.points);
+  assert.equal(made.body.report.comment, 'behind the bridge');
+  const id = made.body.report.id;
+
+  // Bob reports the same thing 50 m away: it confirms Alice's report instead of adding a pin.
+  const dup = await bob('POST', '/api/reports', { type: 'police', lat: 52.5054, lng: 13.4 });
+  assert.equal(dup.body.merged, true);
+  assert.equal(dup.body.report.id, id);
+  assert.equal(dup.body.report.still, 1);
+  assert.ok(dup.body.report.expires_at > made.body.report.expires_at);
+
+  const thanked = await bob('POST', `/api/reports/${id}/vote`, { vote: 'thanks' });
+  assert.equal(thanked.body.report.thanks, 1);
+  assert.equal((await bob('POST', `/api/reports/${id}/vote`, { vote: 'thanks' })).body.report.thanks, 1, 'one thanks per driver');
+
+  let list = await client()('GET', '/api/reports?bbox=13.3,52.4,13.5,52.6');
+  assert.equal(list.body.reports.length, 1);
+  assert.equal(list.body.reports[0].by, 'Alice');
+
+  const me = await alice('GET', '/api/me');
+  assert.equal(me.body.user.points, REPORT_TYPES.police.points + 2, 'reporter earns from confirmations and thanks');
+  assert.deepEqual([me.body.stats.reports, me.body.stats.thanks], [1, 1]);
+
+  // Alice says it's gone: her own report disappears.
+  const gone = await alice('POST', `/api/reports/${id}/vote`, { vote: 'gone' });
+  assert.equal(gone.body.removed, true);
+  list = await client()('GET', '/api/reports?bbox=13.3,52.4,13.5,52.6');
+  assert.equal(list.body.reports.length, 0);
+});
+
+test('routes avoid reported closures and account for reported traffic', async () => {
+  await bob('POST', '/api/reports', { type: 'closure', lat: 52.52, lng: 13.43 }); // inside the search area, off the line
+  const carol = client();
+  await carol('POST', '/api/auth/signup', { email: 'carol@test.com', password: 'password3', name: 'Carol' });
+  const jam = await carol('POST', '/api/reports', { type: 'traffic', subtype: 'heavy', lat: 52.5072, lng: 13.4001 });
+  assert.equal(jam.status, 201);
+  const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], avoid: { tolls: true } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.closures_avoided, 1);
+  assert.equal(lastRouteBody.exclude_locations.length, 1);
+  assert.equal(lastRouteBody.costing_options.auto.use_tolls, 0);
+  assert.equal(r.body.routes.length, 2);
+  // The full route passes the jam (+4 min); the shorter alternate ends before it.
+  const full = r.body.routes.find((x) => x.coords.length === 21);
+  assert.equal(full.delay, 240);
+  assert.equal(full.duration, 120 + 240);
+  assert.deepEqual(full.reports.map((x) => x.type), ['traffic']);
+  assert.equal(r.body.routes[0].duration, 90, 'fastest first');
+  assert.equal(full.steps[0].street, 'Test Street');
+});
+
+test('search and reverse geocoding', async () => {
+  const s = await client()('GET', '/api/search?q=alex&lat=52.5&lng=13.4');
+  assert.equal(s.body.places[0].name, 'Alexanderplatz');
+  assert.equal((await client()('GET', '/api/search?q=a')).body.places.length, 0);
+  const rev = await client()('GET', '/api/reverse?lat=52.5&lng=13.4');
+  assert.equal(rev.body.place.name, 'Somewhere');
+});
+
+test('shared drives: owner updates, anyone with the link can watch', async () => {
+  const made = await alice('POST', '/api/trips', { destination: { name: 'Work', lat: 52.509, lng: 13.4 }, eta: Date.now() + 600_000, route: LINE });
+  assert.equal(made.status, 201);
+  const { token } = made.body;
+  assert.match(made.body.url, new RegExp(`/drive/${token}$`));
+  assert.equal((await bob('PATCH', `/api/trips/${token}`, { position: [13.4, 52.501] })).status, 404, 'only the driver can update');
+  await alice('PATCH', `/api/trips/${token}`, { position: [13.4, 52.503], heading: 2 });
+  const view = await client()('GET', `/api/trips/${token}`);
+  assert.equal(view.body.driver, 'Alice');
+  assert.deepEqual(view.body.position, { lat: 52.503, lng: 13.4, heading: 2 });
+  assert.equal(view.body.route.length, 21);
+  await alice('PATCH', `/api/trips/${token}`, { ended: true });
+  assert.equal((await client()('GET', `/api/trips/${token}`)).body.ended, true);
+});
+
+test('leaderboard and account deletion', async () => {
+  const lb = await bob('GET', '/api/leaderboard');
+  const pts = lb.body.leaders.map((l) => l.points);
+  assert.deepEqual(pts, [...pts].sort((a, b) => b - a));
+  assert.ok(lb.body.leaders.some((l) => l.me && l.name === 'Bob'));
+  assert.equal((await bob('DELETE', '/api/me')).status, 200);
+  assert.equal((await bob('GET', '/api/me')).body.user, null);
+  assert.equal((await client()('POST', '/api/auth/login', { email: 'bob@test.com', password: 'password2' })).status, 401);
+  assert.ok(!(await alice('GET', '/api/leaderboard')).body.leaders.some((l) => l.name === 'Bob'));
+});

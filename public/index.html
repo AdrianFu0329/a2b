@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="Drive from A to B with live routes, voice directions and road reports from other drivers.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>A2B</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="map" aria-label="Map"></div>
+
+  <!-- ===== Browsing the map ===== -->
+  <div id="browse-ui" class="layer">
+    <div class="top-right">
+      <button id="btn-sound-browse" class="round small" aria-label="Sound"></button>
+    </div>
+    <div class="map-tools">
+      <button id="btn-compass" class="round small hidden" aria-label="Point map north"><svg viewBox="0 0 24 24"><path d="m12 3 4 9h-8Z" fill="#e5484d"/><path d="m12 21-4-9h8Z" fill="currentColor" opacity=".55"/></svg></button>
+      <button id="btn-recenter" class="round" aria-label="Show my location"><svg viewBox="0 0 24 24"><path d="M12 2.5 19.5 20 12 16l-7.5 4Z" fill="currentColor"/></svg></button>
+    </div>
+    <div class="speedo hidden" id="speedo-browse"><b>0</b><small>km/h</small></div>
+    <button id="btn-report" class="report-fab" aria-label="Report"><svg viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4Z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M12 9.5v4.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="12" cy="17" r="1.4" fill="#fff"/></svg></button>
+    <div class="bottom-bar">
+      <button id="btn-menu" class="avatar-btn" aria-label="My A2B"><span id="avatar">?</span></button>
+      <button id="btn-where" class="where-to"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="m15.5 15.5 5 5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span>Where to?</span></button>
+    </div>
+    <div id="loc-banner" class="loc-banner hidden">
+      <span>Turn on location so A2B can show where you are.</span>
+      <button id="btn-loc-retry">Try again</button>
+    </div>
+  </div>
+
+  <!-- ===== Search ===== -->
+  <section id="search" class="screen hidden" aria-label="Search">
+    <header class="search-head">
+      <button class="icon-btn" data-close="search" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="search-box">
+        <input id="search-input" type="search" autocomplete="off" enterkeyhint="search" placeholder="Where to?">
+        <button id="search-clear" class="icon-btn hidden" aria-label="Clear"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+      </div>
+    </header>
+    <div id="search-target" class="search-target hidden"></div>
+    <div id="search-home">
+      <div class="quick">
+        <button class="quick-tile" id="tile-home"><span class="q-ic home"></span><span><b>Home</b><small id="home-sub">Set location</small></span></button>
+        <button class="quick-tile" id="tile-work"><span class="q-ic work"></span><span><b>Work</b><small id="work-sub">Set location</small></span></button>
+      </div>
+      <h3 class="list-head" id="saved-head">Saved places</h3>
+      <ul id="saved-list" class="place-list"></ul>
+      <h3 class="list-head" id="recent-head">Recent</h3>
+      <ul id="recent-list" class="place-list"></ul>
+      <p id="search-empty-hint" class="hint">Search for an address, place or business. Long-press the map to drop a pin anywhere.</p>
+    </div>
+    <ul id="results" class="place-list hidden"></ul>
+    <p id="search-status" class="hint hidden"></p>
+  </section>
+
+  <!-- ===== Destination and route preview ===== -->
+  <section id="preview" class="sheet hidden" aria-label="Route preview">
+    <div class="grabber"></div>
+    <div class="dest-head">
+      <div class="dest-text">
+        <h2 id="dest-name"></h2>
+        <p id="dest-addr"></p>
+      </div>
+      <button id="btn-save-place" class="icon-btn" aria-label="Save place"><svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6L12 16.7l-5.4 2.9 1.1-6-4.5-4.2 6.1-.8Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
+      <button class="icon-btn" data-close="preview" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    </div>
+    <div id="route-list" class="route-list"></div>
+    <p id="route-status" class="hint"></p>
+    <div class="sheet-actions">
+      <button id="btn-leave-later" class="btn ghost">Leave later</button>
+      <button id="btn-go" class="btn primary" disabled>Go now</button>
+    </div>
+  </section>
+
+  <!-- ===== Leave later ===== -->
+  <section id="later" class="sheet hidden" aria-label="Plan a drive">
+    <div class="grabber"></div>
+    <div class="dest-head"><div class="dest-text"><h2>Leave later</h2><p>Pick when you want to leave or arrive.</p></div>
+      <button class="icon-btn" data-close="later" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+    <div class="seg" role="tablist"><button class="on" data-later="leave">Leave at</button><button data-later="arrive">Arrive by</button></div>
+    <input id="later-time" type="datetime-local" class="field">
+    <p id="later-result" class="later-result"></p>
+    <div class="sheet-actions">
+      <button id="btn-later-remind" class="btn primary">Add to calendar</button>
+    </div>
+  </section>
+
+  <!-- ===== Driving ===== -->
+  <div id="drive-ui" class="layer hidden">
+    <div id="banner" class="banner">
+      <div class="banner-main">
+        <div class="turn" id="turn-icon"></div>
+        <div class="banner-text">
+          <div class="turn-dist" id="turn-dist"></div>
+          <div class="turn-street" id="turn-street"></div>
+        </div>
+      </div>
+      <div id="then" class="then hidden"><span>Then</span><span id="then-icon" class="then-icon"></span></div>
+    </div>
+    <div id="offroute" class="offroute hidden">Recalculating…</div>
+    <div class="map-tools drive">
+      <button id="btn-sound" class="round small" aria-label="Sound"></button>
+      <button id="btn-recenter-drive" class="round hidden" aria-label="Recenter"><svg viewBox="0 0 24 24"><path d="M12 2.5 19.5 20 12 16l-7.5 4Z" fill="currentColor"/></svg><span>Recenter</span></button>
+    </div>
+    <div class="speedo" id="speedo"><b>0</b><small>km/h</small></div>
+    <button id="btn-report-drive" class="report-fab" aria-label="Report"><svg viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4Z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M12 9.5v4.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="12" cy="17" r="1.4" fill="#fff"/></svg></button>
+    <div id="alert" class="alert-card hidden" role="alert"></div>
+    <div id="eta-bar" class="eta-bar">
+      <button id="btn-eta" class="eta-main" aria-label="Trip options">
+        <span class="eta-col"><b id="eta-clock">--:--</b><small>arrival</small></span>
+        <span class="eta-col"><b id="eta-min">--</b><small id="eta-min-unit">min</small></span>
+        <span class="eta-col"><b id="eta-dist">--</b><small id="eta-dist-unit">km</small></span>
+      </button>
+      <div id="eta-menu" class="eta-menu hidden">
+        <button id="btn-share-drive" class="menu-row"><span class="m-ic share"></span>Share drive</button>
+        <button id="btn-overview" class="menu-row"><span class="m-ic overview"></span>Overview</button>
+        <button id="btn-stop" class="menu-row danger"><span class="m-ic stop"></span>Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Arrived ===== -->
+  <section id="arrived" class="sheet hidden" aria-label="Arrived">
+    <div class="arrived">
+      <div class="flag"></div>
+      <h2>You have arrived</h2>
+      <p id="arrived-name"></p>
+      <p id="arrived-stats" class="hint"></p>
+      <button id="btn-arrived-done" class="btn primary wide">Done</button>
+    </div>
+  </section>
+
+  <!-- ===== Report menu ===== -->
+  <section id="report-sheet" class="sheet tall hidden" aria-label="Report">
+    <div class="grabber"></div>
+    <div class="dest-head">
+      <div class="dest-text"><h2 id="report-title">Report</h2><p id="report-where" class="hint"></p></div>
+      <button class="icon-btn" data-close="report-sheet" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    </div>
+    <div id="report-grid" class="report-grid"></div>
+    <div id="report-sub" class="hidden">
+      <div id="report-sub-grid" class="report-sub-grid"></div>
+      <input id="report-comment" class="field" maxlength="140" placeholder="Add a comment (optional)">
+      <div class="sheet-actions">
+        <button id="btn-report-back" class="btn ghost">Back</button>
+        <button id="btn-report-send" class="btn primary">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Report details (tap a pin) ===== -->
+  <section id="report-card" class="sheet hidden" aria-label="Report details"></section>
+
+  <!-- ===== My A2B menu ===== -->
+  <div id="menu-backdrop" class="backdrop hidden"></div>
+  <aside id="menu" class="drawer hidden" aria-label="My A2B">
+    <div class="profile" id="profile"></div>
+    <nav class="menu-list">
+      <button class="menu-row" id="m-places"><span class="m-ic star"></span>Saved places</button>
+      <button class="menu-row" id="m-leaders"><span class="m-ic trophy"></span>Top drivers</button>
+      <button class="menu-row" id="m-settings"><span class="m-ic gear"></span>Settings</button>
+      <button class="menu-row" id="m-install"><span class="m-ic phone"></span>Add to home screen</button>
+      <button class="menu-row" id="m-about"><span class="m-ic info"></span>About</button>
+      <button class="menu-row hidden" id="m-logout"><span class="m-ic out"></span>Log out</button>
+    </nav>
+  </aside>
+
+  <!-- ===== Full-screen panels (settings, saved places, leaderboard, about, account) ===== -->
+  <section id="panel" class="screen hidden" aria-live="polite">
+    <header class="panel-head">
+      <button class="icon-btn" data-close="panel" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <h2 id="panel-title"></h2>
+    </header>
+    <div id="panel-body" class="panel-body"></div>
+  </section>
+
+  <!-- ===== Sign in / sign up ===== -->
+  <section id="auth" class="screen hidden" aria-label="Account">
+    <header class="panel-head">
+      <button class="icon-btn" data-close="auth" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <h2 id="auth-title">Sign up</h2>
+    </header>
+    <form id="auth-form" class="panel-body auth-form">
+      <div class="auth-hero"><img src="/icon.svg" alt="" width="64" height="64"><p id="auth-why">Join other drivers. Report what you see on the road and get thanked for it.</p></div>
+      <label class="name-row">Name<input name="name" autocomplete="nickname" maxlength="40" placeholder="What other drivers see"></label>
+      <label>Email<input name="email" type="email" autocomplete="email" required></label>
+      <label>Password<input name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></label>
+      <p id="auth-error" class="error hidden"></p>
+      <button class="btn primary wide" id="auth-submit" type="submit">Create account</button>
+      <button class="btn link" id="auth-switch" type="button">Already have an account? Log in</button>
+    </form>
+  </section>
+
+  <!-- ===== Someone else's shared drive ===== -->
+  <section id="watch" class="sheet hidden" aria-label="Shared drive"></section>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <div id="ctx" class="ctx hidden"></div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

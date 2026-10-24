@@ -1,0 +1,203 @@
+// Turn-by-turn engine: snaps GPS fixes to the route, works out the next turn, ETA and what to say.
+// Pure logic (no DOM), so it runs in tests and in the Worker too.
+
+import { distance, bearing, angleDiff, cumulative, projectOnSegment, interpolate, formatDistance } from './geo.js';
+
+const OFF_ROUTE_M = 40;
+const OFF_ROUTE_FIXES = 3;
+const ARRIVE_M = 30;
+
+// Where along a route (metres from the start) a point sits, and how far off the line it is.
+export function pointAlong(coords, cum, p, from = 1, to = coords.length - 1, heading = null) {
+  let best = { dist: Infinity, along: 0, seg: from, point: coords[0], score: Infinity };
+  for (let i = Math.max(1, from); i <= Math.min(to, coords.length - 1); i++) {
+    const s = projectOnSegment(p, coords[i - 1], coords[i]);
+    let score = s.dist;
+    // When moving, prefer segments heading the same way (stops snapping to the opposite carriageway).
+    if (heading != null && distance(coords[i - 1], coords[i]) > 1) {
+      if (Math.abs(angleDiff(heading, bearing(coords[i - 1], coords[i]))) > 100) score += 35;
+    }
+    if (score < best.score) best = { dist: s.dist, along: cum[i - 1] + (cum[i] - cum[i - 1]) * s.t, seg: i, point: s.point, score };
+  }
+  return best;
+}
+
+export function pointAtDistance(coords, cum, d) {
+  if (d <= 0) return { point: coords[0], seg: 1 };
+  const total = cum[cum.length - 1];
+  if (d >= total) return { point: coords.at(-1), seg: coords.length - 1 };
+  let lo = 1, hi = coords.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] < d) lo = mid + 1;
+    else hi = mid;
+  }
+  const t = (d - cum[lo - 1]) / (cum[lo] - cum[lo - 1] || 1);
+  return { point: interpolate(coords[lo - 1], coords[lo], t), seg: lo };
+}
+
+// Reports that sit on the route (within `maxDist` metres of it), sorted by distance from the start.
+export function reportsAlong(route, reports, maxDist = 40) {
+  const cum = route.cum ?? cumulative(route.coords);
+  const out = [];
+  for (const r of reports) {
+    const hit = pointAlong(route.coords, cum, [r.lng, r.lat]);
+    if (hit.dist <= maxDist) out.push({ ...r, at: hit.along });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+export class Navigator {
+  constructor(route, { units = 'metric' } = {}) {
+    this.route = route;
+    this.coords = route.coords;
+    this.cum = route.cum ?? cumulative(route.coords);
+    this.total = this.cum[this.cum.length - 1];
+    this.steps = route.steps;
+    this.units = units;
+    this.seg = 1;
+    this.along = 0;
+    this.offCount = 0;
+    this.spoken = new Set();
+    this.arrived = false;
+  }
+
+  stepAt(seg) {
+    // The maneuver whose stretch of road contains this segment.
+    for (let k = this.steps.length - 1; k >= 0; k--) if (this.steps[k].begin < seg) return k;
+    return 0;
+  }
+
+  update({ position, heading = null, speed = null, accuracy = 10 }) {
+    const moving = speed != null && speed > 2;
+    // Look near where we were first; fall back to the whole route if that fails (e.g. after a GPS gap).
+    let hit = pointAlong(this.coords, this.cum, position, this.seg - 3, this.seg + 80, moving ? heading : null);
+    if (hit.dist > OFF_ROUTE_M) {
+      const wide = pointAlong(this.coords, this.cum, position, 1, this.coords.length - 1, moving ? heading : null);
+      if (wide.score < hit.score) hit = wide;
+    }
+    const tolerance = Math.max(OFF_ROUTE_M, Math.min(accuracy ?? 0, 80));
+    this.offCount = hit.dist > tolerance ? this.offCount + 1 : 0;
+    const offRoute = this.offCount >= OFF_ROUTE_FIXES;
+    if (!offRoute && hit.dist <= tolerance) {
+      this.seg = hit.seg;
+      this.along = hit.along;
+    }
+
+    const k = this.stepAt(this.seg);
+    const next = this.steps[k + 1] ?? this.steps.at(-1);
+    const nextIndex = Math.min(k + 1, this.steps.length - 1);
+    const distToNext = Math.max(0, this.cum[next.begin] - this.along);
+    const remaining = Math.max(0, this.total - this.along);
+    const remainingTime = this.remainingTime(k);
+    const toDest = distance(position, this.coords.at(-1));
+    if (!this.arrived && (remaining < ARRIVE_M || (toDest < ARRIVE_M && remaining < 150))) this.arrived = true;
+
+    return {
+      snapped: hit.dist <= tolerance ? hit.point : position,
+      along: this.along,
+      offRoute,
+      offBy: hit.dist,
+      stepIndex: k,
+      nextIndex,
+      next,
+      then: this.steps[nextIndex + 1] && this.cum[this.steps[nextIndex + 1].begin] - this.cum[next.begin] < 250 ? this.steps[nextIndex + 1] : null,
+      distToNext,
+      remaining,
+      remainingTime,
+      arrived: this.arrived,
+      prompt: this.prompt(nextIndex, distToNext, speed ?? 0),
+      routeBearing: bearing(this.coords[this.seg - 1], this.coords[Math.min(this.seg, this.coords.length - 1)]),
+    };
+  }
+
+  remainingTime(k) {
+    const s = this.steps[k];
+    const stepStart = this.cum[s.begin];
+    const stepLen = this.cum[s.end] - stepStart || 1;
+    const leftInStep = Math.min(1, Math.max(0, (this.cum[s.end] - this.along) / stepLen));
+    let t = s.time * leftInStep;
+    for (let j = k + 1; j < this.steps.length; j++) t += this.steps[j].time;
+    return t + (this.route.delay ?? 0) * (1 - this.along / (this.total || 1));
+  }
+
+  // Two cues per turn, like a co-driver: an early heads-up, then "now".
+  prompt(j, d, speed) {
+    const step = this.steps[j];
+    if (!step) return null;
+    if (this.along < 5 && !this.spoken.has('depart')) {
+      this.spoken.add('depart');
+      return this.steps[0].pre;
+    }
+    const near = Math.max(60, speed * 7);
+    const far = Math.min(2000, Math.max(400, speed * 30));
+    const prev = this.steps[j - 1];
+    const legLen = prev ? this.cum[step.begin] - this.cum[prev.begin] : Infinity;
+    if (d <= near && !this.spoken.has(`${j}:near`)) {
+      this.spoken.add(`${j}:near`).add(`${j}:far`);
+      return step.type.startsWith('arrive') ? step.pre : step.alert;
+    }
+    if (d <= far && d > near * 2 && legLen > far * 0.8 && !this.spoken.has(`${j}:far`)) {
+      this.spoken.add(`${j}:far`);
+      return `In ${spokenDistance(d, this.units)}, ${lowerFirst(step.alert)}`;
+    }
+    return null;
+  }
+}
+
+// Rounded the way people say it: "in 400 meters", not "in 390 meters".
+function roundForSpeech(m, units) {
+  if (units === 'imperial') {
+    const ft = m * 3.28084;
+    return ft < 1000 ? (Math.round(ft / 100) * 100) / 3.28084 : m;
+  }
+  if (m >= 1000) return m;
+  const step = m >= 200 ? 100 : 50;
+  return Math.round(m / step) * step;
+}
+
+export function spokenDistance(m, units = 'metric') {
+  const rounded = roundForSpeech(m, units);
+  const [n, u] = formatDistance(rounded, units).split(' ');
+  const word = { m: 'meter', km: 'kilometer', ft: 'feet', mi: 'mile' }[u];
+  return `${n} ${word}${n === '1' || u === 'ft' ? '' : 's'}`;
+}
+
+function lowerFirst(s) {
+  return s ? s[0].toLowerCase() + s.slice(1) : s;
+}
+
+// Drives along a route at each step's own speed. For trying the app at a desk.
+export class Simulator {
+  constructor(route, { speedFactor = 1, tick = 1 } = {}) {
+    this.coords = route.coords;
+    this.cum = route.cum ?? cumulative(route.coords);
+    this.steps = route.steps;
+    this.d = 0;
+    this.speedFactor = speedFactor;
+    this.tick = tick;
+  }
+
+  speedAt(seg) {
+    let k = 0;
+    for (let i = this.steps.length - 1; i >= 0; i--) if (this.steps[i].begin < seg) { k = i; break; }
+    const s = this.steps[k];
+    return Math.min(36, Math.max(6, s.time ? s.length / s.time : 12));
+  }
+
+  next() {
+    const total = this.cum[this.cum.length - 1];
+    const here = pointAtDistance(this.coords, this.cum, this.d);
+    const speed = this.speedAt(here.seg) * this.speedFactor;
+    this.d = Math.min(total, this.d + speed * this.tick);
+    const at = pointAtDistance(this.coords, this.cum, this.d);
+    const ahead = pointAtDistance(this.coords, this.cum, Math.min(total, this.d + 10));
+    return {
+      position: at.point,
+      heading: bearing(at.point, ahead.point === at.point ? this.coords.at(-1) : ahead.point) || 0,
+      speed: this.d >= total ? 0 : speed,
+      accuracy: 5,
+      done: this.d >= total,
+    };
+  }
+}
