@@ -71,7 +71,7 @@ async function boot() {
   wireUi();
   refreshSound();
   startLocation();
-  setInterval(loadReports, REPORT_REFRESH_MS);
+  setInterval(() => loadReports(true), REPORT_REFRESH_MS);
   setInterval(() => applyTheme(), 5 * 60_000);
 
   await refreshMe();
@@ -770,6 +770,7 @@ function startDrive() {
   speak(route.steps[0]?.pre);
   addPlace('recent', dest).then(renderSearchHome).catch(() => {});
   computeOnRoute();
+  loadReports(true);
   requestWakeLock();
 
   const useSim = state.simulate || !state.pos;
@@ -890,6 +891,7 @@ async function reroute(fix, { force = false, note } = {}) {
     nav = new Navigator(rs[0], { units: state.settings.units });
     nav.spoken.add('depart');
     computeOnRoute();
+    loadReports(true);
     if (sim) startSimulation(rs[0]);
     speak(note ?? 'Route recalculated.');
     if (share) pushShare(true);
@@ -1052,7 +1054,7 @@ async function startWatching(token) {
       const left = t.eta ? Math.max(0, (t.eta - Date.now()) / 1000) : null;
       sheet.innerHTML = `<div class="grabber"></div>
         <div class="watch-head"><span class="avatar">${esc((t.driver || '?')[0])}</span><div><b>${esc(t.driver)} ${t.ended ? 'has arrived' : 'is driving'}</b><small class="hint">to ${esc(t.destination.name)}</small></div></div>
-        ${t.ended ? '' : `<div class="watch-eta"><div><b>${t.eta ? formatClock(new Date(t.eta)) : '--'}</b><small>arrival</small></div><div><b>${left != null ? formatDuration(left) : '--'}</b><small>left</small></div></div>`}
+        ${t.ended ? '' : `<div class="watch-eta"><div><b>${t.eta ? formatClock(new Date(t.eta)) : '--'}</b><small>arrival</small></div><div><b>${left == null ? '--' : left < 30 ? 'Any minute' : formatDuration(left)}</b><small>left</small></div></div>`}
         <p class="hint">Updated ${timeAgo(t.updated_at)}</p>
         <a class="btn ghost wide" style="display:grid;place-items:center;text-decoration:none" href="/">Open A2B</a>`;
       if (!t.ended) setTimeout(tick, 10_000);
@@ -1065,27 +1067,38 @@ async function startWatching(token) {
 
 // ================= Reports on the map =================
 let reportLoadTimer;
+let lastLoad = { at: 0, box: null };
+
+// The camera moves every second while driving or following, so only refetch when the view leaves
+// the area we already have, or the data is getting old.
 function scheduleReportLoad() {
+  if (mode === 'drive') return; // driving refreshes on its own timer, along the whole route
   clearTimeout(reportLoadTimer);
-  reportLoadTimer = setTimeout(loadReports, 350);
+  reportLoadTimer = setTimeout(() => loadReports(), 350);
 }
 
-async function loadReports() {
+async function loadReports(force = false) {
   if (!map || map.getZoom() < 9 || mode === 'watch') {
     if (map && map.getZoom() < 9) for (const id of [...reportMarkers.keys()]) dropReport(id);
     return;
   }
   const b = map.getBounds();
-  const box = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
-  if (mode === 'drive' && nav) {
-    // While driving, also fetch around the rest of the route so alerts work beyond the screen.
-    for (const c of nav.coords) {
-      box[0] = Math.min(box[0], c[0]); box[1] = Math.min(box[1], c[1]);
-      box[2] = Math.max(box[2], c[0]); box[3] = Math.max(box[3], c[1]);
-    }
+  const view = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  const had = lastLoad.box;
+  const covered = had && view[0] >= had[0] && view[1] >= had[1] && view[2] <= had[2] && view[3] <= had[3];
+  if (!force && covered && Date.now() - lastLoad.at < REPORT_REFRESH_MS - 1000) return;
+  // Fetch a margin around the view so small pans don't need another request.
+  const mx = (view[2] - view[0]) * 0.25, my = (view[3] - view[1]) * 0.25;
+  const box = [view[0] - mx, view[1] - my, view[2] + mx, view[3] + my];
+  if (mode === 'drive' && state.pos) {
+    // While driving, also fetch ~30 km around the car so alerts work well beyond the screen.
+    const [x, y] = state.pos.lngLat;
+    box[0] = Math.min(box[0], x - 0.3); box[1] = Math.min(box[1], y - 0.25);
+    box[2] = Math.max(box[2], x + 0.3); box[3] = Math.max(box[3], y + 0.25);
   }
   try {
     const { reports: list } = await api(`/api/reports?bbox=${box.map((v) => v.toFixed(5)).join(',')}`);
+    lastLoad = { at: Date.now(), box };
     const seen = new Set();
     for (const r of list) {
       seen.add(r.id);
@@ -1152,7 +1165,9 @@ function showReportCard(r) {
   card.classList.remove('hidden');
   armBack();
   card.querySelector('[data-x]').onclick = () => card.classList.add('hidden');
-  card.querySelectorAll('[data-vote]').forEach((b) => (b.onclick = () => vote(r, b.dataset.vote).then(() => card.classList.add('hidden'))));
+  card.querySelectorAll('[data-vote]').forEach((b) => {
+    b.onclick = () => vote(r, b.dataset.vote).then(() => card.classList.add('hidden'), () => {});
+  });
 }
 
 async function vote(r, v) {

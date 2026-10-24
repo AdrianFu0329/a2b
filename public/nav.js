@@ -39,8 +39,17 @@ export function pointAtDistance(coords, cum, d) {
 // Reports that sit on the route (within `maxDist` metres of it), sorted by distance from the start.
 export function reportsAlong(route, reports, maxDist = 40) {
   const cum = route.cum ?? cumulative(route.coords);
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+  for (const [x, y] of route.coords) {
+    if (x < w) w = x;
+    if (x > e) e = x;
+    if (y < s) s = y;
+    if (y > n) n = y;
+  }
+  const pad = 0.001; // ~100 m
   const out = [];
   for (const r of reports) {
+    if (r.lng < w - pad || r.lng > e + pad || r.lat < s - pad || r.lat > n + pad) continue;
     const hit = pointAlong(route.coords, cum, [r.lng, r.lat]);
     if (hit.dist <= maxDist) out.push({ ...r, at: hit.along });
   }

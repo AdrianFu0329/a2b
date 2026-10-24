@@ -280,7 +280,7 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bott
 /* ---------- Car and pins ---------- */
 .car { width: 46px; height: 46px; filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.35)); }
 .car svg { width: 46px; height: 46px; }
-.car.stale { opacity: 0.5; }
+.car.stale { filter: grayscale(1) opacity(0.55); }
 .dest-pin svg { width: 36px; height: 46px; filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.3)); }
 .drop-pin svg { width: 32px; height: 42px; }
 
