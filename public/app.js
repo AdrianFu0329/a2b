@@ -6,12 +6,16 @@ import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
   isSaved, setHomeWork, armBack,
 } from './core.js';
+import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
 import { initPanels, openMenu, openAuth, renderAvatar, refreshMe } from './panels.js';
 
-const STYLES = {
-  day: 'https://tiles.openfreemap.org/styles/liberty',
-  night: 'https://tiles.openfreemap.org/styles/dark',
-};
+// Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
+function mapThemeId(t = themeNow) {
+  const chosen = local.get('mapTheme');
+  if (chosen && MAP_THEMES[chosen]) return chosen;
+  return t === 'night' ? 'plum_night' : 'bright_plum';
+}
+const styleUrl = (t) => BASE_STYLES[MAP_THEMES[mapThemeId(t)].base];
 // Route line colours per map theme: brand plum, lighter at night so it stands out on the dark map.
 const ROUTE = {
   day: { main: '#9b2c6b', casing: '#4a0f31' },
@@ -56,14 +60,17 @@ async function boot() {
   const last = local.get('lastPos');
   map = new maplibregl.Map({
     container: 'map',
-    style: STYLES[themeNow],
+    style: styleUrl(themeNow),
     center: last ?? [10, 25],
     zoom: last ? 15 : 1.6,
     attributionControl: { compact: true },
     maxPitch: 65,
   });
   map.touchPitch.disable();
-  map.on('style.load', addMapLayers);
+  map.on('style.load', () => {
+    applyMapTheme(map, MAP_THEMES[mapThemeId()]);
+    addMapLayers();
+  });
   map.on('dragstart', (e) => e.originalEvent && stopFollowing());
   map.on('zoomstart', (e) => e.originalEvent && mode === 'drive' && stopFollowing());
   map.on('rotate', () => $('btn-compass').classList.toggle('hidden', Math.abs(map.getBearing()) < 3 || mode === 'drive'));
@@ -122,7 +129,7 @@ function applyTheme(initial = false) {
   document.querySelector('meta[name=theme-color]').content = t === 'night' ? '#161b22' : '#751b4f';
   if (themeNow !== t) {
     themeNow = t;
-    if (!initial && map) map.setStyle(STYLES[t]);
+    if (!initial && map) map.setStyle(styleUrl(t));
   }
 }
 

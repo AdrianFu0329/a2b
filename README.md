@@ -113,7 +113,7 @@ All three are free and need no key. They're set in `wrangler.toml`:
 
 | What | Default | Notes |
 | --- | --- | --- |
-| Map tiles | [OpenFreeMap](https://openfreemap.org) | Free, no key, no usage limits. Set in `public/app.js` (`STYLES`). |
+| Map tiles | [OpenFreeMap](https://openfreemap.org) | Free, no key, no usage limits. Map looks are in `public/map-themes.js` (default: Bright plum by day, Plum night at night). |
 | Routing and speed limits | [Valhalla public server](https://valhalla1.openstreetmap.de) (`ROUTING_URL`) | Community-run "fair use" server. Fine for you and friends. |
 | Search | [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Community-run "fair use" server. Same. |
 
