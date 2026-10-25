@@ -121,11 +121,17 @@ function brightPlum(strength) {
   ];
 }
 
+// Road number shields (E35, 287…) repeat along a road every `symbol-spacing` screen pixels; the base styles
+// use 200-350, which strings them along a highway. Wider spacing keeps one or two in view at any zoom.
+const SHIELD_LAYER = /shield|^highway_name_motorway$/;
+const SHIELD_SPACING = 700;
+
 const PAINT_PREFIX = { fill: 'fill-', line: 'line-', 'fill-extrusion': 'fill-extrusion-', background: 'background-', symbol: 'text-' };
 
 // Applies a theme's recolouring to the style that just loaded.
 export function applyMapTheme(map, theme) {
   for (const layer of map.getStyle().layers) {
+    if (layer.type === 'symbol' && SHIELD_LAYER.test(layer.id)) map.setLayoutProperty(layer.id, 'symbol-spacing', SHIELD_SPACING);
     if ((theme.hide && theme.hide.test(layer.id)) || (theme.flat && layer.type === 'fill-extrusion')) {
       map.setLayoutProperty(layer.id, 'visibility', 'none');
       continue;
