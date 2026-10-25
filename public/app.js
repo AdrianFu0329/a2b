@@ -218,7 +218,9 @@ function applyTheme(initial = false) {
   document.querySelector('meta[name=theme-color]').content = t === 'night' ? '#161b22' : '#751b4f';
   if (themeNow !== t) {
     themeNow = t;
-    if (!initial && map) map.setStyle(styleUrl(t));
+    // Day and night can share a base style. A diff against that same style quietly drops our recolouring and
+    // route layers without a 'style.load' to put them back, so always load the style afresh.
+    if (!initial && map) map.setStyle(styleUrl(t), { diff: false });
   }
 }
 

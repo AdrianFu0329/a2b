@@ -303,6 +303,10 @@ small.hint { display: block; padding: 4px 0 0; }
 .eta-col:first-child b { color: var(--good); }
 .eta-col small { color: var(--muted); font-size: 13px; }
 .eta-menu { border-top: 1px solid var(--line); padding: 6px 0 10px; }
+/* Closed, only the destination row is meant to show; the strip under it (the phone's home bar area) would
+   otherwise show the top of the first menu row. */
+.eta-menu > .menu-row { transition: opacity 0.2s; }
+.eta-bar:not(.open):not(.dragging) .eta-menu > .menu-row { opacity: 0; }
 .trip-dest { display: flex; align-items: center; gap: 14px; padding: 10px 18px 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
 .trip-dest:empty { display: none; }
 .trip-dest > span:last-child { min-width: 0; }
