@@ -1,6 +1,7 @@
 import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
-import { Navigator, Simulator, reportsAlong, sliceAlong } from './nav.js';
+import { Navigator, Simulator, reportsAlong, sliceAlong, pointAtDistance } from './nav.js';
+import { Glide } from './motion.js';
 import { turnIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
@@ -50,6 +51,11 @@ let driveStarted = 0;
 let wakeLock = null;
 let share = null; // { token, url, lastPush }
 let recenterTimer = null;
+const glide = new Glide(); // slides the car between GPS fixes
+let shown = null; // where the car is drawn this frame
+let frameId = 0, lastFrame = 0, lineDrawn = 0;
+let camZoom = null;
+let userMoving = false;
 
 // ================= Boot =================
 boot();
@@ -77,6 +83,8 @@ async function boot() {
   map.on('zoomstart', (e) => e.originalEvent && mode === 'drive' && stopFollowing());
   map.on('rotate', () => $('btn-compass').classList.toggle('hidden', Math.abs(map.getBearing()) < 3 || mode === 'drive'));
   map.on('moveend', scheduleReportLoad);
+  map.on('movestart', (e) => { if (e.originalEvent) userMoving = true; });
+  map.on('moveend', () => { userMoving = false; });
   setupLongPress();
 
   carMarker = new maplibregl.Marker({ element: el('div', 'car', CAR), rotationAlignment: 'map', pitchAlignment: 'map' });
@@ -245,9 +253,9 @@ function drawRoutes() {
     features = routes.map((r, i) => ({ type: 'Feature', properties: { idx: i, selected: i === selected }, geometry: { type: 'LineString', coordinates: r.coords } }));
     features.sort((a, b) => a.properties.selected - b.properties.selected);
   } else if (mode === 'drive' && nav) {
-    // Only draw what's left, so the line "shrinks" behind the car.
-    const along = live?.along ?? 0;
-    const rest = remainingCoords(nav, along, live?.snapped);
+    // Only draw what's left, so the line "shrinks" behind the car, from where the car is drawn right now.
+    const onLine = shown?.path === nav;
+    const rest = remainingCoords(nav, onLine ? shown.along : live?.along ?? 0, onLine ? shown.pos : live?.snapped);
     features = [{ type: 'Feature', properties: { idx: 0, selected: true }, geometry: { type: 'LineString', coordinates: rest } }];
   }
   src.setData({ type: 'FeatureCollection', features });
@@ -256,7 +264,7 @@ function drawRoutes() {
 
 function remainingCoords(n, along, snapped) {
   const out = snapped ? [snapped] : [];
-  for (let i = n.seg; i < n.coords.length; i++) out.push(n.coords[i]);
+  for (let i = pointAtDistance(n.coords, n.cum, along).seg; i < n.coords.length; i++) out.push(n.coords[i]);
   return out.length > 1 ? out : n.coords.slice(-2);
 }
 
@@ -298,9 +306,44 @@ function handleFix(fix, first = false) {
   if (!carMarker._map) carMarker.setLngLat(fix.lngLat).addTo(map);
   updateSpeedo(fix.speed);
   if (mode === 'drive') return driveTick(fix);
-  carMarker.setLngLat(fix.lngLat).setRotation(fix.heading ?? 0);
+  moveCar({ pos: fix.lngLat, heading: fix.heading ?? 0 });
   if (first && mode === 'browse') map.jumpTo({ center: fix.lngLat, zoom: 15.5 });
-  else if (follow && mode === 'browse') map.easeTo({ center: fix.lngLat, duration: 600 });
+}
+
+// Each fix sets where the car should be; every animation frame draws it part of the way there,
+// and moves the camera and the route line with it, so nothing jumps once a second.
+function moveCar(pose) {
+  glide.set(pose, performance.now());
+  if (!frameId) frameId = requestAnimationFrame(frame);
+}
+
+function frame(now) {
+  frameId = 0;
+  const dt = lastFrame ? Math.min(now - lastFrame, 100) : 16;
+  lastFrame = now;
+  shown = glide.at(now);
+  if (!shown || mode === 'watch') return;
+  carMarker.setLngLat(shown.pos).setRotation(shown.heading);
+  let settling = false;
+  if (follow && !userMoving && !map.isEasing()) {
+    if (mode === 'drive' && live) settling = followDrive(dt);
+    else if (mode === 'browse') map.jumpTo({ center: shown.pos });
+  } else camZoom = null;
+  const done = glide.done(now);
+  if (mode === 'drive' && (done || now - lineDrawn > 80)) {
+    lineDrawn = now;
+    drawRoutes();
+  }
+  if (!done || settling) frameId = requestAnimationFrame(frame);
+  else lastFrame = 0;
+}
+
+// Camera sits behind the car. Zoom drifts towards the speed-based level instead of stepping.
+function followDrive(dt) {
+  const target = driveZoom();
+  camZoom = camZoom == null ? map.getZoom() : camZoom + (target - camZoom) * (1 - Math.exp(-dt / 700));
+  map.jumpTo({ center: shown.pos, bearing: shown.heading, pitch: 55, zoom: camZoom, padding: drivePadding() });
+  return Math.abs(target - camZoom) > 0.01;
 }
 
 function updateSpeedo(speed) {
@@ -329,7 +372,7 @@ function recenter() {
   clearTimeout(recenterTimer);
   $('btn-recenter').classList.add('following');
   $('btn-recenter-drive').classList.add('hidden');
-  if (mode === 'drive' && live) return driveCamera(true);
+  if (mode === 'drive' && live) return driveCamera();
   if (state.pos) map.easeTo({ center: state.pos.lngLat, zoom: Math.max(map.getZoom(), 15), bearing: 0, pitch: 0, duration: 700 });
   else if (state.locationDenied) toast('Location is off. Allow location for this site in your browser settings.');
 }
@@ -867,6 +910,7 @@ function startDrive() {
     if (!state.simulate) toast('No GPS signal, so this is a demo drive.', 3500);
     startSimulation(route);
   } else driveTick(state.pos);
+  driveCamera();
 }
 
 function startSimulation(route) {
@@ -891,12 +935,11 @@ function driveTick(fix) {
   if (!nav) return;
   live = nav.update({ position: fix.lngLat, heading: fix.heading, speed: fix.speed, accuracy: fix.accuracy });
   const heading = (fix.speed ?? 0) > 1.5 && fix.heading != null ? fix.heading : live.routeBearing;
-  carMarker.setLngLat(live.snapped).setRotation(heading);
+  moveCar({ pos: live.snapped, heading, along: live.along, path: nav });
   renderBanner();
   renderEta();
   renderLimit(live.limit, fix.speed);
   drawRoutes();
-  if (follow) driveCamera(false, heading);
   if (live.prompt) speak(live.prompt);
   checkAlerts();
   if (share) pushShare();
@@ -912,15 +955,20 @@ function driveTick(fix) {
   if (live.arrived) arrive();
 }
 
-function driveCamera(snap, heading = live?.routeBearing ?? 0) {
+// Glide the camera into the driving view (start of a drive, Recenter); frames take over from there.
+function driveCamera() {
   if (!live) return;
-  const speed = state.pos?.speed ?? 0;
-  const zoom = speed > 25 ? 15.3 : speed > 15 ? 16 : 16.8;
-  const pad = { top: Math.round(innerHeight * 0.42), bottom: 110, left: 0, right: 0 };
-  const opts = { center: live.snapped, bearing: heading, pitch: 55, zoom, padding: pad };
-  if (snap) map.easeTo({ ...opts, duration: 600 });
-  else map.easeTo({ ...opts, duration: sim ? 1000 : 900, easing: (t) => t });
+  const at = shown ?? { pos: live.snapped, heading: live.routeBearing };
+  camZoom = null;
+  map.easeTo({ center: at.pos, bearing: at.heading, pitch: 55, zoom: driveZoom(), padding: drivePadding(), duration: 600 });
 }
+
+function driveZoom() {
+  const speed = state.pos?.speed ?? 0;
+  return speed > 25 ? 15.3 : speed > 15 ? 16 : 16.8;
+}
+
+const drivePadding = () => ({ top: Math.round(innerHeight * 0.42), bottom: 110, left: 0, right: 0 });
 
 function renderBanner() {
   const { next, distToNext, then } = live;
