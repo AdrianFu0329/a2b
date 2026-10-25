@@ -2,6 +2,7 @@
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
 import { voiceChoice, setVoiceChoice, deviceVoices, isGoodVoice } from './voice.js';
+import { VEHICLES } from './vehicle3d.js';
 
 let ctx; // callbacks from app.js
 let authMode = 'signup';
@@ -201,6 +202,9 @@ export function openSettings() {
     <div class="set-group"><h3>Display</h3>
       ${choiceRow('units', 'Units', [['metric', 'km'], ['imperial', 'miles']])}
       ${choiceRow('theme', 'Map', [['auto', 'Auto'], ['day', 'Day'], ['night', 'Night']])}
+      <div class="set-row"><span>Vehicle<small>How you appear on the map</small></span><div class="choice" id="s-vehicle">${VEHICLES
+        .map(([v, l]) => `<button data-v="${v}" class="${local.get('vehicle', 'chevron') === v ? 'on' : ''}">${l}</button>`)
+        .join('')}</div></div>
     </div>
     <div class="set-group"><h3>Places</h3>
       <button class="set-row" id="s-home"><span>Home<small>${esc(state.home?.address || state.home?.name || 'Not set')}</small></span></button>
@@ -232,6 +236,14 @@ export function openSettings() {
   });
   renderVoiceList();
   if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => $('voice-list') && renderVoiceList();
+  // Kept on this device: it's about how this screen looks.
+  $('s-vehicle').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    $('s-vehicle').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+    local.set('vehicle', b.dataset.v);
+    ctx.setupVehicle();
+  };
   $('s-sim').onchange = (e) => {
     state.simulate = e.target.checked;
     local.set('simulate', state.simulate);

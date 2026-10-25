@@ -1,6 +1,6 @@
 // Keeps the app shell available offline and fast to open. API calls and map tiles always go to the network.
-const CACHE = 'a2b-v3';
-const SHELL = ['/', '/styles.css', '/app.js', '/core.js', '/panels.js', '/nav.js', '/motion.js', '/voice.js', '/geo.js', '/icons.js', '/report-types.js', '/map-themes.js', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'a2b-v4';
+const SHELL = ['/', '/styles.css', '/app.js', '/core.js', '/panels.js', '/nav.js', '/motion.js', '/voice.js', '/vehicle3d.js', '/geo.js', '/icons.js', '/report-types.js', '/map-themes.js', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

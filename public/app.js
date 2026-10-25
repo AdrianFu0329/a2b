@@ -2,6 +2,7 @@ import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance } from './nav.js';
 import { Glide } from './motion.js';
+import { start as startVehicle } from './vehicle3d.js';
 import { turnIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
@@ -62,6 +63,7 @@ let shown = null; // where the car is drawn this frame
 let frameId = 0, lastFrame = 0;
 let camZoom = null;
 let userMoving = false;
+let vehicle3d = false; // the car is drawn as a 3D model (vehicle3d.js) rather than the flat arrow
 let lastUserMove = 0;
 let lineFor = null; // the route the driving line currently holds
 let trimmedAt = 0, trimmedTo = -1; // when, and to what fraction of the route, the driven part was last recoloured
@@ -112,7 +114,7 @@ async function boot() {
 
   carMarker = new maplibregl.Marker({ element: el('div', 'car', CAR), rotationAlignment: 'map', pitchAlignment: 'map' });
 
-  initPanels({ onUserChanged, applyTheme, openSearchFor, openPreview, refreshSound });
+  initPanels({ onUserChanged, applyTheme, openSearchFor, openPreview, refreshSound, setupVehicle });
   wireUi();
   refreshSound();
   startLocation();
@@ -206,10 +208,20 @@ function addMapLayers() {
       map.on('mouseleave', id, () => (map.getCanvas().style.cursor = ''));
     }
   }
+  setupVehicle(); // a new style drops custom layers too
   arrowFor = null; // a new style starts with an empty arrow source
   lineFor = null; // and an empty driving line
   drawTrail();
   drawRoutes();
+}
+
+// The car as a 3D model (Settings › Vehicle). The flat arrow marker keeps the position either way and shows
+// instead when 3D can't start (no WebGL, three.js didn't load).
+async function setupVehicle() {
+  const kind = local.get('vehicle', 'chevron');
+  vehicle3d = await startVehicle(map, kind, () => (mode === 'watch' || !carMarker._map ? null : shown));
+  carMarker.getElement().classList.toggle('as-3d', vehicle3d);
+  map.triggerRepaint();
 }
 
 // fitBounds adds to whatever padding the camera already has (e.g. from driving), so clear it first.
@@ -475,6 +487,7 @@ function frame(now) {
   shown = glide.at(now);
   if (!shown || mode === 'watch') return;
   carMarker.setLngLat(shown.pos).setRotation(shown.heading);
+  if (vehicle3d) map.triggerRepaint(); // the model is part of the map: redraw even when the camera stays put
   let settling = false;
   if (follow && !userMoving && !map.isEasing()) {
     if (mode === 'drive' && live) settling = followDrive(dt);
