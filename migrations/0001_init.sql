@@ -23,4 +23,4 @@ CREATE TABLE IF NOT EXISTS trips (
 );
 CREATE INDEX IF NOT EXISTS trips_user ON trips (user_id, updated_at);
 CREATE TABLE IF NOT EXISTS login_failures (email TEXT NOT NULL, at INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures (email, at)
+CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures (email, at);
