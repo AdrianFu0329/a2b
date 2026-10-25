@@ -18,16 +18,17 @@ function mapThemeId(t = themeNow) {
 }
 const styleUrl = (t) => BASE_STYLES[MAP_THEMES[mapThemeId(t)].base];
 // Route line colours per map theme: brand plum, lighter at night so it stands out on the dark map.
+// The stretch already driven stays visible in a muted tone.
 const ROUTE = {
-  day: { main: '#9b2c6b', casing: '#4a0f31' },
-  night: { main: '#d0569a', casing: '#5e1640' },
+  day: { main: '#9b2c6b', casing: '#4a0f31', driven: '#c3b3bd', drivenCasing: '#8f7a87' },
+  night: { main: '#d0569a', casing: '#5e1640', driven: '#8a7684', drivenCasing: '#3b2f39' },
 };
 const REPORT_REFRESH_MS = 60_000;
 const STILL_SPEED = 1; // m/s; slower than this counts as standing still
 const BROWSE_RESUME_MS = 15_000;
 const FRAME_MS = 1000 / 30; // smooth enough for a car, and half the work of 60 fps
-const TRIM_EVERY_MS = 100; // how often the driven part of the line is hidden again
-const TRIM_BEHIND_M = 6; // hide the line up to a little behind the car, so it always starts under the car
+const TRIM_EVERY_MS = 100; // how often the driven part of the line is recoloured
+const TRIM_BEHIND_M = 6; // recolour up to a little behind the car, so the route colour always starts under the car
 const REROUTE_GAP_MS = 8000;
 const SHARE_PUSH_MS = 15_000;
 
@@ -63,7 +64,9 @@ let camZoom = null;
 let userMoving = false;
 let lastUserMove = 0;
 let lineFor = null; // the route the driving line currently holds
-let trimmedAt = 0, trimmedTo = -1; // when, and to what fraction of the route, the driven part was last hidden
+let trimmedAt = 0, trimmedTo = -1; // when, and to what fraction of the route, the driven part was last recoloured
+let trail = []; // lines driven earlier in this drive: parts of routes replaced by a reroute, and detours off them
+let offTrail = []; // where the car has been since it left the current route
 
 // ================= Boot =================
 // With Reduce Motion on (an iPhone accessibility setting), MapLibre turns every camera move into an instant
@@ -173,6 +176,9 @@ function addMapLayers() {
     const before = layers.slice(lastShape + 1).find((l) => l.type === 'symbol')?.id;
     map.addLayer({ id: 'routes-alt-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#5f6b76', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 14] } }, before);
     map.addLayer({ id: 'routes-alt', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#a9b5c3', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 16, 10] } }, before);
+    map.addSource('trail', { type: 'geojson', data: emptyFc() });
+    map.addLayer({ id: 'trail-casing', type: 'line', source: 'trail', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].drivenCasing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
+    map.addLayer({ id: 'trail-main', type: 'line', source: 'trail', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].driven, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
     map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
     map.addLayer({ id: 'routes-main', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
     // The upcoming turn, drawn on the route as a white arrow, above the map's labels so it's never hidden.
@@ -197,6 +203,7 @@ function addMapLayers() {
   }
   arrowFor = null; // a new style starts with an empty arrow source
   lineFor = null; // and an empty driving line
+  drawTrail();
   drawRoutes();
 }
 
@@ -286,7 +293,7 @@ function drawRoutes() {
 }
 
 // While driving, the whole route is handed to the map once (and again after a reroute); the part already
-// driven is hidden with a gradient along the line that turns transparent up to the car. Moving that cut-off is
+// driven is shown in a muted colour by a gradient along the line that changes colour at the car. Moving that cut-off is
 // a cheap paint change. Re-sending line data instead, many times a second, kept the map re-cutting tiles: on a
 // warm phone it fell behind, so stretches of line went missing or lagged behind the car.
 function drawDriveLine() {
@@ -305,9 +312,20 @@ function drawDriveLine() {
   if (Math.abs(to - trimmedTo) * nav.total < 1) return;
   trimmedAt = now;
   trimmedTo = to;
-  const cut = (color) => ['step', ['line-progress'], 'rgba(0,0,0,0)', to, color];
-  map.setPaintProperty('routes-casing', 'line-gradient', cut(ROUTE[themeNow].casing));
-  map.setPaintProperty('routes-main', 'line-gradient', cut(ROUTE[themeNow].main));
+  const c = ROUTE[themeNow];
+  map.setPaintProperty('routes-casing', 'line-gradient', ['step', ['line-progress'], c.drivenCasing, to, c.casing]);
+  map.setPaintProperty('routes-main', 'line-gradient', ['step', ['line-progress'], c.driven, to, c.main]);
+}
+
+function drawTrail() {
+  map?.getSource('trail')?.setData({ type: 'FeatureCollection', features: trail.map((coordinates) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } })) });
+}
+
+// Before a reroute replaces the route, keep what was driven of it, and of the detour since, as trail.
+function keepTrail(at) {
+  if (nav && live) trail.push([...sliceAlong(nav.coords, nav.cum, 0, live.along), ...offTrail, at]);
+  offTrail = [];
+  drawTrail();
 }
 
 // ================= Location =================
@@ -942,6 +960,9 @@ function startDrive() {
   const route = routes[selected];
   if (!route) return;
   mode = 'drive';
+  trail = [];
+  offTrail = [];
+  drawTrail();
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
   live = null;
@@ -1013,6 +1034,7 @@ function driveTick(fix) {
   }
 
   $('offroute').classList.toggle('hidden', !live.offRoute);
+  if (live.offRoute && (!offTrail.length || distance(offTrail.at(-1), fix.lngLat) > 5)) offTrail.push(fix.lngLat);
   if (live.offRoute) reroute(fix);
   if (live.arrived) arrive();
 }
@@ -1099,6 +1121,7 @@ async function reroute(fix, { force = false, note } = {}) {
   try {
     const rs = await requestRoutes(fix.lngLat, [dest.lng, dest.lat], fix.heading ?? undefined, stops);
     if (mode !== 'drive') return;
+    keepTrail(fix.lngLat);
     nav = new Navigator(rs[0], { units: state.settings.units });
     nav.spoken.add('depart');
     computeOnRoute();
@@ -1168,6 +1191,9 @@ async function endDrive(arrived) {
   }
   nav = null;
   live = null;
+  trail = [];
+  offTrail = [];
+  drawTrail();
   onRoute = [];
   stops = [];
   renderStopMenu();

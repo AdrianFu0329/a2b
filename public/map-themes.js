@@ -80,11 +80,12 @@ export const MAP_THEMES = {
       [/^water$/, { 'fill-color': '#141d29' }],
       [/^waterway$/, { 'line-color': '#141d29' }],
       [/^building$/, { 'fill-color': '#241c23' }],
-      [/^highway_(path|minor)$/, { 'line-color': '#35293a' }],
-      [/^highway_major_casing$/, { 'line-color': '#5a3350' }],
-      [/^highway_major_(inner|subtle)$/, { 'line-color': '#3f2b3b' }],
-      [/^highway_motorway_casing$/, { 'line-color': '#8a2c5f' }],
-      [/^highway_motorway_(inner|subtle)$/, { 'line-color': '#4e2140' }],
+      // Roads in muted greys, so the route line is the one thing that stands out.
+      [/^highway_(path|minor)$/, { 'line-color': '#2e282d' }],
+      [/^highway_major_casing$/, { 'line-color': '#3d3540' }],
+      [/^highway_major_(inner|subtle)$/, { 'line-color': '#2f2930' }],
+      [/^highway_motorway_casing$/, { 'line-color': '#4a414b' }],
+      [/^highway_motorway_(inner|subtle)$/, { 'line-color': '#363039' }],
       [/^place_|^highway_name/, { 'text-color': '#cdb6c5', 'text-halo-color': '#1a1419' }],
     ],
   },
@@ -95,9 +96,10 @@ export const MAP_THEMES = {
 // OpenFreeMap "bright" recoloured with the app's plum (#751B4F); parks stay green and water stays blue.
 function brightPlum(strength) {
   const c = {
+    // Roads in quiet neutrals, so the plum route line is the one thing that stands out.
     soft: {
-      bg: '#faf4f7', res: 'hsla(328,30%,90%,0.45)', building: '#f2e4eb', buildingZ: '#e6d4de', minorCasing: '#dccbd4',
-      main: '#fde6f1', mainCasing: '#dea0c0', motorway: '#f7c0da', motorwayCasing: '#c26a97', label: '#3d1f30',
+      bg: '#faf4f7', res: 'hsla(328,30%,90%,0.45)', building: '#f2e4eb', buildingZ: '#e6d4de', minorCasing: '#ddd5da',
+      main: '#ffffff', mainCasing: '#d3c9cf', motorway: '#f3eff1', motorwayCasing: '#bcb0b7', label: '#3d1f30',
     },
     strong: {
       bg: '#f6eaf0', res: 'hsla(328,35%,86%,0.5)', building: '#ecd6e1', buildingZ: '#dfc3d2', minorCasing: '#d4b6c6',
