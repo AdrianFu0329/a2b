@@ -19,7 +19,9 @@
   --shadow: 0 6px 24px rgba(15, 23, 42, 0.18), 0 1px 3px rgba(15, 23, 42, 0.12);
   --radius: 18px;
   --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Capped at the iPhone home-indicator height: some iOS Safari versions report ~80px here (room for their
+     floating toolbar) even with it collapsed, which left a big empty band under the bottom bars. */
+  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 34px);
   color-scheme: light;
 }
 
@@ -247,7 +249,7 @@ small.hint { display: block; padding: 4px 0 0; }
   padding: 0 10px var(--safe-bottom);
 }
 @media (min-width: 720px) { .eta-bar { left: 16px; right: auto; width: 420px; bottom: 16px; border-radius: 18px; padding-bottom: 0; } }
-.eta-main { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); padding: 12px 0 14px; }
+.eta-main { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); padding: 12px 0 10px; }
 .eta-col { display: grid; justify-items: center; line-height: 1.1; }
 .eta-col b { font-size: 24px; font-variant-numeric: tabular-nums; }
 .eta-col:first-child b { color: var(--good); }
