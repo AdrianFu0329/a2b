@@ -3,18 +3,14 @@
 // the other as an ordinary road, so the router happily drives down it. A route that runs alongside a
 // construction road, close and parallel, for a good stretch is most likely on that forgotten half.
 //
-// Construction roads come from Overpass, a tile at a time, and are kept in D1 for a week, so most routes
-// never wait on it. A slow or failing lookup just means no check for that tile.
+// The construction roads are built ahead of time from Overture Maps (OpenStreetMap's roads) by
+// scripts/build-construction.py into public/construction/, one small file per tile, and read here through
+// the Worker's static assets, so checking a route costs no outside request.
 
 import { cumulative, atDistance, distance, bearing } from '../../public/geo.js';
 
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
-const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
-const TILE = 0.05; // degrees, about 5.5 km
-const KEEP_MS = 7 * 86400_000;
-const LOOKUP_MS = 6000;
-const MAX_TILES = 24; // a long trip: check the first stretch, where it matters soonest
-const ROAD = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)(_link)?$/;
+const TILE = 0.05; // degrees, about 5.5 km; must match the build script
+const MAX_TILES = 40; // a very long trip: check the first stretch, where it matters soonest
 
 export const NEAR_M = 25; // the two halves of a divided road sit this close or closer
 const PARALLEL_DEG = 20;
@@ -28,46 +24,24 @@ export function tilesAlong(routes) {
   const keys = new Set();
   for (const r of routes) {
     const cum = cumulative(r.coords);
-    for (let d = 0; d <= cum.at(-1); d += 1000) keys.add(tileKey(atDistance(r.coords, cum, d)));
-    keys.add(tileKey(r.coords.at(-1)));
+    for (const p of r.coords) keys.add(tileKey(p));
+    for (let d = 0; d <= cum.at(-1); d += 1000) keys.add(tileKey(atDistance(r.coords, cum, d))); // long straight stretches
   }
   return [...keys].slice(0, MAX_TILES);
 }
 
-// Construction roads in one tile, from D1 or Overpass: [[lng, lat], ...] lines.
-async function tileRoads(db, key, now) {
-  const hit = await db.prepare('SELECT roads, fetched_at FROM construction_tiles WHERE tile = ?').bind(key).first();
-  if (hit && now - hit.fetched_at < KEEP_MS) return JSON.parse(hit.roads);
-  const [x, y] = key.split('_').map(Number);
-  const box = [y * TILE, x * TILE, (y + 1) * TILE, (x + 1) * TILE].map((v) => v.toFixed(4)).join(',');
-  const query = `[out:json][timeout:15];way["highway"="construction"](${box});out tags geom;`;
-  for (const url of OVERPASS) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': UA },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: AbortSignal.timeout(LOOKUP_MS),
-      });
-      if (!res.ok) continue;
-      const roads = parseOverpass(await res.json());
-      await db
-        .prepare('INSERT INTO construction_tiles (tile, roads, fetched_at) VALUES (?, ?, ?) ON CONFLICT(tile) DO UPDATE SET roads = excluded.roads, fetched_at = excluded.fetched_at')
-        .bind(key, JSON.stringify(roads), now)
-        .run();
-      return roads;
-    } catch {
-      // try the next server
-    }
-  }
-  return hit ? JSON.parse(hit.roads) : [];
+async function asset(assets, path) {
+  const res = await assets.fetch(new Request(`https://assets.local/construction/${path}`));
+  if (!res.ok || !(res.headers.get('content-type') ?? '').includes('json')) return null; // missing files fall back to the app page
+  return res.json();
 }
 
-// Only roads being built for cars count (not footpaths or cycle tracks under construction).
-export function parseOverpass(data) {
-  return (data?.elements ?? [])
-    .filter((e) => e.type === 'way' && e.geometry?.length > 1 && (!e.tags?.construction || ROAD.test(e.tags.construction)))
-    .map((e) => e.geometry.map((g) => [Math.round(g.lon * 1e6) / 1e6, Math.round(g.lat * 1e6) / 1e6]));
+// Construction roads near the given routes: [[lng, lat], ...] lines.
+export async function roadsNear(assets, routes) {
+  if (!assets) return [];
+  const have = new Set((await asset(assets, 'index.json'))?.tiles ?? []); // the tiles that have any
+  const tiles = tilesAlong(routes).filter((k) => have.has(k));
+  return (await Promise.all(tiles.map((k) => asset(assets, `${k}.json`).catch(() => null)))).flatMap((t) => t ?? []);
 }
 
 // Where a route runs alongside a construction road: the middle of each such stretch, on the route.
@@ -106,9 +80,8 @@ export function twinStretches(coords, roads) {
 }
 
 // For each route, the stretches it shares with a construction road (see twinStretches).
-export async function constructionTwins(db, routes, now = Date.now()) {
-  const tiles = tilesAlong(routes);
-  const roads = (await Promise.all(tiles.map((k) => tileRoads(db, k, now).catch(() => [])))).flat();
+export async function constructionTwins(assets, routes) {
+  const roads = await roadsNear(assets, routes);
   return routes.map((r) => twinStretches(r.coords, roads));
 }
 

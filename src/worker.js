@@ -263,7 +263,7 @@ async function route(request, env, url) {
     // A route along a road that's probably still being built (see construction.js): ask again around it, and
     // take the new routes unless they're a lot slower. Kept routes that still use one carry a warning.
     let constructionAvoided = 0;
-    let twins = await constructionTwins(db, routes).catch(() => routes.map(() => []));
+    let twins = await constructionTwins(env.ASSETS, routes).catch(() => routes.map(() => []));
     const spots = twins.flat().slice(0, MAX_EXCLUDE - exclude.length);
     if (spots.length && !closuresIgnored) {
       const again = await fetchRoutes(env, { ...opts, exclude: [...exclude, ...spots] }).catch(() => null);
@@ -271,7 +271,7 @@ async function route(request, env, url) {
       if (again && !again.dropped && fastest(again.routes) <= fastest(routes) * 1.5 + 300) {
         routes = again.routes;
         constructionAvoided = spots.length;
-        twins = await constructionTwins(db, routes).catch(() => routes.map(() => []));
+        twins = await constructionTwins(env.ASSETS, routes).catch(() => routes.map(() => []));
       }
     }
     routes.forEach((r, i) => {

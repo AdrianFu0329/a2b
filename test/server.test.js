@@ -34,10 +34,6 @@ function fakeTrip(coords, time) {
 
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
-  if (u.includes('overpass')) {
-    const elements = construction ? [{ type: 'way', id: 1, tags: { highway: 'construction', construction: 'secondary' }, geometry: construction.map(([lon, lat]) => ({ lat, lon })) }] : [];
-    return Response.json({ elements });
-  }
   if (u.includes('/locate')) {
     lastLocateBody = JSON.parse(init.body);
     const { lat, lon } = lastLocateBody.locations[0];
@@ -81,7 +77,17 @@ globalThis.fetch = async (url, init = {}) => {
 };
 
 // ---------- Tiny client over the Worker ----------
-const env = { DB: createD1(), ROUTING_URL: 'https://routing.test/route', GEOCODER_URL: 'https://geo.test' };
+// The app's static files, as far as the Worker reads them: the construction road tiles.
+const ASSETS = {
+  async fetch(req) {
+    const name = new URL(req.url).pathname.replace('/construction/', '');
+    const key = construction && `${Math.floor(construction[0][0] / 0.05)}_${Math.floor(construction[0][1] / 0.05)}`;
+    if (name === 'index.json') return Response.json({ tiles: key ? [key] : [] });
+    if (construction && name === `${key}.json`) return Response.json([construction]);
+    return new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } });
+  },
+};
+const env = { DB: createD1(), ASSETS, ROUTING_URL: 'https://routing.test/route', GEOCODER_URL: 'https://geo.test' };
 
 function client() {
   let cookie = '';
@@ -414,7 +420,6 @@ test('an overloaded routing server reads as busy, not as no route', async () => 
 
 test('a road beside one under construction is driven around, unless the detour costs too much', async () => {
   construction = LINE.map(([lng, lat]) => [lng + 0.00015, lat]); // ~10 m east of the route, all the way
-  await env.DB.prepare('DELETE FROM construction_tiles').run(); // earlier routes cached this area as clear
   try {
     let r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
     assert.equal(r.status, 200);
@@ -428,7 +433,6 @@ test('a road beside one under construction is driven around, unless the detour c
   } finally {
     construction = null;
     detourTime = 150;
-    await env.DB.prepare('DELETE FROM construction_tiles').run();
   }
 });
 
