@@ -9,7 +9,9 @@
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply a2b --local",
     "db:migrate:remote": "wrangler d1 migrations apply a2b --remote",
-    "test": "node --no-warnings --test test/*.test.js"
+    "test": "node --no-warnings --test test/*.test.js",
+    "places": "python3 scripts/build-places.py",
+    "predeploy": "node scripts/check-places.mjs"
   },
   "devDependencies": {
     "wrangler": "4.151.3"

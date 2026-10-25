@@ -1,6 +1,6 @@
 // Keeps the app shell available offline and fast to open. API calls and map tiles always go to the network.
-const CACHE = 'a2b-v5';
-const SHELL = ['/', '/styles.css', '/app.js', '/core.js', '/panels.js', '/nav.js', '/motion.js', '/voice.js', '/vehicle3d.js', '/geo.js', '/icons.js', '/report-types.js', '/map-themes.js', '/sheet-drag.js', '/follow.js', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'a2b-v6';
+const SHELL = ['/', '/styles.css', '/app.js', '/core.js', '/panels.js', '/nav.js', '/motion.js', '/voice.js', '/vehicle3d.js', '/geo.js', '/icons.js', '/report-types.js', '/map-themes.js', '/places.js', '/text.js', '/sheet-drag.js', '/follow.js', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -12,7 +12,8 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
+  // Place data is versioned and kept by the browser's own cache; keeping it here too would only grow.
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/places/')) return;
   // Network first so new deploys show up straight away; the cache is the fallback when offline.
   const key = e.request.mode === 'navigate' ? '/' : e.request;
   e.respondWith(

@@ -7,3 +7,6 @@
 
 /sw.js
   Cache-Control: no-cache
+
+/places/*
+  Cache-Control: public, max-age=2592000

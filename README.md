@@ -122,6 +122,22 @@ can self-host [Valhalla](https://github.com/valhalla/valhalla) and [Photon](http
 Docker on any small VPS, or use a hosted provider such as [Stadia Maps](https://stadiamaps.com), which offers Valhalla
 routing and geocoding. Nothing else in the app needs to change.
 
+### Shops and places (Overture Maps, free)
+
+OpenStreetMap misses many shops, especially in newer Malaysian areas, so A2B also searches
+[Overture Maps](https://overturemaps.org) places (Meta, Microsoft, Foursquare, AllThePlaces and others).
+They're built into small files that the website serves, and the phone downloads only the files for what's
+being searched, in its own area. There's no database and no extra cost.
+
+The files aren't kept in git. Build them before deploying, and again each month when Overture publishes a
+new release ([calendar](https://docs.overturemaps.org/release-calendar/)):
+
+```bash
+pip install duckdb
+npm run places          # Malaysia by default; see scripts/build-places.py --help
+npm run deploy
+```
+
 ## How it's built
 
 ```

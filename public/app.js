@@ -4,6 +4,7 @@ import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundab
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
+import { searchNearby, mergeResults, attribution as placesAttribution } from './places.js';
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -826,9 +827,15 @@ async function runSearch(q, enter = false) {
   const near = state.pos?.lngLat ?? map.getCenter().toArray();
   try {
     const coord = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
-    const { places, note } = coord
-      ? { places: [{ name: 'Coordinates', address: q, lat: Number(coord[1]), lng: Number(coord[2]) }] }
-      : await api(`/api/search?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}&lang=${(navigator.language || 'en').slice(0, 2)}`);
+    // Two searches at once: the server's (OpenStreetMap) and this phone's own (Overture shops and places).
+    const [server, local] = coord
+      ? [{ places: [{ name: 'Coordinates', address: q, lat: Number(coord[1]), lng: Number(coord[2]) }] }, []]
+      : await Promise.all([
+          api(`/api/search?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}&lang=${(navigator.language || 'en').slice(0, 2)}`),
+          searchNearby(q, near).catch(() => []),
+        ]);
+    const places = mergeResults(server.places, local, q, near);
+    const note = local.length ? null : server.note; // "not in the map data" is moot once Overture found it
     if (seq !== searchSeq) return;
     $('search-home').classList.add('hidden');
     const ul = $('results');
@@ -845,6 +852,7 @@ async function runSearch(q, enter = false) {
       li.firstElementChild.onclick = () => pickPlace(p);
       ul.append(li);
     }
+    if (local.some((p) => places.includes(p))) ul.append(el('li', 'search-note', esc(placesAttribution)));
     if (enter && places.length === 1) pickPlace(places[0]);
   } catch (e) {
     if (seq !== searchSeq) return;

@@ -2,6 +2,9 @@
 // Both default to free public servers; point GEOCODER_URL / ROUTING_URL at your own to scale up.
 
 import { decodePolyline, cumulative, distance } from '../../public/geo.js';
+import { normalizeText, matches } from '../../public/text.js';
+
+export { normalizeText, matches };
 import { pointAlong } from '../../public/nav.js';
 import { tollIndexes } from './tolls.js';
 
@@ -80,16 +83,6 @@ async function nameInArea(env, q, lang, near, found) {
 
 function withoutSrc({ src, ...p }) {
   return p;
-}
-
-// Loose text match: case, accents and apostrophes don't matter ("nandos" finds "Nando's").
-export function normalizeText(s) {
-  return String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/['’`.]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-}
-
-export function matches(text, query) {
-  const hay = normalizeText(text);
-  return normalizeText(query).split(' ').every((w) => w && hay.includes(w));
 }
 
 // A box of roughly `km` in every direction around [lng, lat], as Photon wants it: minLon,minLat,maxLon,maxLat.
