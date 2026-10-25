@@ -108,11 +108,21 @@ async function submitAuth(e) {
   const body = { email: f.get('email'), password: f.get('password') };
   if (authMode === 'signup') Object.assign(body, { name: f.get('name'), settings: state.settings });
   const btn = $('auth-submit');
-  btn.disabled = true;
+  const label = btn.textContent;
+  const fields = $('auth-form').querySelectorAll('input, button');
+  // Show progress in the button (and lock the form) so a slow network doesn't look like a frozen screen.
+  const busy = (text) => (btn.innerHTML = `<span class="spinner" aria-hidden="true"></span>${esc(text)}`);
+  fields.forEach((x) => (x.disabled = true));
+  btn.classList.add('busy');
+  busy(authMode === 'signup' ? 'Creating account…' : 'Logging in…');
+  $('auth-error').classList.add('hidden');
   try {
     await api(`/api/auth/${authMode}`, { method: 'POST', body });
     await refreshMe();
-    if (authMode === 'signup') await bringGuestPlaces();
+    if (authMode === 'signup') {
+      busy('Copying your places…');
+      await bringGuestPlaces();
+    }
     $('auth').classList.add('hidden');
     $('auth-form').reset();
     await ctx.onUserChanged();
@@ -124,7 +134,9 @@ async function submitAuth(e) {
     $('auth-error').textContent = err.message;
     $('auth-error').classList.remove('hidden');
   } finally {
-    btn.disabled = false;
+    fields.forEach((x) => (x.disabled = false));
+    btn.classList.remove('busy');
+    btn.textContent = label;
   }
 }
 

@@ -146,6 +146,9 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bott
 .btn { height: 52px; border-radius: 26px; padding: 0 22px; font-weight: 700; font-size: 17px; }
 .btn.primary { background: var(--primary); color: var(--primary-ink); }
 .btn.primary:disabled { opacity: 0.5; }
+.btn.busy { display: inline-flex; align-items: center; justify-content: center; }
+.btn.primary.busy:disabled { opacity: 1; }
+.btn.primary .spinner { border-color: rgba(255, 255, 255, 0.4); border-top-color: #fff; width: 16px; height: 16px; }
 .btn.ghost { background: var(--bg-2); }
 .btn.danger { background: var(--danger); color: #fff; }
 .btn.link { color: var(--accent-text); height: 44px; font-weight: 600; }
