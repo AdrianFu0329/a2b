@@ -8,7 +8,7 @@ export { normalizeText, matches };
 import { pointAlong } from '../../public/nav.js';
 import { tollIndexes } from './tolls.js';
 
-const UA = 'a2b-navigation/0.1 (+https://github.com/thaqif0709/a2b)';
+const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
 
 export function httpError(message, status) {
   return Object.assign(new Error(message), { status });

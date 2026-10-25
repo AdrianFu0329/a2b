@@ -6,7 +6,7 @@
 import { distance } from '../../public/geo.js';
 
 const OSM_API = 'https://api.openstreetmap.org/api/0.6/map';
-const UA = 'a2b-navigation/0.1 (+https://github.com/thaqif0709/a2b)';
+const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
 const BOX = 0.0015; // degrees around the booth to search, about 170 m
 const KEEP_MS = 30 * 86400_000;
 const KEEP_EMPTY_MS = 7 * 86400_000; // nothing mapped yet: look again sooner
