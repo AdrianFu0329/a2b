@@ -562,6 +562,7 @@ function setupLongPress() {
   map.on('contextmenu', (e) => mode !== 'drive' && mode !== 'watch' && showContextMenu(e.lngLat, e.point));
   map.on('click', hideContextMenu);
   map.on('click', routeAtTap);
+  map.on('click', () => $('eta-menu').classList.add('hidden')); // a tap on the map closes the trip menu
 }
 
 async function showContextMenu(lngLat, point) {
@@ -1326,6 +1327,10 @@ async function removeStop() {
 
 function renderStopMenu() {
   $('add-stop-label').textContent = stops.length ? `Remove stop (${stops[0].name})` : 'Add a stop';
+  // Where this drive is going, so it's easy to check the right place was picked.
+  $('trip-dest').innerHTML = dest
+    ? `<span class="trip-pin">${DEST_PIN}</span><span><b>${esc(dest.name)}</b><small>${esc([stops[0] && `via ${stops[0].name}`, dest.address].filter(Boolean).join(' · '))}</small></span>`
+    : '';
   if (!stops.length && stopMarker) {
     stopMarker.remove();
     stopMarker = null;
