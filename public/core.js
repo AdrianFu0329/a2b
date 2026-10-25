@@ -171,13 +171,4 @@ export function timeAgo(ms) {
 }
 
 // ---------- Voice ----------
-export function speak(text, { force = false } = {}) {
-  if (!text || (!state.settings.voice && !force) || !('speechSynthesis' in window)) return;
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = navigator.language?.startsWith('en') ? navigator.language : 'en-US';
-    u.rate = 1.02;
-    speechSynthesis.cancel();
-    speechSynthesis.speak(u);
-  } catch {}
-}
+export { speak } from './voice.js';

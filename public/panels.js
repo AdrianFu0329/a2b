@@ -1,6 +1,7 @@
 // "My A2B" menu, sign in / sign up, settings, saved places, leaderboard and about.
 
-import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack } from './core.js';
+import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
+import { NATURAL_VOICES, voiceChoice, setVoiceChoice, deviceVoices, isGoodDeviceVoice } from './voice.js';
 
 let ctx; // callbacks from app.js
 let authMode = 'signup';
@@ -149,6 +150,32 @@ function openPanel(title, html) {
   return $('panel-body');
 }
 
+// Natural voices first (they sound human), then this phone's own voices, best first. Tapping one picks it and
+// plays a sample. Phone voices differ per device, so the choice is kept on this device only.
+function renderVoiceList() {
+  const box = $('voice-list');
+  const now = voiceChoice();
+  const english = (navigator.language || 'en').toLowerCase().startsWith('en');
+  const row = (choice, name, note) =>
+    `<button class="set-row voice-row${choice === now ? ' on' : ''}" data-voice="${esc(choice)}"><span>${esc(name)}<small>${esc(note)}</small></span></button>`;
+  const phone = deviceVoices().slice(0, 6);
+  const iphone = /iphone|ipad/i.test(navigator.userAgent);
+  box.innerHTML = `
+    ${english ? `<p class="voice-head">Natural voices · need internet</p>${NATURAL_VOICES.map((v) => row(`natural:${v.id}`, v.name, v.note)).join('')}` : ''}
+    <p class="voice-head">On this phone · work offline</p>
+    ${row('device:auto', 'Automatic', 'The best voice this phone has')}
+    ${phone.map((v) => row(`device:${v.name}`, v.name, `${v.lang}${isGoodDeviceVoice(v) ? ' · high quality' : ''}`)).join('')}
+    ${iphone ? '<p class="hint" style="padding:6px 18px 2px">For a better offline voice, download an Enhanced or Premium one in iPhone Settings › Accessibility › Spoken Content › Voices, then pick it here.</p>' : ''}`;
+  box.onclick = (e) => {
+    const b = e.target.closest('[data-voice]');
+    if (!b) return;
+    setVoiceChoice(b.dataset.voice);
+    box.querySelectorAll('[data-voice]').forEach((x) => x.classList.toggle('on', x === b));
+    const sample = state.settings.units === 'imperial' ? 'In a quarter mile, turn right. Then keep left.' : 'In 300 metres, turn right. Then keep left.';
+    speak(sample, { force: true, choice: b.dataset.voice });
+  };
+}
+
 function toggleRow(key, label, sub = '') {
   return `<label class="set-row"><span>${label}${sub ? `<small>${sub}</small>` : ''}</span><input type="checkbox" class="switch" data-set="${key}" ${state.settings[key] ? 'checked' : ''}></label>`;
 }
@@ -167,6 +194,7 @@ export function openSettings() {
       ${toggleRow('alerts', 'Report alerts while driving', 'Police, crashes, hazards and closures ahead')}
       ${toggleRow('speed_warning', 'Speeding warning', 'Speedometer turns red above the posted limit')}
     </div>
+    <div class="set-group"><h3>Voice</h3><div id="voice-list"></div></div>
     <div class="set-group"><h3>Navigation</h3>
       ${toggleRow('avoid_tolls', 'Avoid toll roads')}
       ${toggleRow('avoid_highways', 'Avoid highways')}
@@ -205,6 +233,8 @@ export function openSettings() {
       if (group.dataset.choice === 'theme') ctx.applyTheme();
     };
   });
+  renderVoiceList();
+  if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => $('voice-list') && renderVoiceList();
   $('s-sim').onchange = (e) => {
     state.simulate = e.target.checked;
     local.set('simulate', state.simulate);

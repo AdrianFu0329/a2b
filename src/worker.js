@@ -10,6 +10,10 @@ const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_FAILURES = 8;
 const RECENTS_KEPT = 20;
+// Natural voices for spoken directions (Deepgram Aura on Workers AI). Must match NATURAL_VOICES in public/voice.js.
+const TTS_MODEL = '@cf/deepgram/aura-1';
+const TTS_VOICES = new Set(['asteria', 'luna', 'athena', 'orion', 'arcas', 'helios']);
+const TTS_MAX_CHARS = 300;
 const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean' };
 
 export default {
@@ -18,6 +22,7 @@ export default {
     if (!url.pathname.startsWith('/api/')) return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
     try {
       if (url.pathname === '/api/health') return json({ ok: true, database: Boolean(env.DB) });
+      if (url.pathname === '/api/tts' && request.method === 'GET') return await speech(request, env, url);
       if (!env.DB) throw httpError('Database is not configured (see README).', 500);
       await ensureSchema(env.DB);
       return await route(request, env, url);
@@ -299,6 +304,28 @@ async function route(request, env, url) {
 async function withSession(request, db, row, status) {
   const { token, expires } = await createSession(db, row.id);
   return json({ user: publicUser(row) }, status, { 'set-cookie': sessionCookie(request, token, expires) });
+}
+
+// One spoken direction as MP3. The same text and voice always sound the same, so clips are cached at the edge:
+// most prompts ("In 200 metres, turn left") repeat across drives and cost nothing after the first time.
+async function speech(request, env, url) {
+  const voice = url.searchParams.get('voice') ?? '';
+  const text = (url.searchParams.get('text') ?? '').replace(/\s+/g, ' ').trim();
+  if (!TTS_VOICES.has(voice)) throw httpError('Unknown voice.', 400);
+  if (!text || text.length > TTS_MAX_CHARS) throw httpError(`Text must be 1 to ${TTS_MAX_CHARS} characters.`, 400);
+  if (!env.AI) throw httpError('Natural voices are not set up on this server.', 503);
+  const cache = globalThis.caches?.default;
+  const key = new Request(`${url.origin}/api/tts?voice=${voice}&text=${encodeURIComponent(text)}`);
+  const hit = await cache?.match(key);
+  if (hit) return hit;
+  const res = await env.AI.run(TTS_MODEL, { text, speaker: voice, encoding: 'mp3' }, { returnRawResponse: true });
+  if (!res.ok) {
+    console.error('TTS failed', res.status, (await res.text()).slice(0, 300));
+    throw httpError('The voice service is busy. Try again in a moment.', 502);
+  }
+  const out = new Response(res.body, { headers: { 'content-type': 'audio/mpeg', 'cache-control': 'public, max-age=2592000, immutable' } });
+  await cache?.put(key, out.clone());
+  return out;
 }
 
 function cleanSettings(input) {

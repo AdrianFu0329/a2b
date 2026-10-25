@@ -274,3 +274,20 @@ test('leaderboard and account deletion', async () => {
   assert.equal((await client()('POST', '/api/auth/login', { email: 'bob@test.com', password: 'password2' })).status, 401);
   assert.ok(!(await alice('GET', '/api/leaderboard')).body.leaders.some((l) => l.name === 'Bob'));
 });
+
+test('natural voice clips: checks input, falls back without AI, returns MP3', async () => {
+  const get = (q, e = env) => worker.fetch(new Request(`https://a2b.test/api/tts?${q}`), e);
+  assert.equal((await get('voice=robot&text=Hi')).status, 400);
+  assert.equal((await get('voice=asteria&text=')).status, 400);
+  assert.equal((await get(`voice=asteria&text=${'a'.repeat(301)}`)).status, 400);
+  assert.equal((await get('voice=asteria&text=Turn%20left')).status, 503); // no AI binding: the app uses the phone's voice
+
+  let asked = null;
+  const AI = { run: async (model, input, opts) => { asked = { model, input, opts }; return new Response(new Uint8Array([0xff, 0xfb, 1, 2]), { status: 200 }); } };
+  const res = await get('voice=orion&text=%20In%20300%20metres,%20%20turn%20left.%20', { ...env, AI });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'audio/mpeg');
+  assert.match(res.headers.get('cache-control'), /max-age/);
+  assert.equal((await res.arrayBuffer()).byteLength, 4);
+  assert.deepEqual(asked, { model: '@cf/deepgram/aura-1', input: { text: 'In 300 metres, turn left.', speaker: 'orion', encoding: 'mp3' }, opts: { returnRawResponse: true } });
+});
