@@ -209,10 +209,13 @@ small.hint { display: block; padding: 4px 0 0; }
 .later-result { margin-top: 14px; font-size: 17px; line-height: 1.4; }
 
 /* ---------- Driving ---------- */
-.banner {
-  position: absolute; top: calc(10px + var(--safe-top)); left: 10px; right: 10px; border-radius: 18px; overflow: hidden; box-shadow: var(--shadow);
-  background: var(--banner); color: #fff; max-width: 560px;
+/* Banner and the off-route pill stack, so the pill always sits just below the banner whatever its height. */
+#drive-ui .drive-top {
+  position: absolute; top: calc(10px + var(--safe-top)); left: 10px; right: 10px; max-width: 560px;
+  display: grid; justify-items: center; gap: 10px; pointer-events: none;
 }
+.drive-top > * { pointer-events: auto; }
+.banner { width: 100%; border-radius: 18px; overflow: hidden; box-shadow: var(--shadow); background: var(--banner); color: #fff; }
 .banner-main { display: flex; align-items: center; gap: 14px; padding: 14px 16px; }
 .turn { width: 60px; height: 60px; flex: none; }
 .turn svg { width: 60px; height: 60px; }
@@ -225,10 +228,13 @@ small.hint { display: block; padding: 4px 0 0; }
 .lane svg { width: 38px; height: 38px; }
 .then { background: var(--banner-2); display: flex; align-items: center; gap: 8px; padding: 6px 16px; font-weight: 600; }
 .then-icon svg { width: 26px; height: 26px; }
-.offroute {
-  position: absolute; top: calc(120px + var(--safe-top)); left: 50%; transform: translateX(-50%); background: var(--bg); color: var(--text);
-  padding: 8px 16px; border-radius: 20px; box-shadow: var(--shadow); font-weight: 700;
+@media (max-width: 360px) {
+  .banner-main { gap: 10px; padding: 12px 14px; }
+  .turn, .turn svg { width: 48px; height: 48px; }
+  .turn-dist { font-size: 28px; }
+  .turn-street { font-size: 17px; }
 }
+.offroute { background: var(--bg); color: var(--text); padding: 8px 16px; border-radius: 20px; box-shadow: var(--shadow); font-weight: 700; }
 #drive-ui .speedo { bottom: calc(108px + var(--safe-bottom)); }
 .limit {
   position: absolute; left: 62px; bottom: calc(150px + var(--safe-bottom)); width: 44px; height: 44px; border-radius: 50%; background: #fff;
