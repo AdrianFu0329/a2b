@@ -80,6 +80,8 @@ async function boot() {
     maxPitch: 65,
   });
   map.touchPitch.disable();
+  // Let a flick carry the map on and ease to a stop, instead of MapLibre's default quick brake.
+  map.dragPan.enable({ linearity: 0.25, easing: (t) => 1 - (1 - t) ** 3, deceleration: 1400, maxSpeed: 2000 });
   // Start the attribution collapsed to its (i) button so it doesn't run under the report button on phones.
   map.once('load', () => map.getContainer().querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
   map.on('style.load', () => {
