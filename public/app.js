@@ -105,6 +105,7 @@ const tripSheet = (() => {
   const set = (want, animate = true) => {
     open = want;
     bar().classList.toggle('open', open);
+    bar().classList.remove('reveal');
     if (open) $('alert').classList.add('hidden'); // the alert card would sit on top of the menu
     place(open ? 0 : closedOffset(), animate);
   };
@@ -115,7 +116,10 @@ const tripSheet = (() => {
         from = open ? 0 : closedOffset();
         return true;
       },
-      move: (dy) => place(rubberBand(from + dy, 0, closedOffset()), false),
+      move: (dy) => {
+        bar().classList.add('reveal'); // show the menu rows as the sheet is pulled up
+        place(rubberBand(from + dy, 0, closedOffset()), false);
+      },
       end: (dy, v) => set(settle(open, dy, v, closedOffset())),
     });
     new ResizeObserver(() => set(open, false)).observe($('eta-menu'));
@@ -148,7 +152,11 @@ async function boot() {
     applyMapTheme(map, MAP_THEMES[mapThemeId()]);
     addMapLayers();
   });
-  map.on('dragstart', (e) => e.originalEvent && stopFollowing());
+  map.on('dragstart', (e) => {
+    if (!e.originalEvent) return;
+    stopFollowing();
+    if (mode === 'preview') autoGo.stop(); // looking around the routes: wait for Go
+  });
   map.on('zoomstart', (e) => e.originalEvent && mode === 'drive' && stopFollowing());
   map.on('rotate', () => $('btn-compass').classList.toggle('hidden', Math.abs(map.getBearing()) < 3 || mode === 'drive'));
   map.on('moveend', scheduleReportLoad);
@@ -961,6 +969,7 @@ async function openPreview(place) {
     drawRoutes();
     fitRoutes();
     $('btn-go').disabled = false;
+    autoGo.restart();
   } catch (e) {
     if (mode !== 'preview' || dest !== place) return;
     $('route-list').innerHTML = '';
@@ -1098,15 +1107,49 @@ function renderRouteOptions() {
   });
 }
 
+// Like Waze, the route sheet sets off on the chosen route by itself after a short wait. Picking another route
+// starts the wait again for that one; moving the map, Leave later or closing the sheet stops it.
+const AUTO_GO_S = 8;
+const autoGo = (() => {
+  let timer = null, left = 0;
+  const go = () => $('btn-go');
+  const label = () => (go().innerHTML = timer ? `Go now <span class="go-count">${left}</span>` : 'Go now');
+  const stop = () => {
+    clearInterval(timer);
+    timer = null;
+    go().classList.remove('counting');
+    label();
+  };
+  const blocked = () => mode !== 'preview' || !routes[selected] || go().disabled || document.hidden
+    || ['later', 'panel', 'search', 'auth'].some((id) => !$(id).classList.contains('hidden'));
+  const restart = () => {
+    stop();
+    if (!state.pos || blocked()) return; // without a real location the routes start from the map, not from you
+    left = AUTO_GO_S;
+    void go().offsetWidth; // restart the fill animation
+    go().classList.add('counting');
+    timer = setInterval(() => {
+      if (blocked()) return stop();
+      if (--left > 0) return label();
+      stop();
+      startDrive();
+    }, 1000);
+    label();
+  };
+  return { restart, stop };
+})();
+
 function selectRoute(i) {
   selected = Number(i);
   renderRouteOptions();
   renderPeekSummary();
   drawRoutes();
   drawRouteLabels();
+  autoGo.restart();
 }
 
 function backToBrowse() {
+  autoGo.stop();
   mode = 'browse';
   routes = [];
   dest = null;
@@ -1127,6 +1170,7 @@ function backToBrowse() {
 let laterMode = 'leave';
 
 function openLater() {
+  autoGo.stop();
   const r = routes[selected];
   if (!r) return toast('Wait for the route first.');
   $('later').classList.remove('hidden');
@@ -1186,6 +1230,7 @@ function toLocalInput(d) {
 
 // ================= Driving =================
 function startDrive() {
+  autoGo.stop();
   const route = routes[selected];
   if (!route) return;
   mode = 'drive';
