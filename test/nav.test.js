@@ -126,3 +126,32 @@ test('simulator drives to the end', () => {
   assert.ok(distance(f.position, C) < 1);
   assert.ok(n < 100);
 });
+
+test('roundabouts: exit direction and which way round, from the route line', async () => {
+  const { roundaboutTurn } = await import('../public/nav.js');
+  const { roundaboutIcon } = await import('../public/icons.js');
+  const C = [101.6, 3.1], R = 0.0003, k = Math.cos((3.1 * Math.PI) / 180);
+  const around = (deg) => [C[0] + (R * Math.sin((deg * Math.PI) / 180)) / k, C[1] + R * Math.cos((deg * Math.PI) / 180)];
+  // In from the south heading north, round the circle, out along `exitDeg` (compass position of the exit).
+  const build = (exitDeg, clockwise) => {
+    const coords = [[C[0], C[1] - R * 4], [C[0], C[1] - R * 2.5], around(180)];
+    const enterAt = coords.length - 1;
+    const sweep = clockwise ? (exitDeg - 180 + 360) % 360 : (180 - exitDeg + 360) % 360;
+    for (let s = 10; s <= sweep; s += 10) coords.push(around(clockwise ? 180 + s : 180 - s));
+    const exitAt = coords.length - 1;
+    const out = around(exitDeg), dir = [out[0] - C[0], out[1] - C[1]];
+    coords.push([out[0] + dir[0] * 2, out[1] + dir[1] * 2], [out[0] + dir[0] * 4, out[1] + dir[1] * 4]);
+    const steps = [{ type: 'depart', begin: 0 }, { type: 'roundabout', begin: enterAt }, { type: 'roundabout_exit', begin: exitAt }];
+    return roundaboutTurn(coords, cumulative(coords), steps, 1);
+  };
+  const right = build(90, true); // drive-on-the-left style: clockwise, leave to the east = turning right
+  assert.equal(right.clockwise, true);
+  assert.ok(Math.abs(right.exitAngle - 90) < 3, `exit ${right.exitAngle}`);
+  const left = build(270, false); // anticlockwise, leave to the west = turning left
+  assert.equal(left.clockwise, false);
+  assert.ok(Math.abs(left.exitAngle + 90) < 3, `exit ${left.exitAngle}`);
+  const straight = build(0, true);
+  assert.ok(Math.abs(straight.exitAngle) < 3, `exit ${straight.exitAngle}`);
+  assert.equal(roundaboutTurn([[0, 0], [0, 1]], [0, 1], [{ type: 'left', begin: 0 }], 0), null);
+  assert.match(roundaboutIcon(right), /<svg[\s\S]*A9\.5 9\.5 0 [01] 1 /, 'clockwise arc');
+});

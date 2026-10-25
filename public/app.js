@@ -1,9 +1,9 @@
 import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
-import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance } from './nav.js';
+import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { Glide } from './motion.js';
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
-import { turnIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
+import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
   isSaved, setHomeWork, armBack,
@@ -1225,9 +1225,20 @@ function driveZoom() {
 
 const drivePadding = () => ({ top: Math.round(innerHeight * 0.42), bottom: 110, left: 0, right: 0 });
 
+// A step's arrow; roundabouts are drawn with their real exit direction (cached per step).
+const roundaboutIcons = new WeakMap();
+function stepIcon(step) {
+  if (step.type !== 'roundabout' || !nav) return turnIcon(step.type);
+  if (!roundaboutIcons.has(step)) {
+    const turn = roundaboutTurn(nav.coords, nav.cum, nav.steps, nav.steps.indexOf(step));
+    roundaboutIcons.set(step, turn ? roundaboutIcon(turn) : turnIcon(step.type));
+  }
+  return roundaboutIcons.get(step);
+}
+
 function renderBanner() {
   const { next, distToNext, then } = live;
-  $('turn-icon').innerHTML = turnIcon(next.type);
+  $('turn-icon').innerHTML = stepIcon(next);
   $('turn-dist').textContent = formatDistance(distToNext, state.settings.units);
   let street = next.street || next.instruction.replace(/\.$/, '');
   if (next.type === 'roundabout' && next.exit) street = `${ordinal(next.exit)} exit${next.street ? ` · ${next.street}` : ''}`;
@@ -1235,7 +1246,7 @@ function renderBanner() {
   if (next.type === 'stop') street = stops[0]?.name || 'Your stop';
   $('turn-street').textContent = street;
   $('then').classList.toggle('hidden', !then);
-  if (then) $('then-icon').innerHTML = turnIcon(then.type);
+  if (then) $('then-icon').innerHTML = stepIcon(then);
   renderLanes(next, distToNext);
 }
 

@@ -5,6 +5,27 @@ const ANGLES = {
   merge: 0, merge_right: 30, merge_left: -30, roundabout_exit: 45,
 };
 
+// A roundabout drawn the way this route takes it: in from the bottom, round the circle (clockwise where people
+// drive on the left) and out along the exit's real direction. `turn` comes from roundaboutTurn() in nav.js.
+export function roundaboutIcon(turn, color = '#fff') {
+  const cx = 24, cy = 22, r = 9.5;
+  const exit = (((turn.exitAngle % 360) + 360) % 360); // 0 = straight on, 90 = right, as compass angles on the icon
+  const at = (deg, rad) => [cx + rad * Math.sin((deg * Math.PI) / 180), cy - rad * Math.cos((deg * Math.PI) / 180)];
+  // Going round from the entry at the bottom (180°) to the exit, in the route's direction.
+  let sweep = turn.clockwise ? (exit - 180 + 360) % 360 : (180 - exit + 360) % 360;
+  sweep = Math.min(Math.max(sweep, 45), 318); // a U-turn comes out beside the way in, not on top of it
+  const end = turn.clockwise ? 180 + sweep : 180 - sweep;
+  const [sx, sy] = at(180, r), [ex, ey] = at(end, r), [tx, ty] = at(end, 20);
+  const f = (n) => n.toFixed(1);
+  const head = [-32, 32].map((spread) => {
+    const back = end + 180 + spread;
+    return `M${f(tx)} ${f(ty)} L${f(tx + 7 * Math.sin((back * Math.PI) / 180))} ${f(ty - 7 * Math.cos((back * Math.PI) / 180))}`;
+  });
+  const s = `stroke="${color}" stroke-linecap="round" stroke-linejoin="round" fill="none"`;
+  return `<svg viewBox="0 0 48 48"><circle cx="${cx}" cy="${cy}" r="${r}" ${s} stroke-width="3" opacity=".4"/>`
+    + `<path d="M24 46V${f(sy)} A${r} ${r} 0 ${sweep > 180 ? 1 : 0} ${turn.clockwise ? 1 : 0} ${f(ex)} ${f(ey)} L${f(tx)} ${f(ty)} ${head.join(' ')}" ${s} stroke-width="5"/></svg>`;
+}
+
 export function turnIcon(type, color = '#fff') {
   const s = `stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"`;
   if (type?.startsWith('arrive') || type === 'stop') {

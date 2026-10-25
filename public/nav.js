@@ -46,6 +46,28 @@ export function sliceAlong(coords, cum, d0, d1) {
   return out;
 }
 
+// How a roundabout is driven, read from the route's own line: the exit's direction relative to the way in
+// (degrees, -180..180, positive = to the right) and whether the route goes round clockwise (as where people drive
+// on the left). Null when the step isn't a roundabout with a following exit step.
+export function roundaboutTurn(coords, cum, steps, i) {
+  const enter = steps[i], exit = steps[i + 1];
+  if (enter?.type !== 'roundabout' || !exit) return null;
+  const a = cum[enter.begin], b = cum[exit.begin];
+  if (!(b > a)) return null;
+  const into = sliceAlong(coords, cum, Math.max(0, a - 25), a);
+  const out = sliceAlong(coords, cum, b, Math.min(cum.at(-1), b + 25));
+  const inBearing = bearing(into[0], into.at(-1));
+  const outBearing = bearing(out[0], out.at(-1));
+  // Which way the route turns while on the roundabout: summed heading changes, right turns positive.
+  const round = sliceAlong(coords, cum, a, b);
+  let turning = 0;
+  for (let k = 2; k < round.length; k++) {
+    if (distance(round[k - 2], round[k - 1]) < 0.5 || distance(round[k - 1], round[k]) < 0.5) continue;
+    turning += angleDiff(bearing(round[k - 2], round[k - 1]), bearing(round[k - 1], round[k]));
+  }
+  return { exitAngle: angleDiff(inBearing, outBearing), clockwise: turning >= 0 };
+}
+
 // Reports that sit on the route (within `maxDist` metres of it), sorted by distance from the start.
 export function reportsAlong(route, reports, maxDist = 40) {
   const cum = route.cum ?? cumulative(route.coords);
