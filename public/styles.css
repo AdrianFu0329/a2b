@@ -96,9 +96,11 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bott
 
 /* ---------- Bottom bar: avatar + "Where to?" ---------- */
 .bottom-bar {
-  position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 14px calc(14px + var(--safe-bottom)); display: flex; gap: 10px;
-  background: linear-gradient(to top, var(--bg) 62%, transparent);
+  /* No backdrop: the map runs to the bottom of the screen and the buttons' shadows keep them readable. */
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 14px max(14px, calc(var(--safe-bottom) + 4px)); display: flex; gap: 10px;
+  pointer-events: none;
 }
+.bottom-bar > * { pointer-events: auto; }
 .where-to {
   flex: 1; height: 56px; border-radius: 28px; background: var(--bg); box-shadow: var(--shadow); display: flex; align-items: center; gap: 12px;
   padding: 0 20px; font-size: 18px; font-weight: 600; color: var(--muted); text-align: left;
