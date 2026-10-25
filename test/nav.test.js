@@ -155,3 +155,14 @@ test('roundabouts: exit direction and which way round, from the route line', asy
   assert.equal(roundaboutTurn([[0, 0], [0, 1]], [0, 1], [{ type: 'left', begin: 0 }], 0), null);
   assert.match(roundaboutIcon(right), /<svg[\s\S]*A9\.5 9\.5 0 [01] 1 /, 'clockwise arc');
 });
+
+test('sheets settle the way people expect', async () => {
+  const { settle, rubberBand } = await import('../public/sheet-drag.js');
+  assert.equal(settle(false, -10, -0.8, 300), true, 'a quick flick up opens');
+  assert.equal(settle(true, 15, 0.6, 300), false, 'a quick flick down closes');
+  assert.equal(settle(false, -90, -0.1, 300), true, 'a slow drag past a quarter goes on');
+  assert.equal(settle(false, -40, -0.1, 300), false, 'a short nudge springs back');
+  assert.equal(settle(true, 40, 0.1, 300), true);
+  assert.equal(rubberBand(50, 0, 100), 50);
+  assert.ok(rubberBand(-100, 0, 100) > -25, 'pulling past the end only stretches a little');
+});

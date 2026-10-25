@@ -137,6 +137,12 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bott
 #preview.peek #route-list, #preview.peek #route-status, #preview.peek #dest-addr { display: none; }
 #preview.peek .peek-summary { display: block; }
 #preview.peek .sheet-actions { margin-top: 10px; }
+#preview { touch-action: none; user-select: none; -webkit-user-select: none; }
+/* While dragging, the sheet's height follows the finger: the route list gives way, header and Go stay. */
+#preview.dragging { display: flex; flex-direction: column; overflow: hidden; animation: none; }
+#preview.dragging > * { flex: none; }
+#preview.dragging #route-list { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+#preview.settling { transition: height 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
 @media (min-width: 720px) {
   .sheet { left: 16px; right: auto; width: 420px; bottom: 16px; border-radius: var(--radius); }
   .screen { left: 0; right: auto; width: 440px; box-shadow: var(--shadow); }

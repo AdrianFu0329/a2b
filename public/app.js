@@ -3,6 +3,7 @@ import { distance, bearing, cumulative, formatDistance, formatDuration, formatCl
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
+import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -85,8 +86,8 @@ window.matchMedia = (query) => realMatchMedia(/prefers-reduced-motion:\s*reduce/
 // it follows the finger: drag it up or down from anywhere on it, and a flick finishes the move.
 const tripSheet = (() => {
   let open = false;
-  let drag = null; // { startY, startOffset, lastY, lastT, v, moved }
-  let draggedAt = 0;
+  let from = 0; // where the sheet sat when the drag began
+  let justDragged = () => false;
   const bar = () => $('eta-bar');
   // How far down the closed sheet sits: the whole menu, plus the gap under a floating sheet on wide screens.
   const closedOffset = () => $('eta-menu').offsetHeight + (parseFloat(getComputedStyle(bar()).bottom) || 0);
@@ -102,54 +103,18 @@ const tripSheet = (() => {
   };
 
   function init() {
-    const el = bar();
-    el.addEventListener('pointerdown', (e) => {
-      if (e.button > 0) return;
-      drag = { startY: e.clientY, startOffset: open ? 0 : closedOffset(), lastY: e.clientY, lastT: e.timeStamp, v: 0, moved: false, id: e.pointerId };
+    justDragged = sheetGesture(bar(), {
+      start: () => {
+        from = open ? 0 : closedOffset();
+        return true;
+      },
+      move: (dy) => place(rubberBand(from + dy, 0, closedOffset()), false),
+      end: (dy, v) => set(settle(open, dy, v, closedOffset())),
     });
-    el.addEventListener('pointermove', (e) => {
-      if (!drag || e.pointerId !== drag.id) return;
-      const dy = e.clientY - drag.startY;
-      if (!drag.moved && Math.abs(dy) < 6) return; // still a tap
-      if (!drag.moved) {
-        drag.moved = true;
-        el.setPointerCapture(e.pointerId); // keep the drag even if the finger leaves the sheet
-      }
-      const max = closedOffset();
-      let y = drag.startOffset + dy;
-      if (y < 0) y = -Math.sqrt(-y) * 2; // a little rubber band past fully open
-      if (y > max) y = max + Math.sqrt(y - max) * 2;
-      place(y, false);
-      const dt = e.timeStamp - drag.lastT;
-      if (dt > 0) drag.v = 0.7 * ((e.clientY - drag.lastY) / dt) + 0.3 * drag.v; // px/ms, smoothed
-      drag.lastY = e.clientY;
-      drag.lastT = e.timeStamp;
-    });
-    const end = (e) => {
-      if (!drag || e.pointerId !== drag.id) return;
-      const d = drag;
-      drag = null;
-      if (!d.moved) return; // a tap: the button's click handles it
-      draggedAt = Date.now();
-      const dy = e.clientY - d.startY;
-      // A flick goes the way it was flicked. A slower drag goes that way once it covers a quarter of the
-      // distance; anything shorter springs back to where it started.
-      let wantOpen = open;
-      if (Math.abs(d.v) > 0.35) wantOpen = d.v < 0;
-      else if (Math.abs(dy) > closedOffset() / 4) wantOpen = dy < 0;
-      set(wantOpen);
-    };
-    el.addEventListener('pointerup', end);
-    el.addEventListener('pointercancel', end);
-    new ResizeObserver(() => !drag && set(open, false)).observe($('eta-menu'));
+    new ResizeObserver(() => set(open, false)).observe($('eta-menu'));
   }
 
-  return {
-    init,
-    set,
-    isOpen: () => open,
-    justDragged: () => Date.now() - draggedAt < 350, // the click that ends a drag isn't a tap
-  };
+  return { init, set, isOpen: () => open, justDragged: () => justDragged() };
 })();
 
 boot();
@@ -1020,33 +985,48 @@ function routeAtTap(e) {
 }
 
 // The route sheet can be pulled down to a slim bar (destination, chosen route, Go) to see the routes on the
-// map, and pushed back up. Drag its top, or tap the grabber.
+// map, and pushed back up. It follows the finger like an iPhone sheet: while dragging, its height tracks
+// the finger (the route list shrinks, the header and Go stay put); a flick or a long enough drag settles it.
 function setupSheetDrag() {
   const sheet = $('preview');
-  let startY = null, dy = 0;
-  const set = (peek) => {
-    sheet.classList.toggle('peek', peek);
-    sheet.style.transform = '';
-    if (mode === 'preview' && routes.length) requestAnimationFrame(fitRoutes);
+  let fullH = 0, peekH = 0, startH = 0, timer = null;
+  const peeked = () => sheet.classList.contains('peek');
+  // Both heights, measured by flipping the layout for a moment (no paint happens in between).
+  const measure = () => {
+    const was = peeked();
+    sheet.classList.remove('peek');
+    fullH = sheet.offsetHeight;
+    sheet.classList.add('peek');
+    peekH = sheet.offsetHeight;
+    sheet.classList.toggle('peek', was);
   };
-  sheet.querySelector('.grabber').onclick = () => set(!sheet.classList.contains('peek'));
-  sheet.addEventListener('touchstart', (e) => {
-    const top = sheet.getBoundingClientRect().top;
-    if (e.touches.length !== 1 || e.touches[0].clientY - top > 90 || e.target.closest('button')) return;
-    startY = e.touches[0].clientY;
-    dy = 0;
-  }, { passive: true });
-  sheet.addEventListener('touchmove', (e) => {
-    if (startY == null) return;
-    dy = e.touches[0].clientY - startY;
-    sheet.style.transform = `translateY(${Math.max(-30, Math.min(dy, sheet.offsetHeight - 120))}px)`;
-  }, { passive: true });
-  sheet.addEventListener('touchend', () => {
-    if (startY == null) return;
-    startY = null;
-    if (dy > 50) set(true);
-    else if (dy < -40) set(false);
-    else sheet.style.transform = '';
+  const set = (peek, animate = true) => {
+    clearTimeout(timer);
+    const done = () => {
+      sheet.classList.remove('dragging', 'settling');
+      sheet.style.height = '';
+      sheet.classList.toggle('peek', peek);
+      if (mode === 'preview' && routes.length) requestAnimationFrame(fitRoutes);
+    };
+    if (!animate || !sheet.classList.contains('dragging')) return done();
+    sheet.classList.add('settling');
+    sheet.style.height = `${peek ? peekH : fullH}px`;
+    timer = setTimeout(done, 300);
+  };
+  sheet.querySelector('.grabber').onclick = () => set(!peeked());
+  sheetGesture(sheet, {
+    // Not from inside a route list that's scrolled, so long lists can still be scrolled back up.
+    start: (e) => !(e.target.closest('#route-list') && $('route-list').scrollTop > 0),
+    move: (dy) => {
+      if (!sheet.classList.contains('dragging')) {
+        measure();
+        startH = peeked() ? peekH : fullH;
+        sheet.classList.remove('peek');
+        sheet.classList.add('dragging');
+      }
+      sheet.style.height = `${Math.round(rubberBand(startH - dy, peekH, fullH))}px`;
+    },
+    end: (dy, v) => set(!settle(startH === fullH, dy, v, fullH - peekH)),
   });
 }
 
