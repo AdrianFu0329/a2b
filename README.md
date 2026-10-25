@@ -138,6 +138,20 @@ npm run places          # Malaysia by default; see scripts/build-places.py --hel
 npm run deploy
 ```
 
+### Roads under construction
+
+OpenStreetMap sometimes marks one half of a new dual carriageway as under construction and leaves the other
+half open, so the router drives down it. `npm run construction` builds the list of roads under construction
+from Overture (kept in git, in `public/construction/`), and routes that run right alongside one are asked
+for again around it (`src/lib/construction.js`).
+
+### Monthly updates
+
+`.github/workflows/map-data.yml` checks every Wednesday for a new Overture release. When there is one, it
+rebuilds both data sets, runs the tests, deploys, and commits the new construction data. It needs a
+`CLOUDFLARE_API_TOKEN` repository secret (Cloudflare's "Edit Cloudflare Workers" token template). It can also
+be run by hand from the Actions tab.
+
 ## How it's built
 
 ```
