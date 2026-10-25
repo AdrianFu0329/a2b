@@ -2,7 +2,6 @@ import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong } from './nav.js';
 import { Glide } from './motion.js';
-import { unlockAudio } from './voice.js';
 import { turnIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
@@ -493,7 +492,6 @@ function wireUi() {
   $('btn-report').onclick = openReportMenu;
   $('btn-report-drive').onclick = openReportMenu;
   $('btn-sound').onclick = $('btn-sound-browse').onclick = () => {
-    unlockAudio();
     saveSettings({ voice: !state.settings.voice });
     refreshSound();
     toast(state.settings.voice ? 'Sound on' : 'Sound off');

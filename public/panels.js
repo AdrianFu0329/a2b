@@ -1,7 +1,7 @@
 // "My A2B" menu, sign in / sign up, settings, saved places, leaderboard and about.
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
-import { NATURAL_VOICES, voiceChoice, setVoiceChoice, deviceVoices, isGoodDeviceVoice } from './voice.js';
+import { voiceChoice, setVoiceChoice, deviceVoices, isGoodVoice } from './voice.js';
 
 let ctx; // callbacks from app.js
 let authMode = 'signup';
@@ -150,21 +150,18 @@ function openPanel(title, html) {
   return $('panel-body');
 }
 
-// Natural voices first (they sound human), then this phone's own voices, best first. Tapping one picks it and
-// plays a sample. Phone voices differ per device, so the choice is kept on this device only.
+// This phone's voices, best first. Tapping one picks it and plays a sample. Voices differ per device, so the
+// choice is kept on this device only.
 function renderVoiceList() {
   const box = $('voice-list');
   const now = voiceChoice();
-  const english = (navigator.language || 'en').toLowerCase().startsWith('en');
   const row = (choice, name, note) =>
     `<button class="set-row voice-row${choice === now ? ' on' : ''}" data-voice="${esc(choice)}"><span>${esc(name)}<small>${esc(note)}</small></span></button>`;
-  const phone = deviceVoices().slice(0, 6);
+  const phone = deviceVoices().slice(0, 8);
   const iphone = /iphone|ipad/i.test(navigator.userAgent);
   box.innerHTML = `
-    ${english ? `<p class="voice-head">Natural voices · need internet</p>${NATURAL_VOICES.map((v) => row(`natural:${v.id}`, v.name, v.note)).join('')}` : ''}
-    <p class="voice-head">On this phone · work offline</p>
-    ${row('device:auto', 'Automatic', 'The best voice this phone has')}
-    ${phone.map((v) => row(`device:${v.name}`, v.name, `${v.lang}${isGoodDeviceVoice(v) ? ' · high quality' : ''}`)).join('')}
+    ${row('auto', 'Automatic', 'The best voice this phone has')}
+    ${phone.map((v) => row(v.name, v.name, `${v.lang}${isGoodVoice(v) ? ' · high quality' : ''}`)).join('')}
     ${iphone ? '<p class="hint" style="padding:6px 18px 2px">For a better offline voice, download an Enhanced or Premium one in iPhone Settings › Accessibility › Spoken Content › Voices, then pick it here.</p>' : ''}`;
   box.onclick = (e) => {
     const b = e.target.closest('[data-voice]');

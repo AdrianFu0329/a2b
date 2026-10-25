@@ -8,11 +8,6 @@ directory = "./public"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*"]
 
-# Natural-sounding voices for spoken directions (/api/tts). Workers AI usage is billed to the account
-# beyond its free daily allowance; without this binding the app uses the phone's own voices.
-[ai]
-binding = "AI"
-
 [[d1_databases]]
 binding = "DB"
 database_name = "a2b"
