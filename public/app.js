@@ -963,7 +963,7 @@ async function openPreview(place) {
   try {
     routes = await requestRoutes(from ?? map.getCenter().toArray(), [place.lng, place.lat]);
     if (mode !== 'preview' || dest !== place) return;
-    $('route-status').textContent = from ? '' : status;
+    $('route-status').textContent = [from ? '' : status, routeNote(routes)].filter(Boolean).join(' ');
     renderRouteOptions();
     renderPeekSummary();
     drawRoutes();
@@ -977,9 +977,16 @@ async function openPreview(place) {
   }
 }
 
+// What the server did about closures, worth a line under the route options.
+function routeNote(rs) {
+  if (rs.closuresIgnored) return "Couldn't find a way around a reported closure, so these routes may pass it.";
+  if (rs.constructionAvoided) return 'Avoiding a road that looks to be under construction.';
+  return '';
+}
+
 async function requestRoutes(from, to, heading, via = []) {
   const s = state.settings;
-  const { routes: rs } = await api('/api/route', {
+  const { routes: rs, closures_ignored: closuresIgnored, construction_avoided: constructionAvoided } = await api('/api/route', {
     method: 'POST',
     body: {
       from, to, heading,
@@ -990,7 +997,7 @@ async function requestRoutes(from, to, heading, via = []) {
     },
   });
   for (const r of rs) r.cum = cumulative(r.coords);
-  return rs;
+  return Object.assign(rs, { closuresIgnored, constructionAvoided });
 }
 
 // Room the map leaves for the route sheet: its real height on a phone, so a collapsed sheet shows more map.
@@ -1101,6 +1108,7 @@ function renderRouteOptions() {
     const reps = (r.reports ?? []).length;
     if (reps) badges.push(`<span class="badge">${reps} report${reps > 1 ? 's' : ''}</span>`);
     if (r.delay > 0) badges.push(`<span class="badge warn">+${formatDuration(r.delay)} traffic</span>`);
+    if (r.warning === 'construction') badges.push('<span class="badge warn">May pass roadworks</span>');
     b.innerHTML = `<span class="r-time">${formatDuration(r.duration)}</span><span class="r-info"><b>${r.via ? `via ${esc(r.via)}` : 'Route'} </b>${formatDistance(r.distance, state.settings.units)} · arrive ${formatClock(new Date(Date.now() + r.duration * 1000))}<br>${badges.join('')}</span>`;
     b.onclick = () => selectRoute(i);
     box.append(b);
@@ -1424,6 +1432,7 @@ async function reroute(fix, { force = false, note } = {}) {
     loadReports(true);
     if (sim) startSimulation(rs[0]);
     speak(note ?? 'Route recalculated.');
+    if (rs.closuresIgnored) toast("Couldn't find a way around a reported closure.");
     if (share) pushShare(true);
   } catch (e) {
     toast(e.message);

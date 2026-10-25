@@ -55,7 +55,8 @@ export function reportsRepo(db) {
       return rows.map((r) => publicReport(r, viewerId));
     },
 
-    async create(user, body) {
+    // roadAt(point, heading): where to block the road for a closure (see roadMidpoint), or null.
+    async create(user, body, { roadAt } = {}) {
       const { type, subtype = null, comment = null } = body;
       const lat = Number(body.lat), lng = Number(body.lng);
       if (!isValidReport(type, subtype)) throw httpError('Unknown report type.', 400);
@@ -88,6 +89,10 @@ export function reportsRepo(db) {
         db.prepare('UPDATE users SET points = points + ? WHERE id = ?').bind(pts, user.id),
       ]);
       const row = ins.results[0];
+      if (type === 'closure' && roadAt) {
+        const at = await roadAt([lng, lat], heading).catch(() => null);
+        if (at) await db.prepare('INSERT OR REPLACE INTO closure_blocks (report_id, lat, lng) VALUES (?, ?, ?)').bind(row.id, at[1], at[0]).run();
+      }
       return { report: publicReport({ ...row, reporter: user.name }, user.id), points: pts };
     },
 
@@ -133,7 +138,11 @@ export function reportsRepo(db) {
     async closuresNear([w, s, e, n]) {
       return (
         await db
-          .prepare("SELECT lat, lng FROM reports WHERE type = 'closure' AND removed = 0 AND expires_at > ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 40")
+          .prepare(
+            `SELECT COALESCE(b.lat, r.lat) AS lat, COALESCE(b.lng, r.lng) AS lng FROM reports r LEFT JOIN closure_blocks b ON b.report_id = r.id
+             WHERE r.type = 'closure' AND r.removed = 0 AND r.expires_at > ? AND r.lat BETWEEN ? AND ? AND r.lng BETWEEN ? AND ?
+             ORDER BY r.created_at DESC LIMIT 35`,
+          )
           .bind(Date.now(), s, n, w, e)
           .all()
       ).results.map((r) => [r.lng, r.lat]);

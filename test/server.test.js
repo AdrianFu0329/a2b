@@ -12,6 +12,11 @@ import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 const LINE = Array.from({ length: 21 }, (_, i) => [13.4, 52.5 + 0.00045 * i]); // ~1 km north
 let lastRouteBody = null;
 let routingDown = false;
+let construction = null; // a road under construction for the fake Overpass, as [[lng, lat], ...]
+let detourTime = 150;
+let failWithExcludes = false;
+let lastLocateBody = null;
+const DETOUR = LINE.map(([lng, lat]) => [lng + 0.003, lat]); // a parallel street ~200 m east
 let osmLookups = 0;
 
 function fakeTrip(coords, time) {
@@ -29,9 +34,21 @@ function fakeTrip(coords, time) {
 
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
+  if (u.includes('overpass')) {
+    const elements = construction ? [{ type: 'way', id: 1, tags: { highway: 'construction', construction: 'secondary' }, geometry: construction.map(([lon, lat]) => ({ lat, lon })) }] : [];
+    return Response.json({ elements });
+  }
+  if (u.includes('/locate')) {
+    lastLocateBody = JSON.parse(init.body);
+    const { lat, lon } = lastLocateBody.locations[0];
+    return Response.json([{ edges: [{ distance: 4, edge_info: { shape: encode([[lon, lat - 0.001], [lon, lat + 0.003]]) } }] }]);
+  }
   if (u.includes('/route')) {
     if (routingDown) return new Response('Too Many Requests', { status: 429 });
     lastRouteBody = JSON.parse(init.body);
+    const ex = lastRouteBody.exclude_locations;
+    if (failWithExcludes && ex.length) return Response.json({ error: 'No path could be found for input' }, { status: 400 });
+    if (ex.some((l) => Math.abs(l.lon - 13.4) < 0.0003 && l.lat > 52.5 && l.lat < 52.509)) return Response.json({ trip: fakeTrip(DETOUR, detourTime) });
     if (lastRouteBody.locations.length === 3) {
       const a = fakeTrip(LINE.slice(0, 11), 60), b = fakeTrip(LINE.slice(10), 60);
       return Response.json({ trip: { summary: { length: 2, time: 120 }, legs: [a.legs[0], b.legs[0]] } });
@@ -392,5 +409,45 @@ test('an overloaded routing server reads as busy, not as no route', async () => 
     assert.match(r.body.error, /busy/);
   } finally {
     routingDown = false;
+  }
+});
+
+test('a road beside one under construction is driven around, unless the detour costs too much', async () => {
+  construction = LINE.map(([lng, lat]) => [lng + 0.00015, lat]); // ~10 m east of the route, all the way
+  await env.DB.prepare('DELETE FROM construction_tiles').run(); // earlier routes cached this area as clear
+  try {
+    let r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    assert.equal(r.status, 200);
+    assert.ok(r.body.construction_avoided >= 1);
+    assert.ok(r.body.routes.every((x) => x.coords[5][0] > 13.402 && !x.warning), 'took the detour');
+    // Over half as long again isn't worth it: keep the direct route, and say what it passes.
+    detourTime = 1000;
+    r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    assert.equal(r.body.construction_avoided, 0);
+    assert.equal(r.body.routes.find((x) => x.coords.length === 21).warning, 'construction');
+  } finally {
+    construction = null;
+    detourTime = 150;
+    await env.DB.prepare('DELETE FROM construction_tiles').run();
+  }
+});
+
+test('a closure blocks the road it was reported on, and says so when it cannot be avoided', async () => {
+  const dave = client();
+  await dave('POST', '/api/auth/signup', { email: 'dave.closures@test.com', password: 'password4', name: 'Dave' });
+  const rep = await dave('POST', '/api/reports', { type: 'closure', lat: 52.53, lng: 13.44, heading: 0 });
+  assert.equal(rep.status, 201);
+  assert.equal(lastLocateBody.locations[0].heading, 0, 'the heading picks the road');
+  let r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+  assert.ok(lastRouteBody.exclude_locations.some((l) => l.lon === 13.44 && Math.abs(l.lat - 52.531) < 1e-6), 'middle of the reported stretch');
+  assert.equal(r.body.closures_ignored, false);
+  failWithExcludes = true;
+  try {
+    r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.closures_ignored, true);
+    assert.equal(r.body.closures_avoided, 0);
+  } finally {
+    failWithExcludes = false;
   }
 });

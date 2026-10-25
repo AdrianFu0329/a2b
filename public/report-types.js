@@ -26,7 +26,7 @@ export const REPORT_TYPES = {
     subtypes: { left: 'Left lane', center: 'Center lane', right: 'Right lane' },
   },
   closure: {
-    label: 'Closure', color: '#11181c', life: 360, points: 8,
+    label: 'Closure', color: '#11181c', life: 3 * 24 * 60, points: 8, // until drivers say it's open (or about 3 days)
     subtypes: { construction: 'Construction', event: 'Event', hazard: 'Hazard' },
   },
   camera: {

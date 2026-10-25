@@ -3,7 +3,8 @@ import {
   hashPassword, verifyPassword, normalizeEmail, validatePassword, cleanName, createSession, currentUser, destroySession,
   sessionCookie, publicUser,
 } from './lib/auth.js';
-import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox } from './lib/providers.js';
+import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
+import { constructionTwins } from './lib/construction.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
 
@@ -249,12 +250,32 @@ async function route(request, env, url) {
     const area = bbox([from, to], 0.05);
     const exclude = body.avoid_closures === false ? [] : await reports.closuresNear(area);
     const via = (Array.isArray(body.via) ? body.via : []).slice(0, 3).map(lngLat).filter(Boolean);
-    const routes = await fetchRoutes(env, {
+    const opts = {
       from, to, via, exclude,
       avoid: body.avoid ?? {},
       units: body.units === 'imperial' ? 'imperial' : 'metric',
       lang: typeof body.lang === 'string' && /^[a-z]{2}(-[A-Z]{2})?$/.test(body.lang) ? body.lang : 'en-US',
       heading: Number(body.heading),
+    };
+    const first = await fetchRoutes(env, opts);
+    let { routes } = first;
+    const closuresIgnored = first.dropped;
+    // A route along a road that's probably still being built (see construction.js): ask again around it, and
+    // take the new routes unless they're a lot slower. Kept routes that still use one carry a warning.
+    let constructionAvoided = 0;
+    let twins = await constructionTwins(db, routes).catch(() => routes.map(() => []));
+    const spots = twins.flat().slice(0, MAX_EXCLUDE - exclude.length);
+    if (spots.length && !closuresIgnored) {
+      const again = await fetchRoutes(env, { ...opts, exclude: [...exclude, ...spots] }).catch(() => null);
+      const fastest = (rs) => Math.min(...rs.map((r) => r.duration));
+      if (again && !again.dropped && fastest(again.routes) <= fastest(routes) * 1.5 + 300) {
+        routes = again.routes;
+        constructionAvoided = spots.length;
+        twins = await constructionTwins(db, routes).catch(() => routes.map(() => []));
+      }
+    }
+    routes.forEach((r, i) => {
+      if (twins[i]?.length) r.warning = 'construction';
     });
     const [live] = await Promise.all([
       reports.inBox(bbox(routes.flatMap((r) => [r.coords[0], r.coords.at(-1)]).concat([from, to]), 0.2), user?.id),
@@ -271,7 +292,7 @@ async function route(request, env, url) {
     plazas.forEach(([t], i) => Object.assign(t, details[i] ?? {}));
     annotateWithReports(routes, live);
     routes.sort((a, b) => a.duration - b.duration);
-    return json({ routes, closures_avoided: exclude.length });
+    return json({ routes, closures_avoided: closuresIgnored ? 0 : exclude.length, closures_ignored: closuresIgnored, construction_avoided: constructionAvoided });
   }
 
   // ---------- Reports ----------
@@ -287,7 +308,7 @@ async function route(request, env, url) {
 
   if (path === '/api/reports' && method === 'POST') {
     const u = needUser();
-    return json(await reports.create(u, await readJson(request)), 201);
+    return json(await reports.create(u, await readJson(request), { roadAt: (p, heading) => roadMidpoint(env, p, heading) }), 201);
   }
 
   if (parts[1] === 'reports' && parts[3] === 'vote' && method === 'POST') {

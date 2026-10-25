@@ -1,7 +1,7 @@
 // Place search (Photon) and driving routes (Valhalla), normalised into the shapes the app uses.
 // Both default to free public servers; point GEOCODER_URL / ROUTING_URL at your own to scale up.
 
-import { decodePolyline, cumulative, distance } from '../../public/geo.js';
+import { decodePolyline, cumulative, distance, atDistance } from '../../public/geo.js';
 import { normalizeText, matches } from '../../public/text.js';
 
 export { normalizeText, matches };
@@ -153,6 +153,8 @@ const MANEUVER = {
   24: 'slight_left', 25: 'merge', 26: 'roundabout', 27: 'roundabout_exit', 28: 'ferry', 29: 'ferry', 37: 'merge_right', 38: 'merge_left',
 };
 
+export const MAX_EXCLUDE = 50; // the public Valhalla server's limit on avoided spots
+
 export function buildRouteRequest({ from, to, via = [], avoid = {}, units = 'metric', lang = 'en-US', heading, exclude = [] }) {
   const start = { lat: from[1], lon: from[0] };
   if (Number.isFinite(heading)) {
@@ -169,7 +171,7 @@ export function buildRouteRequest({ from, to, via = [], avoid = {}, units = 'met
         use_ferry: avoid.ferries ? 0 : 0.5,
       },
     },
-    exclude_locations: exclude.slice(0, 40).map(([lng, lat]) => ({ lat, lon: lng })),
+    exclude_locations: exclude.slice(0, MAX_EXCLUDE).map(([lng, lat]) => ({ lat, lon: lng })),
     alternates: via.length ? 0 : 2, // Valhalla only offers alternatives between two points
     units: units === 'imperial' ? 'miles' : 'kilometers',
     language: lang,
@@ -178,6 +180,7 @@ export function buildRouteRequest({ from, to, via = [], avoid = {}, units = 'met
   };
 }
 
+// { routes, dropped }: dropped is true when no route got round the avoided spots, so they were ignored.
 export async function fetchRoutes(env, opts) {
   const body = buildRouteRequest(opts);
   const res = await upstream(env.ROUTING_URL || 'https://valhalla1.openstreetmap.de/route', {
@@ -188,10 +191,31 @@ export async function fetchRoutes(env, opts) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     // Valhalla 442/171 etc: no route. Retrying without closures may still help the driver.
-    if (body.exclude_locations.length && opts.exclude?.length) return fetchRoutes(env, { ...opts, exclude: [] });
+    if (body.exclude_locations.length && opts.exclude?.length) return { ...(await fetchRoutes(env, { ...opts, exclude: [] })), dropped: true };
     throw httpError(data.error || 'No route found between these places.', res.status === 400 ? 404 : 502);
   }
-  return [data.trip, ...(data.alternates ?? []).map((a) => a.trip)].filter(Boolean).map((t) => normalizeTrip(t, opts.units));
+  const trips = [data.trip, ...(data.alternates ?? []).map((a) => a.trip)].filter(Boolean);
+  return { routes: trips.map((t) => normalizeTrip(t, opts.units)), dropped: false };
+}
+
+// The middle of the road a driver is on, found by the router (heading picks the right road at a junction).
+// Avoiding that point avoids the whole stretch between junctions, both ways. Null if no road is near.
+export async function roadMidpoint(env, [lng, lat], heading) {
+  const loc = { lat, lon: lng };
+  if (Number.isFinite(heading)) Object.assign(loc, { heading: Math.round(heading), heading_tolerance: 45 });
+  const base = env.ROUTING_URL || 'https://valhalla1.openstreetmap.de/route';
+  const res = await fetch(base.replace(/\/route$/, '/locate'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'user-agent': UA },
+    body: JSON.stringify({ locations: [loc], costing: 'auto', verbose: true }),
+    signal: AbortSignal.timeout(4000),
+  });
+  if (!res.ok) return null;
+  const edge = (await res.json())?.[0]?.edges?.find((e) => e.edge_info?.shape && e.distance <= 60);
+  if (!edge) return null;
+  const line = decodePolyline(edge.edge_info.shape);
+  const cum = cumulative(line);
+  return atDistance(line, cum, cum.at(-1) / 2);
 }
 
 // One continuous route, even with stops: legs are joined end to end and each stop becomes a "stop" step.

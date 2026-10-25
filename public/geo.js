@@ -39,6 +39,14 @@ export function projectOnSegment(p, a, b) {
   return { t, point, dist: distance(p, point) };
 }
 
+// The point d metres along a line, given its cumulative() distances.
+export function atDistance(coords, cum, d) {
+  let i = 1;
+  while (i < coords.length - 1 && cum[i] < d) i++;
+  const span = cum[i] - cum[i - 1];
+  return interpolate(coords[i - 1], coords[i], span ? Math.max(0, Math.min(1, (d - cum[i - 1]) / span)) : 0);
+}
+
 export function cumulative(coords) {
   const out = new Float64Array(coords.length);
   for (let i = 1; i < coords.length; i++) out[i] = out[i - 1] + distance(coords[i - 1], coords[i]);
