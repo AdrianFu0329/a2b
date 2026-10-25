@@ -8,6 +8,7 @@ import { constructionTwins } from './lib/construction.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
+import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
 
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
@@ -41,6 +42,8 @@ export default {
       env.DB.prepare('DELETE FROM trips WHERE updated_at < ?').bind(now - 2 * 86400_000),
       env.DB.prepare('DELETE FROM login_failures WHERE at < ?').bind(now - LOGIN_WINDOW_MS),
       env.DB.prepare('DELETE FROM presence WHERE last_seen < ?').bind(now - 86400_000),
+      env.DB.prepare('DELETE FROM usage_devices WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
+      env.DB.prepare('DELETE FROM usage_daily WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
     ]);
   },
 };
@@ -59,6 +62,8 @@ async function route(request, env, url) {
   // Search and routing use the free public servers, so they need one of the spots (see presence.js).
   // Older copies of the app don't send a device id; they're let through until they update.
   const presence = presenceRepo(db);
+  const usage = usageRepo(db);
+  const count = (field) => usage.bump(field).catch((e) => console.warn('usage', e.message)); // never fails a request
   const device = request.headers.get('x-a2b-device');
   const needSpot = async () => {
     if (!validDevice(device) || (user && isTester(env, user)) || (await presence.hasSpot(device))) return;
@@ -67,7 +72,15 @@ async function route(request, env, url) {
 
   if (path === '/api/presence' && method === 'POST') {
     if (!validDevice(device)) throw httpError('Missing device id.', 400);
-    return json(await presence.checkIn(device, user, limits(env), { always: Boolean(user && isTester(env, user)) }));
+    const result = await presence.checkIn(device, user, limits(env), { always: Boolean(user && isTester(env, user)) });
+    await usage.sawDevice(device, user, result).catch((e) => console.warn('usage', e.message));
+    return json(result);
+  }
+
+  // The owner's usage dashboard; anyone else gets a plain "not found".
+  if (path === '/api/stats' && method === 'GET') {
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
+    return json(await usage.report(limits(env)));
   }
 
   // ---------- Accounts ----------
@@ -84,6 +97,7 @@ async function route(request, env, url) {
       .prepare('INSERT INTO users (email, name, pass_hash, pass_salt, settings, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING *')
       .bind(email, cleanName(body.name, email), hash, salt, JSON.stringify(settings), Date.now())
       .first();
+    await count('signups');
     return withSession(request, db, row, 201);
   }
 
@@ -241,6 +255,7 @@ async function route(request, env, url) {
     await needSpot();
     const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
     if (q.length < 2) return json({ places: [] });
+    await count('searches');
     // Round the location to ~1 km so nearby people typing the same thing share a cached answer.
     const round = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : NaN);
     const lat = round(num(url, 'lat')), lng = round(num(url, 'lng'));
@@ -311,6 +326,7 @@ async function route(request, env, url) {
     plazas.forEach(([t], i) => Object.assign(t, details[i] ?? {}));
     annotateWithReports(routes, live);
     routes.sort((a, b) => a.duration - b.duration);
+    await count('routes');
     return json({ routes, closures_avoided: closuresIgnored ? 0 : exclude.length, closures_ignored: closuresIgnored, construction_avoided: constructionAvoided });
   }
 

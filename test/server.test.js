@@ -488,3 +488,29 @@ test('only so many devices get a spot at once, and accounts can take the ones gu
     await env.DB.prepare('DELETE FROM presence').run();
   }
 });
+
+test('the usage dashboard counts devices, busy moments and turn-aways, for the owner only', async () => {
+  Object.assign(env, { MAX_ACTIVE: '1', MAX_GUESTS: '1', TESTER_EMAILS: 'owner@test.com' });
+  try {
+    const owner = client('owner-device-1');
+    await owner('POST', '/api/auth/signup', { email: 'owner@test.com', password: 'password8', name: 'Owner' });
+    for (const t of ['usage_daily', 'usage_devices', 'presence']) await env.DB.prepare(`DELETE FROM ${t}`).run(); // start the day clean
+    const one = client('usage-guest-1'), two = client('usage-guest-2');
+    assert.equal((await one('POST', '/api/presence')).body.admitted, true);
+    assert.equal((await one('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] })).status, 200);
+    assert.equal((await two('POST', '/api/presence')).body.admitted, false);
+    await two('POST', '/api/presence'); // still waiting: the same device isn't counted twice
+
+    assert.equal((await one('GET', '/api/stats')).status, 404, 'not for other drivers');
+    const r = await owner('GET', '/api/stats');
+    assert.equal(r.status, 200);
+    const today = r.body.days.at(-1);
+    assert.equal(r.body.days.length, 14);
+    assert.deepEqual([today.devices, today.turned_away, today.peak_active, today.routes], [2, 1, 1, 1]);
+    assert.equal(today.signups, 0, 'the owner signed up before the counts were cleared');
+    assert.deepEqual([r.body.now.active, r.body.now.guests, r.body.now.waiting, r.body.now.max], [1, 1, 1, 1]);
+  } finally {
+    for (const k of ['MAX_ACTIVE', 'MAX_GUESTS', 'TESTER_EMAILS']) delete env[k];
+    await env.DB.prepare('DELETE FROM presence').run();
+  }
+});

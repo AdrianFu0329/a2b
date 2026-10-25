@@ -247,6 +247,7 @@ export function openSettings() {
       <button class="set-row" id="s-delete" style="color:var(--danger)"><span>Delete account</span></button>
     </div>` : ''}
     ${state.tester ? `<div class="set-group"><h3>Testing</h3>
+      <button class="set-row" id="s-usage"><span>Usage<small>Who's on A2B now, and the last two weeks</small></span></button>
       <label class="set-row"><span>Demo drive<small>Simulate GPS along the route. Handy for trying A2B at a desk.</small></span><input type="checkbox" class="switch" id="s-sim" ${state.simulate ? 'checked' : ''}></label>
       <div class="set-row${state.simulate ? '' : ' hidden'}" id="s-sim-speed-row"><span>Demo speed<small>How fast the demo car drives</small></span><div class="choice" id="s-sim-speed">${[1, 2, 4, 8]
         .map((v) => `<button data-v="${v}" class="${local.get('simSpeed', 1) === v ? 'on' : ''}">${v}×</button>`)
@@ -291,6 +292,7 @@ export function openSettings() {
       local.set('simulate', state.simulate);
       $('s-sim-speed-row').classList.toggle('hidden', !state.simulate);
     };
+    $('s-usage').onclick = openUsage;
     // Testing aid: applies straight away, also to a demo drive already under way.
     $('s-sim-speed').onclick = (e) => {
       const b = e.target.closest('button');
@@ -407,6 +409,55 @@ async function openLeaders() {
   } catch (e) {
     body.innerHTML = `<p class="hint" style="padding:12px 18px">${esc(e.message)}</p>`;
   }
+}
+
+// The owner's usage dashboard (GET /api/stats is only answered for tester accounts). Refreshes while open.
+async function openUsage() {
+  const body = openPanel('Usage', '<p class="hint" style="padding:12px 18px">Loading…</p>');
+  const render = async () => {
+    if ($('panel').classList.contains('hidden') || !body.isConnected || $('panel-title').textContent !== 'Usage') return false;
+    try {
+      body.innerHTML = usageHtml(await api('/api/stats'));
+    } catch (e) {
+      body.innerHTML = `<p class="hint" style="padding:12px 18px">${esc(e.message)}</p>`;
+    }
+    return true;
+  };
+  await render();
+  const timer = setInterval(async () => (await render()) || clearInterval(timer), 30_000);
+}
+
+function usageHtml({ now, days, totals }) {
+  const today = days.at(-1);
+  const time = (ms) => (ms ? new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '–');
+  const pct = Math.min(100, Math.round((now.active / now.max) * 100));
+  const top = Math.max(1, ...days.map((d) => d.devices));
+  const stat = (n, label) => `<div class="u-stat"><b>${esc(String(n))}</b><small>${label}</small></div>`;
+  const label = (day) => new Date(`${day}T12:00:00`).toLocaleDateString([], { day: 'numeric', month: 'short' });
+  return `<div class="usage">
+    <section class="u-now">
+      <div class="u-big"><b>${now.active}</b><span>of ${now.max} on now</span></div>
+      <div class="u-meter"><i style="width:${pct}%"></i></div>
+      <p>${now.guests} guest${now.guests === 1 ? '' : 's'} (up to ${now.guest_max}) · ${now.accounts} with an account · ${now.waiting} waiting</p>
+    </section>
+    <h3>Today</h3>
+    <div class="u-grid">
+      ${stat(today.devices, 'devices')}${stat(`${today.peak_active}/${now.max}`, `busiest, ${time(today.peak_at)}`)}${stat(today.turned_away, 'turned away')}
+      ${stat(today.signups, 'sign-ups')}${stat(today.routes, 'routes')}${stat(today.searches, 'searches')}
+    </div>
+    <h3>Last 14 days</h3>
+    <div class="u-days">${[...days]
+      .reverse()
+      .map((d) => `<div class="u-day" title="${esc(d.day)}">
+        <span class="u-date">${esc(label(d.day))}</span>
+        <span class="u-bar"><i style="width:${Math.round((d.devices / top) * 100)}%"></i></span>
+        <span class="u-num">${d.devices}</span>
+        <span class="u-peak${d.peak_active >= now.max ? ' full' : ''}">${d.peak_active} peak</span>
+        <span class="u-away">${d.turned_away ? `${d.turned_away} away` : ''}</span>
+      </div>`)
+      .join('')}</div>
+    <p class="hint" style="padding:6px 18px 0">Devices: phones and browsers that opened A2B that day. Peak: most on at once. Away: devices that hit the waiting screen. ${totals.accounts} accounts and ${totals.reports} reports in all.</p>
+  </div>`;
 }
 
 function openAbout() {

@@ -466,3 +466,26 @@ body.driving .toast { top: calc(140px + var(--safe-top)); }
 .online-line { margin: 0; padding: 10px 18px; font-size: 14px; color: var(--muted); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
 .online-line:empty { display: none; }
 .online-line .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+
+/* Usage dashboard (Settings › Testing › Usage). */
+.usage h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 16px 18px 6px; }
+.u-now { margin: 12px 16px 0; padding: 16px 18px; border-radius: 18px; background: var(--bg-2); display: grid; gap: 10px; }
+.u-big { display: flex; align-items: baseline; gap: 10px; }
+.u-big b { font-size: 44px; line-height: 1; font-variant-numeric: tabular-nums; }
+.u-big span { color: var(--muted); font-size: 17px; font-weight: 600; }
+.u-meter { height: 10px; border-radius: 5px; background: var(--bg-3); overflow: hidden; }
+.u-meter i { display: block; height: 100%; background: var(--primary); border-radius: 5px; }
+.u-now p { margin: 0; color: var(--muted); font-size: 14px; }
+.u-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 16px; }
+.u-stat { background: var(--bg-2); border-radius: 14px; padding: 12px; display: grid; gap: 2px; min-width: 0; }
+.u-stat b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.u-stat small { color: var(--muted); font-size: 12px; line-height: 1.3; }
+.u-days { display: grid; gap: 2px; padding: 0 16px; }
+.u-day { display: grid; grid-template-columns: 52px 1fr 34px 62px 58px; align-items: center; gap: 8px; font-size: 13px; padding: 5px 0; font-variant-numeric: tabular-nums; }
+.u-date { color: var(--muted); }
+.u-bar { height: 8px; border-radius: 4px; background: var(--bg-3); overflow: hidden; }
+.u-bar i { display: block; height: 100%; background: var(--primary); border-radius: 4px; }
+.u-num { font-weight: 700; text-align: right; }
+.u-peak { color: var(--muted); }
+.u-peak.full { color: var(--danger); font-weight: 700; }
+.u-away { color: var(--danger); }
