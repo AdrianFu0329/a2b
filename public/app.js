@@ -67,6 +67,8 @@ async function boot() {
     maxPitch: 65,
   });
   map.touchPitch.disable();
+  // Start the attribution collapsed to its (i) button so it doesn't run under the report button on phones.
+  map.once('load', () => map.getContainer().querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
   map.on('style.load', () => {
     applyMapTheme(map, MAP_THEMES[mapThemeId()]);
     addMapLayers();
