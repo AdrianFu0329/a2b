@@ -26,7 +26,8 @@ const REPORT_REFRESH_MS = 60_000;
 const STILL_SPEED = 1; // m/s; slower than this counts as standing still
 const BROWSE_RESUME_MS = 15_000;
 const FRAME_MS = 1000 / 30; // smooth enough for a car, and half the work of 60 fps
-const HEAD_M = 600; // length of the driving line's head, redrawn every frame
+const TRIM_EVERY_MS = 100; // how often the driven part of the line is hidden again
+const TRIM_BEHIND_M = 6; // hide the line up to a little behind the car, so it always starts under the car
 const REROUTE_GAP_MS = 8000;
 const SHARE_PUSH_MS = 15_000;
 
@@ -61,7 +62,8 @@ let frameId = 0, lastFrame = 0;
 let camZoom = null;
 let userMoving = false;
 let lastUserMove = 0;
-let tailFrom = null, tailFor = null; // where the rarely redrawn rest of the driving line starts, and for which route
+let lineFor = null; // the route the driving line currently holds
+let trimmedAt = 0, trimmedTo = -1; // when, and to what fraction of the route, the driven part was last hidden
 
 // ================= Boot =================
 // With Reduce Motion on (an iPhone accessibility setting), MapLibre turns every camera move into an instant
@@ -163,7 +165,7 @@ function applyTheme(initial = false) {
 // ================= Map layers =================
 function addMapLayers() {
   if (!map.getSource('routes')) {
-    map.addSource('routes', { type: 'geojson', data: emptyFc() });
+    map.addSource('routes', { type: 'geojson', data: emptyFc(), lineMetrics: true }); // lineMetrics: lets the driven part be hidden by a gradient
     map.addSource('watch-route', { type: 'geojson', data: emptyFc() });
     // Above every road (some styles put a few labels early), but below the labels drawn on top of roads.
     const layers = map.getStyle().layers;
@@ -173,9 +175,6 @@ function addMapLayers() {
     map.addLayer({ id: 'routes-alt', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#a9b5c3', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 16, 10] } }, before);
     map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
     map.addLayer({ id: 'routes-main', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
-    map.addSource('route-head', { type: 'geojson', data: emptyFc() });
-    map.addLayer({ id: 'route-head-casing', type: 'line', source: 'route-head', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, 'routes-main');
-    map.addLayer({ id: 'route-head-main', type: 'line', source: 'route-head', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
     // The upcoming turn, drawn on the route as a white arrow, above the map's labels so it's never hidden.
     map.addSource('maneuver', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('turn-head')) map.addImage('turn-head', arrowHeadImage(), { pixelRatio: 2 });
@@ -197,7 +196,7 @@ function addMapLayers() {
     }
   }
   arrowFor = null; // a new style starts with an empty arrow source
-  tailFor = null; // and an empty driving line
+  lineFor = null; // and an empty driving line
   drawRoutes();
 }
 
@@ -270,11 +269,13 @@ function drawRoutes() {
   const src = map?.getSource('routes');
   if (!src) return;
   if (mode === 'drive' && nav) {
-    drawDriveLine(true);
+    drawDriveLine();
     return drawManeuverArrow();
   }
-  map.getSource('route-head')?.setData(emptyFc());
-  tailFor = null;
+  if (lineFor) {
+    lineFor = null;
+    for (const id of ['routes-casing', 'routes-main']) map.setPaintProperty(id, 'line-gradient', null);
+  }
   let features = [];
   if (mode === 'preview') {
     features = routes.map((r, i) => ({ type: 'Feature', properties: { idx: i, selected: i === selected }, geometry: { type: 'LineString', coordinates: r.coords } }));
@@ -284,24 +285,30 @@ function drawRoutes() {
   drawManeuverArrow();
 }
 
-// While driving, only what's left of the route is drawn, so the line shrinks behind the car. It comes in two
-// parts: a short head from the car to `tailFrom`, redrawn every frame, and the long rest of the route, redrawn
-// only every few hundred metres. Redrawing the whole route many times a second kept the map re-cutting tiles,
-// so stretches of line went missing or lagged behind the car, and phones ran hot.
-function drawDriveLine(force = false) {
-  const head = map?.getSource('route-head'), tail = map?.getSource('routes');
-  if (!head || !tail || !nav) return;
-  // Measured along the route, so the line starts on the road even when the car is off it.
-  const along = Math.min(shown?.path === nav ? shown.along : live?.along ?? 0, nav.total);
-  if (force || tailFor !== nav || along > tailFrom - 100 || along < tailFrom - HEAD_M * 2) {
-    tailFor = nav;
-    tailFrom = Math.min(along + HEAD_M, nav.total);
-    tail.setData({ type: 'FeatureCollection', features: tailFrom < nav.total ? [lineFeature(sliceAlong(nav.coords, nav.cum, tailFrom, nav.total))] : [] });
+// While driving, the whole route is handed to the map once (and again after a reroute); the part already
+// driven is hidden with a gradient along the line that turns transparent up to the car. Moving that cut-off is
+// a cheap paint change. Re-sending line data instead, many times a second, kept the map re-cutting tiles: on a
+// warm phone it fell behind, so stretches of line went missing or lagged behind the car.
+function drawDriveLine() {
+  const src = map?.getSource('routes');
+  if (!src || !nav) return;
+  if (lineFor !== nav) {
+    lineFor = nav;
+    trimmedTo = -1;
+    src.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { idx: 0, selected: true }, geometry: { type: 'LineString', coordinates: nav.coords } }] });
   }
-  head.setData({ type: 'FeatureCollection', features: [lineFeature(sliceAlong(nav.coords, nav.cum, along, tailFrom))] });
+  const now = performance.now();
+  if (now - trimmedAt < TRIM_EVERY_MS) return;
+  // Measured along the route, so the line starts on the road even when the car is off it.
+  const along = shown?.path === nav ? shown.along : live?.along ?? 0;
+  const to = Math.min(1, Math.max(0, (along - TRIM_BEHIND_M) / (nav.total || 1)));
+  if (Math.abs(to - trimmedTo) * nav.total < 1) return;
+  trimmedAt = now;
+  trimmedTo = to;
+  const cut = (color) => ['step', ['line-progress'], 'rgba(0,0,0,0)', to, color];
+  map.setPaintProperty('routes-casing', 'line-gradient', cut(ROUTE[themeNow].casing));
+  map.setPaintProperty('routes-main', 'line-gradient', cut(ROUTE[themeNow].main));
 }
-
-const lineFeature = (coordinates) => ({ type: 'Feature', properties: { idx: 0, selected: true }, geometry: { type: 'LineString', coordinates } });
 
 // ================= Location =================
 function startLocation() {
