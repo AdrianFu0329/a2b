@@ -90,8 +90,14 @@ const tripSheet = (() => {
   let from = 0; // where the sheet sat when the drag began
   let justDragged = () => false;
   const bar = () => $('eta-bar');
-  // How far down the closed sheet sits: the whole menu, plus the gap under a floating sheet on wide screens.
-  const closedOffset = () => $('eta-menu').offsetHeight + (parseFloat(getComputedStyle(bar()).bottom) || 0);
+  // How far down the closed sheet sits: the whole menu, plus the gap under a floating sheet on wide screens,
+  // less the destination row, which stays in view so you can always see where you're headed.
+  const closedOffset = () => {
+    const menu = $('eta-menu'), dest = $('trip-dest');
+    const keep = dest.offsetHeight ? dest.offsetTop + dest.offsetHeight - menu.offsetTop : 0;
+    document.body.style.setProperty('--trip-keep', `${keep}px`); // lifts the speedo and buttons above it
+    return menu.offsetHeight - keep + (parseFloat(getComputedStyle(bar()).bottom) || 0);
+  };
   const place = (y, animate) => {
     bar().classList.toggle('dragging', !animate);
     bar().style.transform = `translateY(${Math.round(y)}px)`;
