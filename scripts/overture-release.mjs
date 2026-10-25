@@ -1,5 +1,5 @@
 // Prints the newest Overture Maps release that has both places and road segments published, e.g. 2026-11-18.0.
-// Used by the monthly data job (.github/workflows/map-data.yml); reads Overture's public S3 bucket listing.
+// Used by the monthly data update (see README, Monthly updates); reads Overture's public S3 bucket listing.
 
 const BUCKET = 'https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com/';
 const NEEDS = ['theme=places/type=place/', 'theme=transportation/type=segment/'];

@@ -147,10 +147,9 @@ for again around it (`src/lib/construction.js`).
 
 ### Monthly updates
 
-`.github/workflows/map-data.yml` checks every Wednesday for a new Overture release. When there is one, it
-rebuilds both data sets, runs the tests, deploys, and commits the new construction data. It needs a
-`CLOUDFLARE_API_TOKEN` repository secret (Cloudflare's "Edit Cloudflare Workers" token template). It can also
-be run by hand from the Actions tab.
+A scheduled Claude Code session checks once a month for a new Overture release
+(`node scripts/overture-release.mjs`). When there is one, it rebuilds both data sets with that release, runs
+the tests, deploys, and commits the new construction data.
 
 ## How it's built
 
