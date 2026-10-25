@@ -335,6 +335,7 @@ async function route(request, env, url) {
       updated_at: t.updated_at,
       ended: Boolean(t.ended),
       stopped: t.ended === 2,
+      now: Date.now(), // lets viewers line their clock up with updated_at
     });
   }
 

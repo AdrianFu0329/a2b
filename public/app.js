@@ -2,6 +2,7 @@ import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { Glide } from './motion.js';
+import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -31,7 +32,6 @@ const FRAME_MS = 1000 / 30; // smooth enough for a car, and half the work of 60 
 const TRIM_EVERY_MS = 100; // how often the driven part of the line is recoloured
 const TRIM_BEHIND_M = 6; // recolour up to a little behind the car, so the route colour always starts under the car
 const REROUTE_GAP_MS = 8000;
-const SHARE_PUSH_MS = 15_000;
 
 let map;
 let carMarker, destMarker, dropMarker, stopMarker;
@@ -56,7 +56,8 @@ let lastReroute = 0;
 let rerouting = false;
 let driveStarted = 0;
 let wakeLock = null;
-let share = null; // { token, url, lastPush }
+let share = null; // { token, url, last: { at, pos, eta } of the last update sent }
+let shareTimer = null; // phones send no GPS while standing still, so the heartbeat needs its own clock
 let recenterTimer = null;
 const glide = new Glide(); // slides the car between GPS fixes
 let shown = null; // where the car is drawn this frame
@@ -1419,8 +1420,9 @@ async function shareDrive() {
         method: 'POST',
         body: { destination: dest, eta: Date.now() + (live?.remainingTime ?? 0) * 1000, route: nav?.coords ?? [] },
       });
-      share = { ...res, lastPush: 0 };
+      share = { ...res, last: null };
       pushShare(true);
+      shareTimer = setInterval(() => pushShare(), 5000);
       renderShareMenu();
     }
     const text = `I'm driving to ${dest.name}. Follow my drive and ETA:`;
@@ -1450,53 +1452,102 @@ async function stopSharing() {
 }
 
 function renderShareMenu() {
+  if (!share) {
+    clearInterval(shareTimer);
+    shareTimer = null;
+  }
   $('share-label').textContent = share ? 'Send link again' : 'Share drive';
   $('btn-stop-share').classList.toggle('hidden', !share);
 }
 
+// Sends the driver's position only when it tells viewers something new (see shouldSend in follow.js);
+// a new route (start, reroute) always goes out straight away.
 function pushShare(withRoute = false) {
   if (!share || !live || !state.pos) return;
-  if (!withRoute && Date.now() - share.lastPush < SHARE_PUSH_MS) return;
-  share.lastPush = Date.now();
+  const now = Date.now();
+  const eta = now + live.remainingTime * 1000;
+  if (!withRoute && !shouldSend(share.last, { now, pos: live.snapped, eta })) return;
+  share.last = { at: now, pos: live.snapped, eta, count: (share.last?.count ?? 0) + 1 };
   api(`/api/trips/${share.token}`, {
     method: 'PATCH',
     body: {
       position: live.snapped,
       heading: state.pos.heading ?? live.routeBearing,
-      eta: Date.now() + live.remainingTime * 1000,
+      eta,
       ...(withRoute ? { route: nav.coords } : {}),
     },
   }).catch(() => {});
 }
 
 // Someone opened a /drive/<token> link: show where that driver is.
-async function startWatching(token) {
+// Asks every 10 s while the car moves, backs off to 30-60 s while it doesn't, pauses while the page is
+// hidden, and keeps the car gliding along the route between updates.
+function startWatching(token) {
   mode = 'watch';
   carMarker.remove();
   $('browse-ui').classList.add('hidden');
   const sheet = $('watch');
   sheet.classList.remove('hidden');
   sheet.innerHTML = '<div class="grabber"></div><p class="hint">Loading drive…</p>';
+  const openLink = '<a class="btn ghost wide" style="display:grid;place-items:center;text-decoration:none" href="/">Open A2B</a>';
   let fitted = false;
   let driverMarker = null;
-  const tick = async () => {
+  let follow = null;
+  let routeKey = '';
+  let lastUpdate = 0;
+  let stillPolls = 0;
+  let pollTimer = null;
+  let drawTimer = null;
+  let finished = false;
+
+  const draw = () => {
+    const p = follow?.at(Date.now());
+    if (!p || !driverMarker) return;
+    driverMarker.setLngLat(p.pos).setRotation(p.heading);
+    driverMarker.getElement().classList.toggle('stale', p.stale);
+  };
+  const schedule = (ms) => {
+    clearTimeout(pollTimer);
+    if (!finished && document.visibilityState === 'visible') pollTimer = setTimeout(tick, ms);
+  };
+  const finish = () => {
+    finished = true;
+    clearTimeout(pollTimer);
+    clearInterval(drawTimer);
+  };
+
+  async function tick() {
     try {
       const t = await api(`/api/trips/${token}`);
-      if (!map.getSource('watch-route')) return setTimeout(tick, 500);
+      if (!map.getSource('watch-route')) return schedule(500);
       if (t.stopped) {
+        finish();
         map.getSource('watch-route').setData(emptyFc());
         driverMarker?.remove();
         sheet.innerHTML = `<div class="grabber"></div>
           <div class="watch-head"><span class="avatar">${esc((t.driver || '?')[0])}</span><div><b>${esc(t.driver)} stopped sharing</b><small class="hint">their drive to ${esc(t.destination.name)}</small></div></div>
-          <a class="btn ghost wide" style="display:grid;place-items:center;text-decoration:none" href="/">Open A2B</a>`;
+          ${openLink}`;
         return;
       }
-      map.getSource('watch-route').setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: t.route } });
+      // Line the server's clock up with ours, so "when was this position recorded" is right on this device.
+      const recordedAt = Date.now() - Math.max(0, (t.now ?? t.updated_at) - t.updated_at);
+      const key = `${t.route.length}:${t.route[0]}:${t.route.at(-1)}`;
+      if (key !== routeKey) {
+        routeKey = key; // first load, or the driver was rerouted
+        map.getSource('watch-route').setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: t.route } });
+        follow = new Follow(t.route);
+        lastUpdate = 0;
+      }
       if (!destMarker) destMarker = new maplibregl.Marker({ element: el('div', 'dest-pin', DEST_PIN), anchor: 'bottom' }).setLngLat([t.destination.lng, t.destination.lat]).addTo(map);
       if (t.position) {
         driverMarker ??= new maplibregl.Marker({ element: el('div', 'car', CAR), rotationAlignment: 'map' }).setLngLat([t.position.lng, t.position.lat]).addTo(map);
-        driverMarker.setLngLat([t.position.lng, t.position.lat]).setRotation(t.position.heading ?? 0);
-        driverMarker.getElement().classList.toggle('stale', Date.now() - t.updated_at > 120_000);
+        if (t.updated_at !== lastUpdate) {
+          lastUpdate = t.updated_at;
+          stillPolls = 0;
+          follow.update({ position: [t.position.lng, t.position.lat], heading: t.position.heading, eta: t.eta, at: recordedAt });
+        } else stillPolls++;
+        if (t.ended) driverMarker.setLngLat([t.position.lng, t.position.lat]).setRotation(t.position.heading ?? 0);
+        else draw();
       }
       if (!fitted) {
         const b = new maplibregl.LngLatBounds();
@@ -1510,14 +1561,27 @@ async function startWatching(token) {
       sheet.innerHTML = `<div class="grabber"></div>
         <div class="watch-head"><span class="avatar">${esc((t.driver || '?')[0])}</span><div><b>${esc(t.driver)} ${t.ended ? 'has arrived' : 'is driving'}</b><small class="hint">to ${esc(t.destination.name)}</small></div></div>
         ${t.ended ? '' : `<div class="watch-eta"><div><b>${t.eta ? formatClock(new Date(t.eta)) : '--'}</b><small>arrival</small></div><div><b>${left == null ? '--' : left < 30 ? 'Any minute' : formatDuration(left)}</b><small>left</small></div></div>`}
-        <p class="hint">Updated ${timeAgo(t.updated_at)}</p>
-        <a class="btn ghost wide" style="display:grid;place-items:center;text-decoration:none" href="/">Open A2B</a>`;
-      if (!t.ended) setTimeout(tick, 10_000);
+        <p class="hint">Updated ${timeAgo(Date.now() - (t.now ?? Date.now()) + t.updated_at)}</p>
+        ${openLink}`;
+      if (t.ended) return finish();
+      schedule(nextPollDelay(stillPolls));
     } catch (e) {
-      sheet.innerHTML = `<div class="grabber"></div><p class="hint">${esc(e.message)}</p><a class="btn ghost wide" style="display:grid;place-items:center;text-decoration:none" href="/">Open A2B</a>`;
+      sheet.innerHTML = `<div class="grabber"></div><p class="hint">${esc(e.message)}</p>${openLink}`;
+      if (e.status !== 404) schedule(30_000); // a dropped connection: try again later
     }
+  }
+
+  // Only spend requests (and battery) while someone is actually looking.
+  const onVisibility = () => {
+    clearInterval(drawTimer);
+    if (finished) return;
+    if (document.visibilityState === 'visible') {
+      drawTimer = setInterval(draw, 250);
+      tick();
+    } else clearTimeout(pollTimer);
   };
-  tick();
+  document.addEventListener('visibilitychange', onVisibility);
+  onVisibility();
 }
 
 // ================= Reports on the map =================
