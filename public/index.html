@@ -122,12 +122,13 @@
     <button id="btn-report-drive" class="report-fab" aria-label="Report"><svg viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4Z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M12 9.5v4.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="12" cy="17" r="1.4" fill="#fff"/></svg></button>
     <div id="alert" class="alert-card hidden" role="alert"></div>
     <div id="eta-bar" class="eta-bar">
+      <div class="grabber eta-grab" aria-hidden="true"></div>
       <button id="btn-eta" class="eta-main" aria-label="Trip options">
         <span class="eta-col"><b id="eta-clock">--:--</b><small>arrival</small></span>
         <span class="eta-col"><b id="eta-min">--</b><small id="eta-min-unit">min</small></span>
         <span class="eta-col"><b id="eta-dist">--</b><small id="eta-dist-unit">km</small></span>
       </button>
-      <div id="eta-menu" class="eta-menu hidden">
+      <div id="eta-menu" class="eta-menu">
         <div id="trip-dest" class="trip-dest"></div>
         <button id="btn-add-stop" class="menu-row"><span class="m-ic addstop"></span><span id="add-stop-label">Add a stop</span></button>
         <button id="btn-share-drive" class="menu-row"><span class="m-ic share"></span><span id="share-label">Share drive</span></button>

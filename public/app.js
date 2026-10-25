@@ -81,6 +81,77 @@ const tollsSpoken = new Set(); // toll plazas (route + index) already announced 
 const realMatchMedia = window.matchMedia.bind(window);
 window.matchMedia = (query) => realMatchMedia(/prefers-reduced-motion:\s*reduce/.test(query) ? 'not all' : query);
 
+// The trip sheet while driving (arrival time, then Add a stop, Share, Overview, Stop). Like an iPhone sheet
+// it follows the finger: drag it up or down from anywhere on it, and a flick finishes the move.
+const tripSheet = (() => {
+  let open = false;
+  let drag = null; // { startY, startOffset, lastY, lastT, v, moved }
+  let draggedAt = 0;
+  const bar = () => $('eta-bar');
+  // How far down the closed sheet sits: the whole menu, plus the gap under a floating sheet on wide screens.
+  const closedOffset = () => $('eta-menu').offsetHeight + (parseFloat(getComputedStyle(bar()).bottom) || 0);
+  const place = (y, animate) => {
+    bar().classList.toggle('dragging', !animate);
+    bar().style.transform = `translateY(${Math.round(y)}px)`;
+  };
+  const set = (want, animate = true) => {
+    open = want;
+    bar().classList.toggle('open', open);
+    if (open) $('alert').classList.add('hidden'); // the alert card would sit on top of the menu
+    place(open ? 0 : closedOffset(), animate);
+  };
+
+  function init() {
+    const el = bar();
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button > 0) return;
+      drag = { startY: e.clientY, startOffset: open ? 0 : closedOffset(), lastY: e.clientY, lastT: e.timeStamp, v: 0, moved: false, id: e.pointerId };
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dy = e.clientY - drag.startY;
+      if (!drag.moved && Math.abs(dy) < 6) return; // still a tap
+      if (!drag.moved) {
+        drag.moved = true;
+        el.setPointerCapture(e.pointerId); // keep the drag even if the finger leaves the sheet
+      }
+      const max = closedOffset();
+      let y = drag.startOffset + dy;
+      if (y < 0) y = -Math.sqrt(-y) * 2; // a little rubber band past fully open
+      if (y > max) y = max + Math.sqrt(y - max) * 2;
+      place(y, false);
+      const dt = e.timeStamp - drag.lastT;
+      if (dt > 0) drag.v = 0.7 * ((e.clientY - drag.lastY) / dt) + 0.3 * drag.v; // px/ms, smoothed
+      drag.lastY = e.clientY;
+      drag.lastT = e.timeStamp;
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const d = drag;
+      drag = null;
+      if (!d.moved) return; // a tap: the button's click handles it
+      draggedAt = Date.now();
+      const dy = e.clientY - d.startY;
+      // A flick goes the way it was flicked. A slower drag goes that way once it covers a quarter of the
+      // distance; anything shorter springs back to where it started.
+      let wantOpen = open;
+      if (Math.abs(d.v) > 0.35) wantOpen = d.v < 0;
+      else if (Math.abs(dy) > closedOffset() / 4) wantOpen = dy < 0;
+      set(wantOpen);
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    new ResizeObserver(() => !drag && set(open, false)).observe($('eta-menu'));
+  }
+
+  return {
+    init,
+    set,
+    isOpen: () => open,
+    justDragged: () => Date.now() - draggedAt < 350, // the click that ends a drag isn't a tap
+  };
+})();
+
 boot();
 
 async function boot() {
@@ -563,7 +634,7 @@ function setupLongPress() {
   map.on('contextmenu', (e) => mode !== 'drive' && mode !== 'watch' && showContextMenu(e.lngLat, e.point));
   map.on('click', hideContextMenu);
   map.on('click', routeAtTap);
-  map.on('click', () => $('eta-menu').classList.add('hidden')); // a tap on the map closes the trip menu
+  map.on('click', () => tripSheet.set(false)); // a tap on the map closes the trip menu
 }
 
 async function showContextMenu(lngLat, point) {
@@ -652,10 +723,8 @@ function wireUi() {
   $('btn-leave-later').onclick = openLater;
 
   // Drive
-  $('btn-eta').onclick = () => {
-    const opening = $('eta-menu').classList.toggle('hidden') === false;
-    if (opening) $('alert').classList.add('hidden'); // the alert card would sit on top of the menu
-  };
+  $('btn-eta').onclick = () => !tripSheet.justDragged() && tripSheet.set(!tripSheet.isOpen());
+  tripSheet.init();
   $('btn-stop').onclick = () => endDrive(false);
   $('btn-overview').onclick = overview;
   // Testing aid: during a demo drive, cycle its speed 1x -> 2x -> 4x -> 8x.
@@ -668,7 +737,7 @@ function wireUi() {
   $('btn-share-drive').onclick = shareDrive;
   $('btn-stop-share').onclick = stopSharing;
   $('btn-add-stop').onclick = () => {
-    $('eta-menu').classList.add('hidden');
+    tripSheet.set(false);
     if (stops.length) return removeStop();
     openSearchFor('stop');
   };
@@ -717,8 +786,8 @@ function closeTop() {
     $('menu-backdrop').classList.add('hidden');
     return true;
   }
-  if (!$('eta-menu').classList.contains('hidden')) {
-    $('eta-menu').classList.add('hidden');
+  if (tripSheet.isOpen()) {
+    tripSheet.set(false);
     return true;
   }
   return false;
@@ -727,7 +796,7 @@ function closeTop() {
 function onBack() {
   const closed = closeTop();
   // Back while driving opens the trip options rather than dropping out of the app.
-  if (!closed && mode === 'drive') $('eta-menu').classList.remove('hidden');
+  if (!closed && mode === 'drive') tripSheet.set(true);
   const open = OVERLAYS.some((id) => !$(id).classList.contains('hidden')) || !$('menu').classList.contains('hidden');
   if (open || mode === 'drive') armBack();
 }
@@ -1138,7 +1207,7 @@ function startDrive() {
   $('preview').classList.add('hidden');
   $('later').classList.add('hidden');
   $('drive-ui').classList.remove('hidden');
-  $('eta-menu').classList.add('hidden');
+  tripSheet.set(false);
   $('alert').classList.add('hidden');
   document.body.classList.add('driving');
   armBack();
@@ -1351,7 +1420,7 @@ function renderStopMenu() {
 }
 
 function overview() {
-  $('eta-menu').classList.add('hidden');
+  tripSheet.set(false);
   if (!nav) return;
   stopFollowing();
   const b = new maplibregl.LngLatBounds();
@@ -1412,7 +1481,7 @@ async function requestWakeLock() {
 
 // ================= Shared drive =================
 async function shareDrive() {
-  $('eta-menu').classList.add('hidden');
+  tripSheet.set(false);
   if (!state.user) return openAuth('share');
   try {
     if (!share) {
@@ -1438,7 +1507,7 @@ async function shareDrive() {
 
 // Ends sharing but keeps the drive going; whoever has the link sees "stopped sharing" and no position.
 async function stopSharing() {
-  $('eta-menu').classList.add('hidden');
+  tripSheet.set(false);
   if (!share) return;
   const { token } = share;
   share = null;
@@ -1743,7 +1812,7 @@ function alertRange(type) {
 
 function showAlert(r, ahead) {
   const card = $('alert');
-  if (!$('eta-menu').classList.contains('hidden')) return; // trip menu is open; the voice alert is enough
+  if (tripSheet.isOpen()) return; // trip menu is open; the voice alert is enough
   const t = REPORT_TYPES[r.type];
   const ms = ahead == null ? 10_000 : 12_000;
   card.dataset.until = String(Date.now() + ms);

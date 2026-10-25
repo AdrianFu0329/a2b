@@ -286,8 +286,11 @@ small.hint { display: block; padding: 4px 0 0; }
   position: absolute; left: 0; right: 0; bottom: 0; background: var(--bg); border-radius: 18px 18px 0 0; box-shadow: 0 -6px 24px rgba(15, 23, 42, 0.18);
   padding: 0 10px var(--safe-bottom);
 }
+.eta-bar { touch-action: none; transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1); will-change: transform; user-select: none; -webkit-user-select: none; }
+.eta-bar.dragging { transition: none; }
+.eta-grab { margin: 7px auto 0; }
 @media (min-width: 720px) { .eta-bar { left: 16px; right: auto; width: 420px; bottom: 16px; border-radius: 18px; padding-bottom: 0; } }
-.eta-main { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); padding: 12px 0 10px; }
+.eta-main { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); padding: 6px 0 10px; }
 .eta-col { display: grid; justify-items: center; line-height: 1.1; }
 .eta-col b { font-size: 24px; font-variant-numeric: tabular-nums; }
 .eta-col:first-child b { color: var(--good); }
