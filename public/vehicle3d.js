@@ -116,9 +116,9 @@ function roundedRect(w, l, r) {
 // A white rim all round the arrow (lit from within so it stays white in shade) keeps it apart from the route.
 function chevron(color) {
   const g = new THREE.Group();
-  const rim = new THREE.Mesh(slab(arrowShape(0.94, 1.16, 0.35, 0.12), 0.14, 0.03), material('#ffffff', { emissive: '#ffffff', emissiveIntensity: 0.45 }));
-  const arrow = new THREE.Mesh(slab(arrowShape(0.76, 0.96, 0.29, 0.1), 0.17, 0.05), material(color, { roughness: 0.35 }));
-  arrow.position.set(0, 0.01, -0.01);
+  const rim = new THREE.Mesh(slab(arrowShape(1.08, 1.3, 0.4, 0.17), 0.17, 0.03), material('#ffffff', { emissive: '#ffffff', emissiveIntensity: 0.45 }));
+  const arrow = new THREE.Mesh(slab(arrowShape(0.68, 0.84, 0.26, 0.09), 0.13, 0.04), material(color, { roughness: 0.35 }));
+  arrow.position.set(0, 0.07, -0.03); // sits on top of the rim, so the white shows all round
   g.add(rim, arrow);
   return g;
 }
