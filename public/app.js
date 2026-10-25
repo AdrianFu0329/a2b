@@ -2,7 +2,7 @@ import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance } from './nav.js';
 import { Glide } from './motion.js';
-import { start as startVehicle } from './vehicle3d.js';
+import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
@@ -219,7 +219,7 @@ function addMapLayers() {
 // instead when 3D can't start (no WebGL, three.js didn't load).
 async function setupVehicle() {
   const kind = local.get('vehicle', 'chevron');
-  vehicle3d = await startVehicle(map, kind, () => (mode === 'watch' || !carMarker._map ? null : shown));
+  vehicle3d = await startVehicle(map, kind, local.get('vehicleColor', DEFAULT_COLOR), () => (mode === 'watch' || !carMarker._map ? null : shown));
   carMarker.getElement().classList.toggle('as-3d', vehicle3d);
   map.triggerRepaint();
 }

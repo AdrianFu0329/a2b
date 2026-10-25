@@ -3,15 +3,20 @@
 // if it can't load or WebGL refuses, start() resolves false and the app keeps its flat arrow.
 
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const COLOR = '#1f7aff'; // bright blue: stands apart from the plum route by day and the pink one by night
 const SIZE_PX = { chevron: 44, car: 48 }; // on-screen length, whatever the zoom
 export const VEHICLES = [['chevron', 'Chevron'], ['car', 'Car']];
+// Paint colours to choose from in Settings; the first, a brighter take on the app's plum, is the default.
+export const COLORS = [
+  ['#e23d9b', 'Plum'], ['#1f7aff', 'Blue'], ['#12c4a6', 'Teal'], ['#ff7a1a', 'Orange'],
+  ['#e5383b', 'Red'], ['#f5c400', 'Yellow'], ['#f4f4f6', 'White'], ['#2b2b31', 'Black'],
+];
+export const DEFAULT_COLOR = COLORS[0][0];
 
 let THREE = null;
 let loading = null;
 
 // pose(): { pos: [lng, lat], heading } of the car as drawn this frame, or null to hide it.
-export async function start(map, kind, pose) {
+export async function start(map, kind, color, pose) {
   try {
     THREE ??= await (loading ??= import(THREE_URL));
   } catch {
@@ -23,7 +28,7 @@ export async function start(map, kind, pose) {
   scene.add(new THREE.HemisphereLight('#ffffff', '#6b5a64', 1.6));
   const sun = new THREE.DirectionalLight('#ffffff', 2.2);
   sun.position.set(-0.6, 1.2, -0.4);
-  scene.add(sun, kind === 'car' ? car() : chevron(), contactShadow(kind));
+  scene.add(sun, kind === 'car' ? car(color) : chevron(color), contactShadow(kind));
   const camera = new THREE.Camera();
   const rotateUp = new THREE.Matrix4().makeRotationX(Math.PI / 2);
   let renderer = null;
@@ -99,18 +104,19 @@ function roundedRect(w, l, r) {
   return s;
 }
 
-function chevron() {
+// A white rim all round the arrow (lit from within so it stays white in shade) keeps it apart from the route.
+function chevron(color) {
   const g = new THREE.Group();
-  const edge = new THREE.Mesh(slab(arrowShape(0.92, 1.14, 0.34), 0.1, 0.02), material('#ffffff'));
-  edge.position.y = -0.01;
-  const arrow = new THREE.Mesh(slab(arrowShape(0.78, 1, 0.3), 0.16, 0.05), material(COLOR, { roughness: 0.35 }));
-  g.add(edge, arrow);
+  const rim = new THREE.Mesh(slab(arrowShape(0.94, 1.16, 0.35), 0.14, 0.03), material('#ffffff', { emissive: '#ffffff', emissiveIntensity: 0.45 }));
+  const arrow = new THREE.Mesh(slab(arrowShape(0.76, 0.96, 0.29), 0.17, 0.05), material(color, { roughness: 0.35 }));
+  arrow.position.set(0, 0.01, -0.01);
+  g.add(rim, arrow);
   return g;
 }
 
-function car() {
+function car(color) {
   const g = new THREE.Group();
-  const paint = material(COLOR, { roughness: 0.28, metalness: 0.3 });
+  const paint = material(color, { roughness: 0.28, metalness: 0.3 });
   const glass = material('#1c2a38', { roughness: 0.08, metalness: 0.6 });
   const body = new THREE.Mesh(slab(roundedRect(0.44, 0.98, 0.13), 0.12, 0.04), paint);
   body.position.y = 0.07;

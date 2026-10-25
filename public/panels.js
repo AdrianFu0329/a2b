@@ -2,7 +2,7 @@
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
 import { voiceChoice, setVoiceChoice, deviceVoices, isGoodVoice } from './voice.js';
-import { VEHICLES } from './vehicle3d.js';
+import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
 
 let ctx; // callbacks from app.js
 let authMode = 'signup';
@@ -205,6 +205,9 @@ export function openSettings() {
       <div class="set-row"><span>Vehicle<small>How you appear on the map</small></span><div class="choice" id="s-vehicle">${VEHICLES
         .map(([v, l]) => `<button data-v="${v}" class="${local.get('vehicle', 'chevron') === v ? 'on' : ''}">${l}</button>`)
         .join('')}</div></div>
+      <div class="set-row swatch-row"><span>Colour</span><div class="swatches" id="s-vehicle-color">${COLORS
+        .map(([c, l]) => `<button data-c="${c}" aria-label="${l}" title="${l}" class="${local.get('vehicleColor', DEFAULT_COLOR) === c ? 'on' : ''}" style="--c:${c}"></button>`)
+        .join('')}</div></div>
     </div>
     <div class="set-group"><h3>Places</h3>
       <button class="set-row" id="s-home"><span>Home<small>${esc(state.home?.address || state.home?.name || 'Not set')}</small></span></button>
@@ -242,6 +245,13 @@ export function openSettings() {
     if (!b) return;
     $('s-vehicle').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
     local.set('vehicle', b.dataset.v);
+    ctx.setupVehicle();
+  };
+  $('s-vehicle-color').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    $('s-vehicle-color').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+    local.set('vehicleColor', b.dataset.c);
     ctx.setupVehicle();
   };
   $('s-sim').onchange = (e) => {
