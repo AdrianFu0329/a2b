@@ -309,8 +309,13 @@ async function route(request, env, url) {
     if (Number.isFinite(Number(body.heading))) sets.push('heading = ?'), args.push(Number(body.heading));
     if (Number.isFinite(Number(body.eta))) sets.push('eta = ?'), args.push(Number(body.eta));
     if (Array.isArray(body.route)) sets.push('route = ?'), args.push(JSON.stringify(simplify(body.route)));
-    if (body.ended) sets.push('ended = 1');
-    const res = await db.prepare(`UPDATE trips SET ${sets.join(', ')} WHERE token = ? AND user_id = ?`).bind(...args, parts[2], u.id).run();
+    // ended: 'arrived' (1) or 'stopped' (2, the driver stopped sharing). Stopping also forgets where they were.
+    if (body.ended === 'stopped') sets.push('ended = 2', 'lat = NULL', 'lng = NULL', 'heading = NULL', "route = '[]'");
+    else if (body.ended) sets.push('ended = 1');
+    const res = await db
+      .prepare(`UPDATE trips SET ${sets.join(', ')} WHERE token = ? AND user_id = ? AND ended = 0`)
+      .bind(...args, parts[2], u.id)
+      .run();
     if (!res.meta.changes) throw httpError('Drive not found.', 404);
     return json({ ok: true });
   }
@@ -329,6 +334,7 @@ async function route(request, env, url) {
       route: JSON.parse(t.route || '[]'),
       updated_at: t.updated_at,
       ended: Boolean(t.ended),
+      stopped: t.ended === 2,
     });
   }
 

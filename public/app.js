@@ -665,6 +665,7 @@ function wireUi() {
     renderSimSpeed();
   };
   $('btn-share-drive').onclick = shareDrive;
+  $('btn-stop-share').onclick = stopSharing;
   $('btn-add-stop').onclick = () => {
     $('eta-menu').classList.add('hidden');
     if (stops.length) return removeStop();
@@ -1372,8 +1373,9 @@ async function arrive() {
 async function endDrive(arrived) {
   stopSimulation();
   if (share) {
-    api(`/api/trips/${share.token}`, { method: 'PATCH', body: { ended: true } }).catch(() => {});
+    api(`/api/trips/${share.token}`, { method: 'PATCH', body: { ended: arrived ? 'arrived' : 'stopped' } }).catch(() => {});
     share = null;
+    renderShareMenu();
   }
   nav = null;
   live = null;
@@ -1419,6 +1421,7 @@ async function shareDrive() {
       });
       share = { ...res, lastPush: 0 };
       pushShare(true);
+      renderShareMenu();
     }
     const text = `I'm driving to ${dest.name}. Follow my drive and ETA:`;
     if (navigator.share) await navigator.share({ title: 'My drive', text, url: share.url }).catch(() => {});
@@ -1429,6 +1432,26 @@ async function shareDrive() {
   } catch (e) {
     toast(e.message);
   }
+}
+
+// Ends sharing but keeps the drive going; whoever has the link sees "stopped sharing" and no position.
+async function stopSharing() {
+  $('eta-menu').classList.add('hidden');
+  if (!share) return;
+  const { token } = share;
+  share = null;
+  renderShareMenu();
+  try {
+    await api(`/api/trips/${token}`, { method: 'PATCH', body: { ended: 'stopped' } });
+    toast('Stopped sharing. The link no longer shows where you are.');
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function renderShareMenu() {
+  $('share-label').textContent = share ? 'Send link again' : 'Share drive';
+  $('btn-stop-share').classList.toggle('hidden', !share);
 }
 
 function pushShare(withRoute = false) {
@@ -1460,6 +1483,14 @@ async function startWatching(token) {
     try {
       const t = await api(`/api/trips/${token}`);
       if (!map.getSource('watch-route')) return setTimeout(tick, 500);
+      if (t.stopped) {
+        map.getSource('watch-route').setData(emptyFc());
+        driverMarker?.remove();
+        sheet.innerHTML = `<div class="grabber"></div>
+          <div class="watch-head"><span class="avatar">${esc((t.driver || '?')[0])}</span><div><b>${esc(t.driver)} stopped sharing</b><small class="hint">their drive to ${esc(t.destination.name)}</small></div></div>
+          <a class="btn ghost wide" style="display:grid;place-items:center;text-decoration:none" href="/">Open A2B</a>`;
+        return;
+      }
       map.getSource('watch-route').setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: t.route } });
       if (!destMarker) destMarker = new maplibregl.Marker({ element: el('div', 'dest-pin', DEST_PIN), anchor: 'bottom' }).setLngLat([t.destination.lng, t.destination.lat]).addTo(map);
       if (t.position) {

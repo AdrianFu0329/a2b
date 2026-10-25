@@ -270,6 +270,17 @@ test('shared drives: owner updates, anyone with the link can watch', async () =>
   assert.equal(view.body.route.length, 21);
   await alice('PATCH', `/api/trips/${token}`, { ended: true });
   assert.equal((await client()('GET', `/api/trips/${token}`)).body.ended, true);
+
+  // Stopping sharing mid-drive: viewers keep the link but no longer see where the driver is.
+  const second = await alice('POST', '/api/trips', { destination: { name: 'Gym', lat: 52.509, lng: 13.4 }, route: LINE });
+  const t2 = second.body.token;
+  await alice('PATCH', `/api/trips/${t2}`, { position: [13.4, 52.503], heading: 2 });
+  await alice('PATCH', `/api/trips/${t2}`, { ended: 'stopped' });
+  const stopped = (await client()('GET', `/api/trips/${t2}`)).body;
+  assert.equal(stopped.stopped, true);
+  assert.equal(stopped.position, null);
+  assert.deepEqual(stopped.route, []);
+  assert.equal((await alice('PATCH', `/api/trips/${t2}`, { position: [13.4, 52.505] })).status, 404, 'no updates after stopping');
 });
 
 test('leaderboard and account deletion', async () => {
