@@ -116,6 +116,7 @@ async function boot() {
 
   initPanels({ onUserChanged, applyTheme, openSearchFor, openPreview, refreshSound, setupVehicle });
   wireUi();
+  setupSheetDrag();
   refreshSound();
   startLocation();
   setInterval(() => loadReports(true), REPORT_REFRESH_MS);
@@ -203,7 +204,6 @@ function addMapLayers() {
     });
     map.addLayer({ id: 'watch-route', type: 'line', source: 'watch-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': 6, 'line-opacity': 0.85 } }, before);
     for (const id of ['routes-alt', 'routes-alt-casing']) {
-      map.on('click', id, (e) => mode === 'preview' && selectRoute(e.features[0].properties.idx));
       map.on('mouseenter', id, () => (map.getCanvas().style.cursor = 'pointer'));
       map.on('mouseleave', id, () => (map.getCanvas().style.cursor = ''));
     }
@@ -552,6 +552,7 @@ function setupLongPress() {
   map.on('touchcancel', cancel);
   map.on('contextmenu', (e) => mode !== 'drive' && mode !== 'watch' && showContextMenu(e.lngLat, e.point));
   map.on('click', hideContextMenu);
+  map.on('click', routeAtTap);
 }
 
 async function showContextMenu(lngLat, point) {
@@ -860,7 +861,8 @@ async function openPreview(place) {
   routes = [];
   selected = 0;
   $('browse-ui').classList.add('hidden');
-  $('preview').classList.remove('hidden');
+  $('preview').classList.remove('hidden', 'peek');
+  $('peek-summary').textContent = '';
   $('dest-name').textContent = place.name;
   $('dest-addr').textContent = place.address || '';
   // Placeholder cards the shape of real ones, so the sheet doesn't jump when the routes arrive.
@@ -884,6 +886,7 @@ async function openPreview(place) {
     if (mode !== 'preview' || dest !== place) return;
     $('route-status').textContent = from ? '' : status;
     renderRouteOptions();
+    renderPeekSummary();
     drawRoutes();
     fitRoutes();
     $('btn-go').disabled = false;
@@ -910,9 +913,61 @@ async function requestRoutes(from, to, heading, via = []) {
   return rs;
 }
 
+// Room the map leaves for the route sheet: its real height on a phone, so a collapsed sheet shows more map.
 function sheetPadding() {
-  const wide = innerWidth >= 720;
-  return wide ? { top: 60, bottom: 60, left: 460, right: 60 } : { top: 60, bottom: Math.min(innerHeight * 0.5, 380), left: 40, right: 40 };
+  if (innerWidth >= 720) return { top: 60, bottom: 60, left: 460, right: 60 };
+  const sheet = $('preview');
+  const h = sheet.classList.contains('hidden') ? Math.min(innerHeight * 0.5, 380) : sheet.offsetHeight + 24;
+  return { top: 60, bottom: Math.min(h, innerHeight - 160), left: 40, right: 40 };
+}
+
+// Tapping a route line picks it. Lines are thin, so look a fingertip around the tap, and prefer an alternative
+// over the route already chosen where they run together.
+function routeAtTap(e) {
+  if (mode !== 'preview' || routes.length < 2) return;
+  const r = 18;
+  const hits = map.queryRenderedFeatures([[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]], { layers: ['routes-alt', 'routes-alt-casing', 'routes-main', 'routes-casing'] });
+  const idx = hits.map((f) => f.properties.idx).find((i) => i !== selected) ?? hits[0]?.properties.idx;
+  if (idx != null && idx !== selected) selectRoute(idx);
+}
+
+// The route sheet can be pulled down to a slim bar (destination, chosen route, Go) to see the routes on the
+// map, and pushed back up. Drag its top, or tap the grabber.
+function setupSheetDrag() {
+  const sheet = $('preview');
+  let startY = null, dy = 0;
+  const set = (peek) => {
+    sheet.classList.toggle('peek', peek);
+    sheet.style.transform = '';
+    if (mode === 'preview' && routes.length) requestAnimationFrame(fitRoutes);
+  };
+  sheet.querySelector('.grabber').onclick = () => set(!sheet.classList.contains('peek'));
+  sheet.addEventListener('touchstart', (e) => {
+    const top = sheet.getBoundingClientRect().top;
+    if (e.touches.length !== 1 || e.touches[0].clientY - top > 90 || e.target.closest('button')) return;
+    startY = e.touches[0].clientY;
+    dy = 0;
+  }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    if (startY == null) return;
+    dy = e.touches[0].clientY - startY;
+    sheet.style.transform = `translateY(${Math.max(-30, Math.min(dy, sheet.offsetHeight - 120))}px)`;
+  }, { passive: true });
+  sheet.addEventListener('touchend', () => {
+    if (startY == null) return;
+    startY = null;
+    if (dy > 50) set(true);
+    else if (dy < -40) set(false);
+    else sheet.style.transform = '';
+  });
+}
+
+// One line for the collapsed sheet: "44 min · 30 km · 3 tolls".
+function renderPeekSummary() {
+  const r = routes[selected];
+  $('peek-summary').textContent = r
+    ? [formatDuration(r.duration), formatDistance(r.distance, state.settings.units), r.tolls?.length ? tollSummary(r.tolls) : r.toll ? 'Toll' : ''].filter(Boolean).join(' · ')
+    : '';
 }
 
 function fitRoutes() {
@@ -960,6 +1015,7 @@ function renderRouteOptions() {
 function selectRoute(i) {
   selected = Number(i);
   renderRouteOptions();
+  renderPeekSummary();
   drawRoutes();
   drawRouteLabels();
 }

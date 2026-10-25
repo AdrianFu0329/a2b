@@ -131,6 +131,12 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bott
   animation: up 0.2s ease-out;
 }
 .sheet.tall { max-height: 88vh; }
+#preview { transition: transform 0.2s ease-out; }
+#preview .grabber { width: 56px; height: 5px; padding: 8px 0; box-sizing: content-box; background-clip: content-box; cursor: pointer; }
+.peek-summary { display: none; font-weight: 600; color: var(--text) !important; }
+#preview.peek #route-list, #preview.peek #route-status, #preview.peek #dest-addr { display: none; }
+#preview.peek .peek-summary { display: block; }
+#preview.peek .sheet-actions { margin-top: 10px; }
 @media (min-width: 720px) {
   .sheet { left: 16px; right: auto; width: 420px; bottom: 16px; border-radius: var(--radius); }
   .screen { left: 0; right: auto; width: 440px; box-shadow: var(--shadow); }
