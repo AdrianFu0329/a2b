@@ -4,7 +4,7 @@
 // Pure logic (no DOM), so it runs in tests.
 
 import { distance, angleDiff, interpolate } from './geo.js';
-import { pointAtDistance } from './nav.js';
+import { pointAlong, pointAtDistance } from './nav.js';
 
 const MIN_MS = 200;
 const MAX_MS = 1500;
@@ -33,7 +33,7 @@ export class Glide {
       this.start = now;
       return;
     }
-    this.from = shown;
+    this.from = ontoPath(shown, pose);
     this.to = { ...pose, heading: pose.heading ?? shown.heading };
     this.start = now;
     this.duration = Math.min(MAX_MS, Math.max(MIN_MS, (gap || 1000) * STRETCH));
@@ -55,6 +55,16 @@ export class Glide {
     }
     return { pos: interpolate(from.pos, to.pos, t), heading: norm(heading) };
   }
+}
+
+// A car that slid in a straight line (it had no place on the route, e.g. at the start of a drive) picks up
+// its place along the route again once it is on the line, so it follows the road from then on.
+function ontoPath(shown, pose) {
+  if (!pose.path || pose.along == null || (shown.path === pose.path && shown.along != null)) return shown;
+  const { coords, cum } = pose.path;
+  const seg = pointAtDistance(coords, cum, pose.along).seg;
+  const hit = pointAlong(coords, cum, shown.pos, seg - 80, seg + 1);
+  return hit.dist < ON_PATH_M ? { ...shown, pos: hit.point, along: hit.along, path: pose.path } : shown;
 }
 
 // Follow the road (not a straight chord) when both ends sit on the same route, going forwards.

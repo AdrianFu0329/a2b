@@ -1,6 +1,6 @@
 import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
-import { Navigator, Simulator, reportsAlong, sliceAlong, pointAtDistance } from './nav.js';
+import { Navigator, Simulator, reportsAlong, sliceAlong } from './nav.js';
 import { Glide } from './motion.js';
 import { turnIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -25,6 +25,8 @@ const ROUTE = {
 const REPORT_REFRESH_MS = 60_000;
 const STILL_SPEED = 1; // m/s; slower than this counts as standing still
 const BROWSE_RESUME_MS = 15_000;
+const FRAME_MS = 1000 / 30; // smooth enough for a car, and half the work of 60 fps
+const HEAD_M = 600; // length of the driving line's head, redrawn every frame
 const REROUTE_GAP_MS = 8000;
 const SHARE_PUSH_MS = 15_000;
 
@@ -55,10 +57,11 @@ let share = null; // { token, url, lastPush }
 let recenterTimer = null;
 const glide = new Glide(); // slides the car between GPS fixes
 let shown = null; // where the car is drawn this frame
-let frameId = 0, lastFrame = 0, lineDrawn = 0;
+let frameId = 0, lastFrame = 0;
 let camZoom = null;
 let userMoving = false;
 let lastUserMove = 0;
+let tailFrom = null, tailFor = null; // where the rarely redrawn rest of the driving line starts, and for which route
 
 // ================= Boot =================
 boot();
@@ -73,6 +76,7 @@ async function boot() {
     center: last ?? [10, 25],
     zoom: last ? 15 : 1.6,
     attributionControl: { compact: true },
+    pixelRatio: Math.min(devicePixelRatio, 2), // 3x screens cost a lot of GPU (and heat) for little gain on a moving map
     maxPitch: 65,
   });
   map.touchPitch.disable();
@@ -160,6 +164,9 @@ function addMapLayers() {
     map.addLayer({ id: 'routes-alt', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], false], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#a9b5c3', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 16, 10] } }, before);
     map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
     map.addLayer({ id: 'routes-main', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
+    map.addSource('route-head', { type: 'geojson', data: emptyFc() });
+    map.addLayer({ id: 'route-head-casing', type: 'line', source: 'route-head', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, 'routes-main');
+    map.addLayer({ id: 'route-head-main', type: 'line', source: 'route-head', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
     // The upcoming turn, drawn on the route as a white arrow, above the map's labels so it's never hidden.
     map.addSource('maneuver', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('turn-head')) map.addImage('turn-head', arrowHeadImage(), { pixelRatio: 2 });
@@ -181,6 +188,7 @@ function addMapLayers() {
     }
   }
   arrowFor = null; // a new style starts with an empty arrow source
+  tailFor = null; // and an empty driving line
   drawRoutes();
 }
 
@@ -252,25 +260,39 @@ function drawManeuverArrow() {
 function drawRoutes() {
   const src = map?.getSource('routes');
   if (!src) return;
+  if (mode === 'drive' && nav) {
+    drawDriveLine(true);
+    return drawManeuverArrow();
+  }
+  map.getSource('route-head')?.setData(emptyFc());
+  tailFor = null;
   let features = [];
   if (mode === 'preview') {
     features = routes.map((r, i) => ({ type: 'Feature', properties: { idx: i, selected: i === selected }, geometry: { type: 'LineString', coordinates: r.coords } }));
     features.sort((a, b) => a.properties.selected - b.properties.selected);
-  } else if (mode === 'drive' && nav) {
-    // Only draw what's left, so the line "shrinks" behind the car, from where the car is drawn right now.
-    const onLine = shown?.path === nav;
-    const rest = remainingCoords(nav, onLine ? shown.along : live?.along ?? 0, onLine ? shown.pos : live?.snapped);
-    features = [{ type: 'Feature', properties: { idx: 0, selected: true }, geometry: { type: 'LineString', coordinates: rest } }];
   }
   src.setData({ type: 'FeatureCollection', features });
   drawManeuverArrow();
 }
 
-function remainingCoords(n, along, snapped) {
-  const out = snapped ? [snapped] : [];
-  for (let i = pointAtDistance(n.coords, n.cum, along).seg; i < n.coords.length; i++) out.push(n.coords[i]);
-  return out.length > 1 ? out : n.coords.slice(-2);
+// While driving, only what's left of the route is drawn, so the line shrinks behind the car. It comes in two
+// parts: a short head from the car to `tailFrom`, redrawn every frame, and the long rest of the route, redrawn
+// only every few hundred metres. Redrawing the whole route many times a second kept the map re-cutting tiles,
+// so stretches of line went missing or lagged behind the car, and phones ran hot.
+function drawDriveLine(force = false) {
+  const head = map?.getSource('route-head'), tail = map?.getSource('routes');
+  if (!head || !tail || !nav) return;
+  // Measured along the route, so the line starts on the road even when the car is off it.
+  const along = Math.min(shown?.path === nav ? shown.along : live?.along ?? 0, nav.total);
+  if (force || tailFor !== nav || along > tailFrom - 100 || along < tailFrom - HEAD_M * 2) {
+    tailFor = nav;
+    tailFrom = Math.min(along + HEAD_M, nav.total);
+    tail.setData({ type: 'FeatureCollection', features: tailFrom < nav.total ? [lineFeature(sliceAlong(nav.coords, nav.cum, tailFrom, nav.total))] : [] });
+  }
+  head.setData({ type: 'FeatureCollection', features: [lineFeature(sliceAlong(nav.coords, nav.cum, along, tailFrom))] });
 }
+
+const lineFeature = (coordinates) => ({ type: 'Feature', properties: { idx: 0, selected: true }, geometry: { type: 'LineString', coordinates } });
 
 // ================= Location =================
 function startLocation() {
@@ -337,7 +359,11 @@ function moveCar(pose) {
 
 function frame(now) {
   frameId = 0;
-  const dt = lastFrame ? Math.min(now - lastFrame, 100) : 16;
+  if (lastFrame && now - lastFrame < FRAME_MS - 4) {
+    frameId = requestAnimationFrame(frame);
+    return;
+  }
+  const dt = lastFrame ? Math.min(now - lastFrame, 100) : FRAME_MS;
   lastFrame = now;
   shown = glide.at(now);
   if (!shown || mode === 'watch') return;
@@ -348,10 +374,7 @@ function frame(now) {
     else if (mode === 'browse') map.jumpTo({ center: shown.pos });
   } else camZoom = null;
   const done = glide.done(now);
-  if (mode === 'drive' && (done || now - lineDrawn > 80)) {
-    lineDrawn = now;
-    drawRoutes();
-  }
+  if (mode === 'drive') drawDriveLine();
   if (!done || settling) frameId = requestAnimationFrame(frame);
   else lastFrame = 0;
 }
@@ -957,7 +980,8 @@ function driveTick(fix) {
   renderBanner();
   renderEta();
   renderLimit(live.limit, fix.speed);
-  drawRoutes();
+  drawDriveLine();
+  drawManeuverArrow();
   if (live.prompt) speak(live.prompt);
   checkAlerts();
   if (share) pushShare();

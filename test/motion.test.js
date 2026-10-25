@@ -53,6 +53,15 @@ test('follows the road round a corner instead of cutting it', () => {
   assert.ok(distance(mid, B) < 1, 'halfway is the corner itself');
 });
 
+test('picks up the route again after a straight slide', () => {
+  const g = new Glide();
+  g.set({ pos: [13.40001, 52.5], heading: 0 }, 0); // no place on the route yet (e.g. from the map before a drive)
+  for (let i = 1; i <= 4; i++) g.set({ pos: coords[i], along: path.cum[i], path, heading: 0 }, i * 1000);
+  const shown = g.at(4500);
+  assert.equal(shown.path, path);
+  assert.ok(shown.along > path.cum[3] && shown.along < path.cum[4]);
+});
+
 test('jumps when the next fix is far away', () => {
   const g = new Glide();
   g.set({ pos: A, heading: 0 }, 0);
