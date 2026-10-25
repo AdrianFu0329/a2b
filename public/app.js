@@ -23,6 +23,8 @@ const ROUTE = {
   night: { main: '#d0569a', casing: '#5e1640' },
 };
 const REPORT_REFRESH_MS = 60_000;
+const STILL_SPEED = 1; // m/s; slower than this counts as standing still
+const BROWSE_RESUME_MS = 15_000;
 const REROUTE_GAP_MS = 8000;
 const SHARE_PUSH_MS = 15_000;
 
@@ -56,6 +58,7 @@ let shown = null; // where the car is drawn this frame
 let frameId = 0, lastFrame = 0, lineDrawn = 0;
 let camZoom = null;
 let userMoving = false;
+let lastUserMove = 0;
 
 // ================= Boot =================
 boot();
@@ -84,6 +87,7 @@ async function boot() {
   map.on('rotate', () => $('btn-compass').classList.toggle('hidden', Math.abs(map.getBearing()) < 3 || mode === 'drive'));
   map.on('moveend', scheduleReportLoad);
   map.on('movestart', (e) => { if (e.originalEvent) userMoving = true; });
+  map.on('move', (e) => { if (e.originalEvent) lastUserMove = Date.now(); });
   map.on('moveend', () => { userMoving = false; });
   setupLongPress();
 
@@ -283,13 +287,25 @@ function locationFailed(err) {
 function onFix(p) {
   state.locationDenied = false;
   $('loc-banner').classList.add('hidden');
-  const lngLat = [p.coords.longitude, p.coords.latitude];
+  const raw = [p.coords.longitude, p.coords.latitude];
   const prev = state.pos;
-  let heading = prev?.heading ?? null;
   const speed = p.coords.speed;
+  // Standing still, GPS wanders by about its accuracy. Inside that wobble keep the car where it is,
+  // so it doesn't shake or spin round; a real move or a speed reading lets it go.
+  const wobble = Math.min(Math.max(p.coords.accuracy ?? 20, 5), 30);
+  const moved = prev ? distance(prev.lngLat, raw) : Infinity;
+  const still = moved < wobble && (speed == null || speed < STILL_SPEED);
+  const lngLat = still ? prev.lngLat : raw;
+  let heading = prev?.heading ?? null;
   if (p.coords.heading != null && !Number.isNaN(p.coords.heading) && (speed ?? 0) > 1) heading = p.coords.heading;
-  else if (prev && distance(prev.lngLat, lngLat) > 6) heading = bearing(prev.lngLat, lngLat);
-  const fix = { lngLat, heading, speed: speed ?? (prev ? estSpeed(prev, lngLat, p.timestamp) : 0), accuracy: p.coords.accuracy, time: p.timestamp };
+  else if (!still && prev && moved > Math.max(8, wobble)) heading = bearing(prev.lngLat, raw);
+  const fix = {
+    lngLat,
+    heading,
+    speed: speed ?? (still ? 0 : prev ? estSpeed(prev, raw, p.timestamp) : 0),
+    accuracy: p.coords.accuracy,
+    time: still ? prev.time : p.timestamp, // so the speed estimate spans the whole stop
+  };
   if (sim) return; // a simulated drive owns the car right now
   handleFix(fix, !prev);
 }
@@ -308,6 +324,8 @@ function handleFix(fix, first = false) {
   if (mode === 'drive') return driveTick(fix);
   moveCar({ pos: fix.lngLat, heading: fix.heading ?? 0 });
   if (first && mode === 'browse') map.jumpTo({ center: fix.lngLat, zoom: 15.5 });
+  // Moving without a route after panning the map away: come back to the car after a while.
+  else if (mode === 'browse' && !follow && (fix.speed ?? 0) > 2 && Date.now() - lastUserMove > BROWSE_RESUME_MS) recenter();
 }
 
 // Each fix sets where the car should be; every animation frame draws it part of the way there,
