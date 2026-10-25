@@ -19,9 +19,10 @@
   --shadow: 0 6px 24px rgba(15, 23, 42, 0.18), 0 1px 3px rgba(15, 23, 42, 0.12);
   --radius: 18px;
   --safe-top: env(safe-area-inset-top, 0px);
-  /* Capped at the iPhone home-indicator height: some iOS Safari versions report ~80px here (room for their
-     floating toolbar) even with it collapsed, which left a big empty band under the bottom bars. */
-  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 34px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Set from app.js when an iOS home-screen app reports a viewport shorter than the screen: full-screen
+     layers reach down past the viewport by this much, so there's no blank band at the bottom. */
+  --below: 0px;
   color-scheme: light;
 }
 
@@ -52,12 +53,12 @@ svg { display: block; }
 h2, h3, p { margin: 0; }
 .hidden { display: none !important; }
 
-#map { position: fixed; inset: 0; }
+#map { position: fixed; inset: 0 0 calc(-1 * var(--below)) 0; }
 .maplibregl-ctrl-attrib { font-size: 10px; }
 .maplibregl-ctrl-bottom-right { bottom: calc(86px + var(--safe-bottom)); right: 84px; }
 body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bottom)); }
 
-.layer { position: fixed; inset: 0; pointer-events: none; }
+.layer { position: fixed; inset: 0 0 calc(-1 * var(--below)) 0; pointer-events: none; }
 .layer > * { pointer-events: auto; }
 
 /* ---------- Round map buttons ---------- */
@@ -116,11 +117,11 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bott
 
 /* ---------- Screens and sheets ---------- */
 .screen {
-  position: fixed; inset: 0; background: var(--bg); z-index: 20; display: flex; flex-direction: column; padding-top: var(--safe-top);
+  position: fixed; inset: 0 0 calc(-1 * var(--below)) 0; background: var(--bg); z-index: 20; display: flex; flex-direction: column; padding-top: var(--safe-top);
   animation: fade 0.15s ease-out;
 }
 .sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; background: var(--bg); border-radius: var(--radius) var(--radius) 0 0;
+  position: fixed; left: 0; right: 0; bottom: calc(-1 * var(--below)); z-index: 15; background: var(--bg); border-radius: var(--radius) var(--radius) 0 0;
   box-shadow: 0 -8px 30px rgba(15, 23, 42, 0.2); padding: 6px 16px calc(16px + var(--safe-bottom)); max-height: 78vh; overflow: auto;
   animation: up 0.2s ease-out;
 }
@@ -135,7 +136,7 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--safe-bott
 .icon-btn { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; flex: none; }
 .icon-btn:active { background: var(--bg-2); }
 .icon-btn svg { width: 24px; height: 24px; }
-.backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 24; }
+.backdrop { position: fixed; inset: 0 0 calc(-1 * var(--below)) 0; background: rgba(0, 0, 0, 0.4); z-index: 24; }
 
 .btn { height: 52px; border-radius: 26px; padding: 0 22px; font-weight: 700; font-size: 17px; }
 .btn.primary { background: var(--primary); color: var(--primary-ink); }
@@ -305,7 +306,7 @@ small.hint { display: block; padding: 4px 0 0; }
 
 /* ---------- Drawer menu ---------- */
 .drawer {
-  position: fixed; top: 0; bottom: 0; left: 0; width: min(340px, 86vw); background: var(--bg); z-index: 25; box-shadow: var(--shadow);
+  position: fixed; top: 0; bottom: calc(-1 * var(--below)); left: 0; width: min(340px, 86vw); background: var(--bg); z-index: 25; box-shadow: var(--shadow);
   padding-top: var(--safe-top); overflow: auto; animation: slide 0.2s ease-out;
 }
 @keyframes slide { from { transform: translateX(-30px); opacity: 0; } }
