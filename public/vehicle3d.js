@@ -79,12 +79,21 @@ function slab(shape, height, bevel) {
   return g;
 }
 
-function arrowShape(w, l, notch) {
+// Chevron outline (tip, right wing, notch, left wing) with each corner rounded off by radius r.
+function arrowShape(w, l, notch, r) {
+  const pts = [[0, l / 2], [w / 2, -l / 2], [0, -l / 2 + notch], [-w / 2, -l / 2]];
   const s = new THREE.Shape();
-  s.moveTo(0, l / 2);
-  s.lineTo(w / 2, -l / 2);
-  s.lineTo(0, -l / 2 + notch);
-  s.lineTo(-w / 2, -l / 2);
+  pts.forEach((p, i) => {
+    const prev = pts[(i + pts.length - 1) % pts.length], next = pts[(i + 1) % pts.length];
+    const toward = (q, d) => {
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      return [p[0] + ((q[0] - p[0]) * d) / len, p[1] + ((q[1] - p[1]) * d) / len];
+    };
+    const [a, b] = [toward(prev, r), toward(next, r)];
+    if (i === 0) s.moveTo(...a);
+    else s.lineTo(...a);
+    s.quadraticCurveTo(p[0], p[1], ...b);
+  });
   s.closePath();
   return s;
 }
@@ -107,8 +116,8 @@ function roundedRect(w, l, r) {
 // A white rim all round the arrow (lit from within so it stays white in shade) keeps it apart from the route.
 function chevron(color) {
   const g = new THREE.Group();
-  const rim = new THREE.Mesh(slab(arrowShape(0.94, 1.16, 0.35), 0.14, 0.03), material('#ffffff', { emissive: '#ffffff', emissiveIntensity: 0.45 }));
-  const arrow = new THREE.Mesh(slab(arrowShape(0.76, 0.96, 0.29), 0.17, 0.05), material(color, { roughness: 0.35 }));
+  const rim = new THREE.Mesh(slab(arrowShape(0.94, 1.16, 0.35, 0.12), 0.14, 0.03), material('#ffffff', { emissive: '#ffffff', emissiveIntensity: 0.45 }));
+  const arrow = new THREE.Mesh(slab(arrowShape(0.76, 0.96, 0.29, 0.1), 0.17, 0.05), material(color, { roughness: 0.35 }));
   arrow.position.set(0, 0.01, -0.01);
   g.add(rim, arrow);
   return g;
