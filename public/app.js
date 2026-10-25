@@ -64,6 +64,13 @@ let lastUserMove = 0;
 let tailFrom = null, tailFor = null; // where the rarely redrawn rest of the driving line starts, and for which route
 
 // ================= Boot =================
+// With Reduce Motion on (an iPhone accessibility setting), MapLibre turns every camera move into an instant
+// jump, including the glide after flicking the map, so the map stops dead and recenters snap. A map needs that
+// movement to keep you oriented, so MapLibre is told the setting is off. It asks via matchMedia, lazily, after
+// this runs. Our own CSS still sees the real setting.
+const realMatchMedia = window.matchMedia.bind(window);
+window.matchMedia = (query) => realMatchMedia(/prefers-reduced-motion:\s*reduce/.test(query) ? 'not all' : query);
+
 boot();
 
 async function boot() {
