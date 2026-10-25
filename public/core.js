@@ -44,9 +44,14 @@ export async function api(path, { method = 'GET', body } = {}) {
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: 'same-origin',
+  }).catch(() => {
+    throw Object.assign(new Error("Can't reach A2B. Check your connection and try again."), { status: 0 });
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `Something went wrong (${res.status}).`), { status: res.status });
+  // Without a message of our own, a 429 or 5xx came from Cloudflare itself, e.g. the free plan's daily cap.
+  const busy = res.status === 429 || res.status >= 500;
+  const fallback = busy ? 'A2B is busy right now (it runs on free servers during the beta). Try again in a minute.' : `Something went wrong (${res.status}).`;
+  if (!res.ok) throw Object.assign(new Error(data.error || fallback), { status: res.status });
   return data;
 }
 

@@ -11,6 +11,21 @@ export function httpError(message, status) {
   return Object.assign(new Error(message), { status });
 }
 
+// The free map servers A2B leans on turn people away when they're overloaded (429 or 5xx) or stop answering.
+// Say so plainly instead of reporting "no route", since trying again a little later usually works.
+export const BUSY_MESSAGE = 'A2B is busy right now (it runs on free map servers during the beta). Try again in a minute.';
+
+async function upstream(url, init) {
+  let res;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(15000), ...init });
+  } catch {
+    throw httpError(BUSY_MESSAGE, 503);
+  }
+  if (res.status === 429 || res.status >= 500) throw httpError(BUSY_MESSAGE, 503);
+  return res;
+}
+
 // ---------- Search ----------
 
 // Nearby first: one search inside ~50 km; only when that finds too little, a second one everywhere (still
@@ -172,7 +187,7 @@ export function buildRouteRequest({ from, to, via = [], avoid = {}, units = 'met
 
 export async function fetchRoutes(env, opts) {
   const body = buildRouteRequest(opts);
-  const res = await fetch(env.ROUTING_URL || 'https://valhalla1.openstreetmap.de/route', {
+  const res = await upstream(env.ROUTING_URL || 'https://valhalla1.openstreetmap.de/route', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'user-agent': UA },
     body: JSON.stringify(body),
@@ -330,7 +345,7 @@ export function bbox(coords, pad = 0) {
 }
 
 async function getJson(url) {
-  const res = await fetch(url, { headers: { 'user-agent': UA, accept: 'application/json' } });
+  const res = await upstream(url, { headers: { 'user-agent': UA, accept: 'application/json' } });
   if (!res.ok) throw httpError(`Search service error (${res.status}).`, 502);
   return res.json();
 }

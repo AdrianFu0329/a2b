@@ -1,0 +1,6 @@
+# The short public link, testapp-a2b.pages.dev. Deploy from this folder:
+#   npx wrangler pages deploy --branch main
+# Keeping this file here stops wrangler from picking up the app's own wrangler.toml one folder up.
+name = "testapp-a2b"
+pages_build_output_dir = "public"
+compatibility_date = "2026-10-01"

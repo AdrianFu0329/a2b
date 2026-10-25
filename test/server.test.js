@@ -11,6 +11,7 @@ import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 // ---------- Fake upstream services ----------
 const LINE = Array.from({ length: 21 }, (_, i) => [13.4, 52.5 + 0.00045 * i]); // ~1 km north
 let lastRouteBody = null;
+let routingDown = false;
 let osmLookups = 0;
 
 function fakeTrip(coords, time) {
@@ -29,6 +30,7 @@ function fakeTrip(coords, time) {
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   if (u.includes('/route')) {
+    if (routingDown) return new Response('Too Many Requests', { status: 429 });
     lastRouteBody = JSON.parse(init.body);
     if (lastRouteBody.locations.length === 3) {
       const a = fakeTrip(LINE.slice(0, 11), 60), b = fakeTrip(LINE.slice(10), 60);
@@ -379,5 +381,16 @@ test('testing tools are flagged only for accounts in TESTER_EMAILS', async () =>
     assert.equal((await client()('GET', '/api/me')).body.tester, undefined, 'guests get no flag');
   } finally {
     delete env.TESTER_EMAILS;
+  }
+});
+
+test('an overloaded routing server reads as busy, not as no route', async () => {
+  routingDown = true;
+  try {
+    const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    assert.equal(r.status, 503);
+    assert.match(r.body.error, /busy/);
+  } finally {
+    routingDown = false;
   }
 });
