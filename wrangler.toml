@@ -12,7 +12,7 @@ run_worker_first = ["/api/*"]
 binding = "DB"
 database_name = "a2b"
 # Paste the id printed by `npx wrangler d1 create a2b` here before deploying.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "8d638e04-bfb6-4968-aad9-6a5067d4244c"
 migrations_dir = "migrations"
 
 # Daily cleanup of expired sessions, old shared drives and login throttling records.
