@@ -193,6 +193,21 @@ small.hint { display: block; padding: 4px 0 0; }
 #btn-save-place.saved svg path { fill: #f5b300; stroke: #f5b300; }
 .route-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 12px; }
 .route-opt { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 2px solid var(--line); text-align: left; }
+.route-opt.skeleton { height: 74px; border-color: transparent; background: var(--bg-2); flex-direction: column; align-items: flex-start; justify-content: center; gap: 10px; }
+.route-opt.skeleton i { display: block; height: 12px; border-radius: 6px; background: color-mix(in srgb, var(--text) 9%, var(--bg-2)); width: 55%; }
+.route-opt.skeleton i:first-child { height: 18px; width: 30%; }
+.route-opt.skeleton, .route-opt.skeleton i { position: relative; overflow: hidden; }
+.route-opt.skeleton::after {
+  content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg) 55%, transparent), transparent); animation: shimmer 1.2s ease-in-out infinite;
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+.spinner {
+  display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border-radius: 50%;
+  border: 2px solid var(--bg-3); border-top-color: var(--accent-text); animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner, .route-opt.skeleton::after { animation-duration: 2.4s; } }
 .route-opt.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--bg)); }
 .route-opt .r-time { font-size: 20px; font-weight: 800; min-width: 76px; flex: none; }
 .route-opt .r-info { flex: 1; min-width: 0; font-size: 14px; color: var(--muted); }

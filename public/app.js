@@ -754,7 +754,8 @@ async function openPreview(place) {
   $('preview').classList.remove('hidden');
   $('dest-name').textContent = place.name;
   $('dest-addr').textContent = place.address || '';
-  $('route-list').innerHTML = '';
+  // Placeholder cards the shape of real ones, so the sheet doesn't jump when the routes arrive.
+  $('route-list').innerHTML = '<div class="route-opt skeleton" aria-hidden="true"><i></i><i></i></div>'.repeat(2);
   $('btn-go').disabled = true;
   updateSaveStar();
   destMarker?.remove();
@@ -763,21 +764,24 @@ async function openPreview(place) {
   map.easeTo({ center: [place.lng, place.lat], zoom: 15, pitch: 0, bearing: 0, padding: sheetPadding() });
 
   const from = state.pos?.lngLat;
-  if (!from) {
-    $('route-status').textContent = state.locationDenied
+  const status = !from
+    ? state.locationDenied
       ? 'Location is off, so routes start from the middle of the map.'
-      : 'Waiting for your location… routes start from the middle of the map for now.';
-  } else $('route-status').textContent = 'Finding the best routes…';
+      : 'Waiting for your location… routes start from the middle of the map for now.'
+    : 'Finding the best routes…';
+  $('route-status').innerHTML = `<span class="spinner" aria-hidden="true"></span>${status}`;
   try {
     routes = await requestRoutes(from ?? map.getCenter().toArray(), [place.lng, place.lat]);
     if (mode !== 'preview' || dest !== place) return;
-    if (from) $('route-status').textContent = '';
+    $('route-status').textContent = from ? '' : status;
     renderRouteOptions();
     drawRoutes();
     fitRoutes();
     $('btn-go').disabled = false;
   } catch (e) {
-    if (mode === 'preview') $('route-status').textContent = e.message;
+    if (mode !== 'preview' || dest !== place) return;
+    $('route-list').innerHTML = '';
+    $('route-status').textContent = e.message;
   }
 }
 
