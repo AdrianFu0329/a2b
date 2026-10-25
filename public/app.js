@@ -63,6 +63,7 @@ let shown = null; // where the car is drawn this frame
 let frameId = 0, lastFrame = 0;
 let camZoom = null;
 let userMoving = false;
+let touching = false; // a finger (or mouse button) is down on the map
 let vehicle3d = false; // the car is drawn as a 3D model (vehicle3d.js) rather than the flat arrow
 let lastUserMove = 0;
 let lineFor = null; // the route the driving line currently holds
@@ -110,6 +111,14 @@ async function boot() {
   map.on('movestart', (e) => { if (e.originalEvent) userMoving = true; });
   map.on('move', (e) => { if (e.originalEvent) lastUserMove = Date.now(); });
   map.on('moveend', () => { userMoving = false; });
+  // Moving the camera cancels any gesture in progress, so the follow camera holds still while the map is
+  // being touched; otherwise a drag is cancelled every frame before it can begin.
+  const canvas = map.getCanvasContainer();
+  canvas.addEventListener('touchstart', () => (touching = true), { passive: true });
+  canvas.addEventListener('mousedown', () => (touching = true));
+  addEventListener('touchend', (e) => (touching = e.touches.length > 0), { passive: true });
+  addEventListener('touchcancel', () => (touching = false), { passive: true });
+  addEventListener('mouseup', () => (touching = false));
   setupLongPress();
 
   carMarker = new maplibregl.Marker({ element: el('div', 'car', CAR), rotationAlignment: 'map', pitchAlignment: 'map' });
@@ -489,7 +498,7 @@ function frame(now) {
   carMarker.setLngLat(shown.pos).setRotation(shown.heading);
   if (vehicle3d) map.triggerRepaint(); // the model is part of the map: redraw even when the camera stays put
   let settling = false;
-  if (follow && !userMoving && !map.isEasing()) {
+  if (follow && !userMoving && !touching && !map.isEasing()) {
     if (mode === 'drive' && live) settling = followDrive(dt);
     else if (mode === 'browse') map.jumpTo({ center: shown.pos });
   } else camZoom = null;
