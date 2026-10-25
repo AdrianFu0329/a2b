@@ -3,7 +3,8 @@ import {
   hashPassword, verifyPassword, normalizeEmail, validatePassword, cleanName, createSession, currentUser, destroySession,
   sessionCookie, publicUser,
 } from './lib/auth.js';
-import { searchPlaces, reverseGeocode, fetchRoutes, fetchSpeedLimits, annotateWithReports, httpError, bbox } from './lib/providers.js';
+import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox } from './lib/providers.js';
+import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
 
 const MAX_BODY = 64 * 1024;
@@ -215,12 +216,17 @@ async function route(request, env, url) {
     });
     const [live] = await Promise.all([
       reports.inBox(bbox(routes.flatMap((r) => [r.coords[0], r.coords.at(-1)]).concat([from, to]), 0.2), user?.id),
-      // Speed limits are a nice-to-have: a slow or failing lookup never holds up the route.
+      // Speed limits and toll plazas are nice-to-haves: a slow or failing lookup never holds up the route.
       ...routes.map(async (r) => {
-        r.limits = await fetchSpeedLimits(env, r.shapes).catch(() => null);
+        const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
+        r.limits = a?.limits ?? null;
+        r.tolls = (a?.tolls ?? []).map((at) => ({ at }));
       }),
     ]);
     for (const r of routes) delete r.shapes;
+    const plazas = routes.flatMap((r) => r.tolls.map((t) => [t, r.coords[t.at]]));
+    const details = await plazaDetails(db, plazas.map(([, p]) => p)).catch(() => []);
+    plazas.forEach(([t], i) => Object.assign(t, details[i] ?? {}));
     annotateWithReports(routes, live);
     routes.sort((a, b) => a.duration - b.duration);
     return json({ routes, closures_avoided: exclude.length });

@@ -1,6 +1,6 @@
 import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
-import { Navigator, Simulator, reportsAlong, sliceAlong } from './nav.js';
+import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance } from './nav.js';
 import { Glide } from './motion.js';
 import { turnIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -67,6 +67,7 @@ let lineFor = null; // the route the driving line currently holds
 let trimmedAt = 0, trimmedTo = -1; // when, and to what fraction of the route, the driven part was last recoloured
 let trail = []; // lines driven earlier in this drive: parts of routes replaced by a reroute, and detours off them
 let offTrail = []; // where the car has been since it left the current route
+const tollsSpoken = new Set(); // toll plazas (route + index) already announced this drive
 
 // ================= Boot =================
 // With Reduce Motion on (an iPhone accessibility setting), MapLibre turns every camera move into an instant
@@ -181,6 +182,10 @@ function addMapLayers() {
     map.addLayer({ id: 'trail-main', type: 'line', source: 'trail', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].driven, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
     map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
     map.addLayer({ id: 'routes-main', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
+    // Toll plazas on the route, as small amber "TOLL" tags.
+    map.addSource('tolls', { type: 'geojson', data: emptyFc() });
+    if (!map.hasImage('toll-tag')) map.addImage('toll-tag', tollTagImage(), { pixelRatio: 2 });
+    map.addLayer({ id: 'tolls', type: 'symbol', source: 'tolls', layout: { 'icon-image': 'toll-tag', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 1] } });
     // The upcoming turn, drawn on the route as a white arrow, above the map's labels so it's never hidden.
     map.addSource('maneuver', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('turn-head')) map.addImage('turn-head', arrowHeadImage(), { pixelRatio: 2 });
@@ -241,6 +246,72 @@ function arrowHeadImage() {
   return g.getImageData(0, 0, size, size);
 }
 
+// A rounded amber tag reading TOLL, for toll plazas on the map.
+function tollTagImage() {
+  const w = 84, h = 44, c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d');
+  g.beginPath();
+  g.roundRect(3, 3, w - 6, h - 6, 10);
+  g.fillStyle = '#f5a524';
+  g.fill();
+  g.lineWidth = 4;
+  g.strokeStyle = '#ffffff';
+  g.stroke();
+  g.fillStyle = '#3b2400';
+  g.font = '800 22px system-ui, -apple-system, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('TOLL', w / 2, h / 2 + 1);
+  return g.getImageData(0, 0, w, h);
+}
+
+// Toll plazas to mark: the chosen route's in preview, the ones still ahead while driving.
+function drawTolls() {
+  const src = map?.getSource('tolls');
+  if (!src) return;
+  let pts = [];
+  if (mode === 'preview' && routes[selected]) pts = (routes[selected].tolls ?? []).map((t) => routes[selected].coords[t.at]);
+  else if (mode === 'drive' && nav) pts = (nav.route.tolls ?? []).filter((t) => nav.cum[t.at] > (live?.along ?? 0) - 30).map((t) => nav.coords[t.at]);
+  src.setData({ type: 'FeatureCollection', features: pts.map((p) => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: p } })) });
+}
+
+// "RM 2.10" for a price from OpenStreetMap.
+const money = ({ amount, currency }) => `${currency === 'MYR' ? 'RM' : currency} ${amount.toFixed(2)}`;
+
+// "2 tolls · RM 4.20" for a route card: the total only when every plaza's car price is known.
+function tollSummary(tolls) {
+  const priced = tolls.filter((t) => t.price);
+  const same = priced.length === tolls.length && priced.every((t) => t.price.currency === priced[0].price.currency);
+  const total = same ? money({ amount: priced.reduce((a, t) => a + t.price.amount, 0), currency: priced[0].price.currency }) : '';
+  return `${tolls.length} toll${tolls.length > 1 ? 's' : ''}${total ? ` · ${total}` : ''}`;
+}
+
+// While driving: a chip under the banner from 2 km before each plaza (name, car price, ways to pay), and a
+// spoken heads-up at about 1 km so there's time to get the card ready.
+function checkTolls() {
+  const chip = $('toll-chip');
+  const next = (nav?.route.tolls ?? []).map((t) => ({ ...t, ahead: nav.cum[t.at] - live.along })).find((t) => t.ahead > -20);
+  if (!next || next.ahead > 2000) {
+    if (!chip.classList.contains('hidden')) {
+      chip.classList.add('hidden');
+      drawTolls(); // a plaza was just passed: take its tag off the map
+    }
+    return;
+  }
+  const units = state.settings.units;
+  const top = [next.ahead > 0 ? formatDistance(next.ahead, units) : 'Now', next.name].filter(Boolean).map(esc).join(' · ');
+  const sub = [next.price && money(next.price), ...(next.pay ?? [])].filter(Boolean).map(esc).join(' · ');
+  chip.innerHTML = `<b>TOLL</b><span>${top}${sub ? `<small>${sub}</small>` : ''}</span>`;
+  chip.classList.remove('hidden');
+  const key = `${nav.total}:${next.at}`;
+  if (next.ahead > 0 && next.ahead <= 1000 && !tollsSpoken.has(key)) {
+    tollsSpoken.add(key);
+    speak(`Toll plaza in ${spokenDistance(next.ahead, units)}.`);
+  }
+}
+
 // Turn arrow on the map for the next maneuver: from just before the turn to just after it
 // (for a roundabout, all the way round to the exit).
 const NO_ARROW = new Set(['straight', 'depart', 'arrive', 'arrive_left', 'arrive_right', 'stop', 'ferry']);
@@ -275,6 +346,7 @@ function drawManeuverArrow() {
 function drawRoutes() {
   const src = map?.getSource('routes');
   if (!src) return;
+  drawTolls();
   if (mode === 'drive' && nav) {
     drawDriveLine();
     return drawManeuverArrow();
@@ -302,6 +374,7 @@ function drawDriveLine() {
   if (lineFor !== nav) {
     lineFor = nav;
     trimmedTo = -1;
+    drawTolls();
     src.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { idx: 0, selected: true }, geometry: { type: 'LineString', coordinates: nav.coords } }] });
   }
   const now = performance.now();
@@ -859,7 +932,8 @@ function renderRouteOptions() {
     const b = el('button', `route-opt${i === selected ? ' on' : ''}`);
     const badges = [];
     if (r.duration === fastest && routes.length > 1) badges.push('<span class="badge best">Fastest</span>');
-    if (r.toll) badges.push('<span class="badge warn">Toll</span>');
+    if (r.tolls?.length) badges.push(`<span class="badge warn">${esc(tollSummary(r.tolls))}</span>`);
+    else if (r.toll) badges.push('<span class="badge warn">Toll</span>');
     if (r.ferry) badges.push('<span class="badge warn">Ferry</span>');
     const reps = (r.reports ?? []).length;
     if (reps) badges.push(`<span class="badge">${reps} report${reps > 1 ? 's' : ''}</span>`);
@@ -963,6 +1037,8 @@ function startDrive() {
   trail = [];
   offTrail = [];
   drawTrail();
+  tollsSpoken.clear();
+  $('toll-chip').classList.add('hidden');
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
   live = null;
@@ -1024,6 +1100,7 @@ function driveTick(fix) {
   drawDriveLine();
   drawManeuverArrow();
   if (live.prompt) speak(live.prompt);
+  checkTolls();
   checkAlerts();
   if (share) pushShare();
 
@@ -1194,6 +1271,7 @@ async function endDrive(arrived) {
   trail = [];
   offTrail = [];
   drawTrail();
+  $('toll-chip').classList.add('hidden');
   onRoute = [];
   stops = [];
   renderStopMenu();

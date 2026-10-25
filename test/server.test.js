@@ -11,6 +11,7 @@ import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 // ---------- Fake upstream services ----------
 const LINE = Array.from({ length: 21 }, (_, i) => [13.4, 52.5 + 0.00045 * i]); // ~1 km north
 let lastRouteBody = null;
+let osmLookups = 0;
 
 function fakeTrip(coords, time) {
   return {
@@ -36,7 +37,14 @@ globalThis.fetch = async (url, init = {}) => {
     return Response.json({ trip: fakeTrip(LINE, 120), alternates: [{ trip: fakeTrip(LINE.slice(0, 15), 90) }] });
   }
   if (u.includes('/trace_attributes')) {
-    return Response.json({ edges: [{ begin_shape_index: 0, speed_limit: 50 }, { begin_shape_index: 5, speed_limit: 50 }, { begin_shape_index: 10, speed_limit: 30 }, { begin_shape_index: 15 }] });
+    return Response.json({ edges: [{ begin_shape_index: 0, speed_limit: 50 }, { begin_shape_index: 5, end_shape_index: 10, speed_limit: 50, end_node: { type: 'toll_booth' } }, { begin_shape_index: 10, speed_limit: 30 }, { begin_shape_index: 15 }] });
+  }
+  if (u.includes('openstreetmap.org/api/0.6/map')) {
+    osmLookups++;
+    const [w, s, e, n] = new URL(u).searchParams.get('bbox').split(',').map(Number);
+    return new Response(`<osm><node id="1" lat="${(s + n) / 2 + 0.0001}" lon="${(w + e) / 2}"><tag k="barrier" v="toll_booth"/><tag k="name" v="Plaza Tol Ujian"/>`
+      + '<tag k="charge" v="2.10 MYR/motorcar;1.10 MYR/taxi"/><tag k="payment:touchngo" v="yes"/><tag k="payment:touchngo_smarttag" v="yes"/><tag k="payment:touchngo_rfid" v="yes"/></node>'
+      + `<node id="2" lat="${s}" lon="${w}"><tag k="barrier" v="toll_booth"/><tag k="name" v="Far booth"/></node></osm>`);
   }
   if (u.includes('/reverse')) return Response.json({ features: [{ geometry: { coordinates: [13.4, 52.5] }, properties: { name: 'Somewhere', city: 'Berlin', country: 'Germany' } }] });
   if (u.includes('/api/')) return Response.json({ features: [{ geometry: { coordinates: [13.41, 52.52] }, properties: { name: 'Alexanderplatz', city: 'Berlin', country: 'Germany', osm_value: 'square' } }] });
@@ -273,4 +281,26 @@ test('leaderboard and account deletion', async () => {
   assert.equal((await bob('GET', '/api/me')).body.user, null);
   assert.equal((await client()('POST', '/api/auth/login', { email: 'bob@test.com', password: 'password2' })).status, 401);
   assert.ok(!(await alice('GET', '/api/leaderboard')).body.leaders.some((l) => l.name === 'Bob'));
+});
+
+test('routes list toll plazas with name, car price and ways to pay, looked up once', async () => {
+  const before = osmLookups;
+  const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+  assert.equal(r.status, 200);
+  const [full] = r.body.routes.filter((x) => x.coords.length === 21);
+  assert.deepEqual(full.tolls, [{ at: 10, name: 'Plaza Tol Ujian', price: { amount: 2.1, currency: 'MYR' }, pay: ["Touch 'n Go", 'RFID', 'SmartTAG'] }]);
+  const looked = osmLookups - before; // earlier route tests may already have cached this plaza
+  await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+  assert.equal(osmLookups - before, looked, 'a repeat request uses the cached plaza');
+  assert.ok(osmLookups >= 1);
+});
+
+test('toll booth tags and booth points', async () => {
+  const { describeBooth, tollIndexes } = await import('../src/lib/tolls.js');
+  assert.deepEqual(describeBooth({ name: 'Plaza Tol A', 'name:en': 'A Toll Plaza', charge: '5.00 MYR', 'payment:cash': 'yes', 'payment:touchngo': 'no' }),
+    { name: 'A Toll Plaza', price: { amount: 5, currency: 'MYR' }, pay: ['Cash'] });
+  assert.deepEqual(describeBooth(null), {});
+  const coords = Array.from({ length: 30 }, (_, i) => [13.4, 52.5 + 0.0009 * i]); // ~100 m apart
+  const edges = [9, 10, 25].map((i) => ({ end_shape_index: i, end_node: { type: 'toll_booth' } })).concat([{ end_shape_index: 12, end_node: { type: 'gate' } }]);
+  assert.deepEqual(tollIndexes(edges, coords), [9, 25], 'neighbouring booths are one plaza');
 });

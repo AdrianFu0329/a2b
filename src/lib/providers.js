@@ -1,8 +1,9 @@
 // Place search (Photon) and driving routes (Valhalla), normalised into the shapes the app uses.
 // Both default to free public servers; point GEOCODER_URL / ROUTING_URL at your own to scale up.
 
-import { decodePolyline, cumulative } from '../../public/geo.js';
+import { decodePolyline, cumulative, distance } from '../../public/geo.js';
 import { pointAlong } from '../../public/nav.js';
+import { tollIndexes } from './tolls.js';
 
 const UA = 'a2b-navigation/0.1 (+https://github.com/thaqif0709/a2b)';
 
@@ -168,20 +169,23 @@ export function lanes(list) {
   return out.some((l) => l.use) ? out : null;
 }
 
-// Posted speed limits along a route, from OpenStreetMap via Valhalla's trace_attributes.
-// Returned as runs: [[first shape index, km/h or null], ...], one entry per change.
-export async function fetchSpeedLimits(env, shapes) {
-  const perLeg = await Promise.all(shapes.map(({ shape }) => fetchLegLimits(env, shape)));
-  const runs = [];
-  perLeg.forEach((legRuns, i) => {
-    for (const [at, v] of legRuns ?? [[0, null]]) {
+// Posted speed limits and toll booths along a route, from OpenStreetMap via Valhalla's trace_attributes.
+// limits: runs [[first shape index, km/h or null], ...], one entry per change; tolls: shape indexes of toll plazas.
+export async function fetchRouteAttributes(env, shapes, coords) {
+  const perLeg = await Promise.all(shapes.map(({ shape }) => fetchLegEdges(env, shape)));
+  const runs = [], tolls = [];
+  perLeg.forEach((edges, i) => {
+    for (const [at, v] of (edges && speedLimitRuns(edges)) ?? [[0, null]]) {
       if (!runs.length || runs.at(-1)[1] !== v) runs.push([at + shapes[i].offset, v]);
     }
+    for (const at of tollIndexes(edges ?? [], coords, shapes[i].offset)) {
+      if (!tolls.length || distance(coords[tolls.at(-1)], coords[at]) > 300) tolls.push(at);
+    }
   });
-  return runs.some((r) => r[1] != null) ? runs : null;
+  return { limits: runs.some((r) => r[1] != null) ? runs : null, tolls };
 }
 
-async function fetchLegLimits(env, shape) {
+async function fetchLegEdges(env, shape) {
   const base = env.ROUTING_URL || 'https://valhalla1.openstreetmap.de/route';
   const res = await fetch(base.replace(/\/route$/, '/trace_attributes'), {
     method: 'POST',
@@ -190,12 +194,12 @@ async function fetchLegLimits(env, shape) {
       encoded_polyline: shape,
       shape_match: 'edge_walk',
       costing: 'auto',
-      filters: { attributes: ['edge.speed_limit', 'edge.begin_shape_index'], action: 'include' },
+      filters: { attributes: ['edge.speed_limit', 'edge.begin_shape_index', 'edge.end_shape_index', 'node.type'], action: 'include' },
     }),
     signal: AbortSignal.timeout(4000),
   });
   if (!res.ok) return null;
-  return speedLimitRuns((await res.json()).edges ?? []);
+  return (await res.json()).edges ?? [];
 }
 
 export function speedLimitRuns(edges) {

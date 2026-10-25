@@ -191,7 +191,8 @@ function roundForSpeech(m, units) {
 
 export function spokenDistance(m, units = 'metric') {
   const rounded = roundForSpeech(m, units);
-  const [n, u] = formatDistance(rounded, units).split(' ');
+  const [shown, u] = formatDistance(rounded, units).split(' ');
+  const n = shown.replace(/\.0$/, ''); // "1 kilometer", not "1.0 kilometers"
   const word = { m: 'meter', km: 'kilometer', ft: 'feet', mi: 'mile' }[u];
   return `${n} ${word}${n === '1' || u === 'ft' ? '' : 's'}`;
 }

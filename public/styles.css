@@ -257,6 +257,14 @@ small.hint { display: block; padding: 4px 0 0; }
   .turn-dist { font-size: 28px; }
   .turn-street { font-size: 17px; }
 }
+.toll-chip {
+  display: flex; align-items: center; gap: 10px; max-width: 100%; padding: 7px 16px 7px 8px; border-radius: 18px; background: var(--bg); color: var(--text);
+  box-shadow: var(--shadow); font-size: 15px; font-weight: 600;
+}
+.toll-chip b { flex: none; background: #f5a524; color: #3b2400; font-size: 13px; font-weight: 800; padding: 4px 9px; border-radius: 14px; }
+.toll-chip span { min-width: 0; line-height: 1.25; }
+.toll-chip span, .toll-chip small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toll-chip small { display: block; color: var(--muted); font-size: 13px; font-weight: 500; }
 .offroute { background: var(--bg); color: var(--text); padding: 8px 16px; border-radius: 20px; box-shadow: var(--shadow); font-weight: 700; }
 #drive-ui .speedo { bottom: calc(108px + var(--safe-bottom)); }
 .limit {

@@ -34,8 +34,10 @@ test('geo basics', () => {
   assert.equal(spokenDistance(400), '400 meters');
   assert.equal(spokenDistance(389), '400 meters');
   assert.equal(spokenDistance(130), '150 meters');
-  assert.equal(spokenDistance(1000), '1.0 kilometers');
-  assert.equal(spokenDistance(1609.344, 'imperial'), '1.0 miles');
+  assert.equal(spokenDistance(1000), '1 kilometer');
+  assert.equal(spokenDistance(2000), '2 kilometers');
+  assert.equal(spokenDistance(1500), '1.5 kilometers');
+  assert.equal(spokenDistance(1609.344, 'imperial'), '1 mile');
 });
 
 test('decodes precision-6 polylines (Valhalla)', () => {
