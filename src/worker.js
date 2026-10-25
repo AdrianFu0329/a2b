@@ -7,11 +7,13 @@ import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annota
 import { constructionTwins } from './lib/construction.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
+import { presenceRepo, limits, validDevice } from './lib/presence.js';
 
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_FAILURES = 8;
 const RECENTS_KEPT = 20;
+const FULL_MESSAGE = 'A2B is full right now. You will be let in when a spot opens.';
 const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean' };
 
 export default {
@@ -25,7 +27,7 @@ export default {
       return await route(request, env, url);
     } catch (e) {
       if (!e.status || e.status >= 500) console.error(e);
-      return json({ error: e.message || String(e) }, e.status && e.status < 600 ? e.status : 500);
+      return json({ error: e.message || String(e), code: e.code }, e.status && e.status < 600 ? e.status : 500);
     }
   },
 
@@ -38,6 +40,7 @@ export default {
       env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
       env.DB.prepare('DELETE FROM trips WHERE updated_at < ?').bind(now - 2 * 86400_000),
       env.DB.prepare('DELETE FROM login_failures WHERE at < ?').bind(now - LOGIN_WINDOW_MS),
+      env.DB.prepare('DELETE FROM presence WHERE last_seen < ?').bind(now - 86400_000),
     ]);
   },
 };
@@ -53,6 +56,19 @@ async function route(request, env, url) {
     if (!user) throw httpError('Sign in first.', 401);
     return user;
   };
+  // Search and routing use the free public servers, so they need one of the spots (see presence.js).
+  // Older copies of the app don't send a device id; they're let through until they update.
+  const presence = presenceRepo(db);
+  const device = request.headers.get('x-a2b-device');
+  const needSpot = async () => {
+    if (!validDevice(device) || (user && isTester(env, user)) || (await presence.hasSpot(device))) return;
+    throw Object.assign(httpError(FULL_MESSAGE, 503), { code: 'full' });
+  };
+
+  if (path === '/api/presence' && method === 'POST') {
+    if (!validDevice(device)) throw httpError('Missing device id.', 400);
+    return json(await presence.checkIn(device, user, limits(env), { always: Boolean(user && isTester(env, user)) }));
+  }
 
   // ---------- Accounts ----------
   if (path === '/api/auth/signup' && method === 'POST') {
@@ -222,6 +238,7 @@ async function route(request, env, url) {
 
   // ---------- Search and routing ----------
   if (path === '/api/search' && method === 'GET') {
+    await needSpot();
     const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
     if (q.length < 2) return json({ places: [] });
     // Round the location to ~1 km so nearby people typing the same thing share a cached answer.
@@ -238,12 +255,14 @@ async function route(request, env, url) {
   }
 
   if (path === '/api/reverse' && method === 'GET') {
+    await needSpot();
     const lat = num(url, 'lat'), lng = num(url, 'lng');
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw httpError('lat and lng are required.', 400);
     return json({ place: await reverseGeocode(env, { lat, lng }) });
   }
 
   if (path === '/api/route' && method === 'POST') {
+    await needSpot();
     const body = await readJson(request);
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('Route needs a start and a destination.', 400);

@@ -89,10 +89,10 @@ const ASSETS = {
 };
 const env = { DB: createD1(), ASSETS, ROUTING_URL: 'https://routing.test/route', GEOCODER_URL: 'https://geo.test' };
 
-function client() {
+function client(device) {
   let cookie = '';
   return async (method, path, body) => {
-    const headers = {};
+    const headers = device ? { 'x-a2b-device': device } : {};
     if (cookie) headers.cookie = cookie;
     if (body !== undefined) headers['content-type'] = 'application/json';
     const res = await worker.fetch(new Request(`https://a2b.test${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }), env);
@@ -453,5 +453,38 @@ test('a closure blocks the road it was reported on, and says so when it cannot b
     assert.equal(r.body.closures_avoided, 0);
   } finally {
     failWithExcludes = false;
+  }
+});
+
+test('only so many devices get a spot at once, and accounts can take the ones guests cannot', async () => {
+  Object.assign(env, { MAX_ACTIVE: '3', MAX_GUESTS: '1' });
+  try {
+    const guestA = client('guest-device-a'), guestB = client('guest-device-b');
+    let r = await guestA('POST', '/api/presence');
+    assert.deepEqual(r.body, { admitted: true, active: 1, max: 3, waiting: 0 });
+    r = await guestB('POST', '/api/presence');
+    assert.deepEqual(r.body, { admitted: false, active: 1, max: 3, waiting: 1 }, 'the one guest spot is taken');
+    assert.equal((await guestB('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] })).body.code, 'full');
+    assert.equal((await guestA('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] })).status, 200);
+
+    // Accounts get the spots guests can't take, until the app is full.
+    const fay = client('fay-device-1'), gus = client('gus-device-1');
+    await fay('POST', '/api/auth/signup', { email: 'fay@test.com', password: 'password5', name: 'Fay' });
+    await gus('POST', '/api/auth/signup', { email: 'gus@test.com', password: 'password6', name: 'Gus' });
+    assert.equal((await fay('POST', '/api/presence')).body.admitted, true);
+    assert.equal((await guestA('POST', '/api/presence')).body.admitted, true, 'checking in again keeps the spot');
+    r = await guestB('POST', '/api/presence'); // B signs up while waiting and gets in on its next check-in
+    await guestB('POST', '/api/auth/signup', { email: 'hal@test.com', password: 'password7', name: 'Hal' });
+    r = await guestB('POST', '/api/presence');
+    assert.deepEqual(r.body, { admitted: true, active: 3, max: 3, waiting: 0 });
+    r = await gus('POST', '/api/presence');
+    assert.deepEqual(r.body, { admitted: false, active: 3, max: 3, waiting: 1 }, 'full, even for accounts');
+
+    // An app without a device id (an older version) isn't held up.
+    assert.equal((await client()('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] })).status, 200);
+  } finally {
+    delete env.MAX_ACTIVE;
+    delete env.MAX_GUESTS;
+    await env.DB.prepare('DELETE FROM presence').run();
   }
 });

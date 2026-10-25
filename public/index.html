@@ -177,6 +177,7 @@
   <div id="menu-backdrop" class="backdrop hidden"></div>
   <aside id="menu" class="drawer hidden" aria-label="My A2B">
     <div class="profile" id="profile"></div>
+    <p class="online-line" id="m-online"></p>
     <nav class="menu-list">
       <button class="menu-row" id="m-places"><span class="m-ic star"></span>Saved places</button>
       <button class="menu-row" id="m-leaders"><span class="m-ic trophy"></span>Top drivers</button>
@@ -186,6 +187,20 @@
       <button class="menu-row hidden" id="m-logout"><span class="m-ic out"></span>Log out</button>
     </nav>
   </aside>
+
+  <!-- ===== Waiting screen, when A2B is full (presence.js) ===== -->
+  <section id="gate" class="gate hidden" aria-live="polite" aria-label="A2B is full">
+    <div class="gate-card">
+      <img src="/icon.svg" alt="" width="64" height="64">
+      <h2>A2B is full right now</h2>
+      <p class="gate-count"><b id="gate-count"></b> drivers are using it</p>
+      <p id="gate-wait"></p>
+      <p class="gate-why">A2B is a beta running on free map servers, so only so many people can use it at once.</p>
+      <p id="gate-priority" class="gate-why"></p>
+      <button id="gate-signup" class="btn primary wide">Sign up free</button>
+      <button id="gate-retry" class="btn ghost wide">Try again</button>
+    </div>
+  </section>
 
   <!-- ===== Full-screen panels (settings, saved places, leaderboard, about, account) ===== -->
   <section id="panel" class="screen hidden" aria-live="polite">

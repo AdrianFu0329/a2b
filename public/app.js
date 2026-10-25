@@ -13,6 +13,7 @@ import {
 } from './core.js';
 import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
 import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe } from './panels.js';
+import { startPresence, checkIn } from './presence.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -188,7 +189,8 @@ async function boot() {
 
   // Deep links: /drive/<token> watches a shared drive; /?to=lat,lng&name= opens a destination.
   const m = location.pathname.match(/^\/drive\/([a-z0-9]+)$/i);
-  if (m) return startWatching(m[1]);
+  if (m) return startWatching(m[1]); // watching a friend's drive doesn't take one of the spots
+  startPresence({ driving: () => mode === 'drive', signUp: () => openAuth(null, 'signup') });
   const to = new URLSearchParams(location.search).get('to');
   if (to) {
     const [lat, lng] = to.split(',').map(Number);
@@ -203,6 +205,7 @@ async function boot() {
 
 async function onUserChanged() {
   renderAvatar();
+  if (state.presence && !state.presence.admitted) checkIn(); // an account may get in where a guest couldn't
   await loadPlaces();
   renderSearchHome();
 }

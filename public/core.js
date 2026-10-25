@@ -38,10 +38,17 @@ export const local = {
 };
 
 // ---------- API ----------
+// A random id for this device, so the server can count how many are using the app (see presence.js).
+const deviceId = (() => {
+  let id = local.get('deviceId');
+  if (!id) local.set('deviceId', (id = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`));
+  return id;
+})();
+
 export async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    headers: { 'x-a2b-device': deviceId, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: 'same-origin',
   }).catch(() => {
@@ -51,7 +58,8 @@ export async function api(path, { method = 'GET', body } = {}) {
   // Without a message of our own, a 429 or 5xx came from Cloudflare itself, e.g. the free plan's daily cap.
   const busy = res.status === 429 || res.status >= 500;
   const fallback = busy ? 'A2B is busy right now (it runs on free servers during the beta). Try again in a minute.' : `Something went wrong (${res.status}).`;
-  if (!res.ok) throw Object.assign(new Error(data.error || fallback), { status: res.status });
+  if (data.code === 'full') dispatchEvent(new Event('a2b:full'));
+  if (!res.ok) throw Object.assign(new Error(data.error || fallback), { status: res.status, code: data.code });
   return data;
 }
 

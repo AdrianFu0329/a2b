@@ -24,3 +24,6 @@ crons = ["17 3 * * *"]
 # Free public servers, fine for personal use. For real traffic, self-host and point these at your own.
 ROUTING_URL = "https://valhalla1.openstreetmap.de/route"
 GEOCODER_URL = "https://photon.komoot.io"
+# How many devices can use the app at once, and how many of those spots guests can take (accounts get the rest).
+MAX_ACTIVE = "50"
+MAX_GUESTS = "30"

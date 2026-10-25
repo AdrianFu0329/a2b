@@ -452,3 +452,17 @@ body.driving .toast { top: calc(140px + var(--safe-top)); }
 .watch-eta { display: flex; gap: 22px; padding: 12px 0 4px; }
 .watch-eta div b { font-size: 24px; display: block; }
 .watch-eta div small { color: var(--muted); }
+
+/* Waiting screen when A2B is full: over the map, under the sign-up screen so "Sign up free" works. */
+.gate { position: fixed; inset: 0; z-index: 18; display: grid; place-items: center; padding: 24px 16px; background: rgba(15, 10, 14, 0.55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.gate-card { width: min(380px, 100%); background: var(--bg); border-radius: 22px; box-shadow: var(--shadow); padding: 26px 22px 20px; display: grid; gap: 10px; text-align: center; justify-items: center; }
+.gate-card img { border-radius: 16px; }
+.gate-card h2 { font-size: 22px; margin-top: 4px; }
+.gate-card p { margin: 0; line-height: 1.45; }
+.gate-count { font-size: 17px; }
+.gate-count b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.gate-why { color: var(--muted); font-size: 14px; }
+.gate-card .btn { margin-top: 4px; }
+.online-line { margin: 0; padding: 10px 18px; font-size: 14px; color: var(--muted); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+.online-line:empty { display: none; }
+.online-line .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }

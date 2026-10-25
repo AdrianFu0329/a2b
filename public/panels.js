@@ -3,6 +3,7 @@
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
 import { voiceChoice, setVoiceChoice, deviceVoices, isGoodVoice } from './voice.js';
 import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
+import { onlineLine } from './presence.js';
 
 let ctx; // callbacks from app.js
 let authMode = 'signup';
@@ -52,6 +53,7 @@ export function renderAvatar() {
 // ================= Menu =================
 export function openMenu() {
   renderProfile();
+  $('m-online').innerHTML = onlineLine();
   $('menu').classList.remove('hidden');
   $('menu-backdrop').classList.remove('hidden');
   armBack();

@@ -27,7 +27,9 @@ CREATE INDEX IF NOT EXISTS trips_user ON trips (user_id, updated_at);
 CREATE TABLE IF NOT EXISTS login_failures (email TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures (email, at);
 CREATE TABLE IF NOT EXISTS toll_plazas (key TEXT PRIMARY KEY, info TEXT NOT NULL, fetched_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS closure_blocks (report_id INTEGER PRIMARY KEY, lat REAL NOT NULL, lng REAL NOT NULL)
+CREATE TABLE IF NOT EXISTS closure_blocks (report_id INTEGER PRIMARY KEY, lat REAL NOT NULL, lng REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS presence (device TEXT PRIMARY KEY, user_id INTEGER, admitted INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS presence_seen ON presence (last_seen)
 `;
 
 let ready = null;
