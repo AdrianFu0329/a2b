@@ -111,13 +111,8 @@ async function submitAuth(e) {
   btn.disabled = true;
   try {
     await api(`/api/auth/${authMode}`, { method: 'POST', body });
-    // Bring this device's Home/Work along into a brand-new account.
-    const localHome = local.get('home'), localWork = local.get('work');
     await refreshMe();
-    if (authMode === 'signup') {
-      if (localHome) await setHomeWork('home', localHome).catch(() => {});
-      if (localWork) await setHomeWork('work', localWork).catch(() => {});
-    }
+    if (authMode === 'signup') await bringGuestPlaces();
     $('auth').classList.add('hidden');
     $('auth-form').reset();
     await ctx.onUserChanged();
@@ -130,6 +125,22 @@ async function submitAuth(e) {
     $('auth-error').classList.remove('hidden');
   } finally {
     btn.disabled = false;
+  }
+}
+
+// A brand-new account takes over everything the guest kept on this device: Home, Work, saved places and recent
+// destinations. Once they're in the account they're cleared here, so logging out later doesn't bring back an old
+// guest copy. If the copy fails, the guest's lists stay on the device untouched.
+async function bringGuestPlaces() {
+  const home = local.get('home'), work = local.get('work');
+  const saved = local.get('saved', []), recent = local.get('recent', []);
+  try {
+    if (home) await setHomeWork('home', home);
+    if (work) await setHomeWork('work', work);
+    if (saved.length || recent.length) await api('/api/places/import', { method: 'POST', body: { saved, recent } });
+    for (const k of ['home', 'work', 'saved', 'recent']) local.set(k, null);
+  } catch {
+    toast("Couldn't copy all your places into the account. They're still on this phone.");
   }
 }
 

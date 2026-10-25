@@ -141,6 +141,39 @@ async function route(request, env, url) {
     return json({ saved: rows.filter((r) => r.kind === 'saved'), recent: rows.filter((r) => r.kind === 'recent').slice(0, RECENTS_KEPT) });
   }
 
+  // A guest who signs up brings the places saved on this device into the new account, in one go.
+  if (path === '/api/places/import' && method === 'POST') {
+    const u = needUser();
+    const body = await readJson(request);
+    const now = Date.now();
+    const have = (await db.prepare('SELECT kind, lat, lng FROM places WHERE user_id = ?').bind(u.id).all()).results;
+    const near = (a, b) => Math.abs(a.lat - b.lat) < 0.0002 && Math.abs(a.lng - b.lng) < 0.0002;
+    const inserts = [];
+    for (const [kind, cap] of [['saved', 100], ['recent', RECENTS_KEPT]]) {
+      const list = Array.isArray(body[kind]) ? body[kind].slice(0, cap) : [];
+      const taken = have.filter((r) => r.kind === kind);
+      list.forEach((raw, i) => {
+        let p;
+        try {
+          p = cleanPlace(raw);
+        } catch {
+          return; // skip a malformed entry rather than lose the rest
+        }
+        if (taken.some((t) => near(t, p))) return;
+        taken.push(p);
+        const usedAt = Number.isFinite(Number(raw.used_at)) && Number(raw.used_at) <= now ? Number(raw.used_at) : now - i; // keep the list's order
+        inserts.push(db.prepare('INSERT INTO places (user_id, kind, name, address, lat, lng, used_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(u.id, kind, p.name, p.address, p.lat, p.lng, usedAt));
+      });
+    }
+    if (inserts.length) await db.batch(inserts);
+    await db
+      .prepare(`DELETE FROM places WHERE user_id = ? AND kind = 'recent' AND id NOT IN (SELECT id FROM places WHERE user_id = ? AND kind = 'recent' ORDER BY used_at DESC LIMIT ${RECENTS_KEPT})`)
+      .bind(u.id, u.id)
+      .run();
+    const rows = (await db.prepare('SELECT * FROM places WHERE user_id = ? ORDER BY used_at DESC LIMIT 100').bind(u.id).all()).results;
+    return json({ imported: inserts.length, saved: rows.filter((r) => r.kind === 'saved'), recent: rows.filter((r) => r.kind === 'recent').slice(0, RECENTS_KEPT) });
+  }
+
   if (path === '/api/places' && method === 'POST') {
     const u = needUser();
     const body = await readJson(request);

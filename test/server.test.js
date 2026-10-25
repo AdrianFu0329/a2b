@@ -304,3 +304,27 @@ test('toll booth tags and booth points', async () => {
   const edges = [9, 10, 25].map((i) => ({ end_shape_index: i, end_node: { type: 'toll_booth' } })).concat([{ end_shape_index: 12, end_node: { type: 'gate' } }]);
   assert.deepEqual(tollIndexes(edges, coords), [9, 25], 'neighbouring booths are one plaza');
 });
+
+test('a new account takes over the places a guest saved on the device', async () => {
+  const dan = client();
+  await dan('POST', '/api/auth/signup', { email: 'dan@test.com', password: 'password4', name: 'Dan' });
+  const guest = {
+    saved: [
+      { name: 'Gym', address: 'Jalan 1', lat: 3.1, lng: 101.6, used_at: 3000 },
+      { name: 'Gym again', lat: 3.10001, lng: 101.60001, used_at: 2000 }, // same spot: kept once
+      { name: 'Broken', lat: 'nope', lng: 200 }, // malformed: skipped, the rest still comes over
+      { name: 'Park', lat: 3.2, lng: 101.7, used_at: 1000 },
+    ],
+    recent: Array.from({ length: 25 }, (_, i) => ({ name: `Stop ${i}`, lat: 3 + i * 0.01, lng: 101.5, used_at: 100000 - i })),
+  };
+  const r = await dan('POST', '/api/places/import', guest);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.saved.map((p) => p.name), ['Gym', 'Park']);
+  assert.equal(r.body.recent.length, 20, 'recents keep their usual cap');
+  assert.equal(r.body.recent[0].name, 'Stop 0', 'newest first, as on the device');
+  const again = await dan('POST', '/api/places/import', guest);
+  assert.equal(again.body.imported, 0, 'importing twice adds nothing');
+  const list = await dan('GET', '/api/places');
+  assert.deepEqual(list.body.saved.map((p) => p.name), ['Gym', 'Park']);
+  assert.equal((await client()('POST', '/api/places/import', guest)).status, 401);
+});
