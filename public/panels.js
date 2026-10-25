@@ -28,9 +28,10 @@ export function initPanels(callbacks) {
 
 export async function refreshMe() {
   try {
-    const { user, stats } = await api('/api/me');
+    const { user, stats, tester } = await api('/api/me');
     state.user = user;
     state.stats = stats ?? null;
+    state.tester = Boolean(tester);
     if (user) {
       // The account's settings win over this device's, so they follow the driver between phones.
       Object.assign(state.settings, user.settings);
@@ -38,7 +39,9 @@ export async function refreshMe() {
     }
   } catch {
     state.user = null;
+    state.tester = false;
   }
+  if (!state.tester) state.simulate = false; // testing tools only for tester accounts
 }
 
 export function renderAvatar() {
@@ -241,9 +244,12 @@ export function openSettings() {
       <button class="set-row" id="s-pass"><span>Change password</span></button>
       <button class="set-row" id="s-delete" style="color:var(--danger)"><span>Delete account</span></button>
     </div>` : ''}
-    <div class="set-group"><h3>Advanced</h3>
+    ${state.tester ? `<div class="set-group"><h3>Testing</h3>
       <label class="set-row"><span>Demo drive<small>Simulate GPS along the route. Handy for trying A2B at a desk.</small></span><input type="checkbox" class="switch" id="s-sim" ${state.simulate ? 'checked' : ''}></label>
-    </div>`);
+      <div class="set-row${state.simulate ? '' : ' hidden'}" id="s-sim-speed-row"><span>Demo speed<small>How fast the demo car drives</small></span><div class="choice" id="s-sim-speed">${[1, 2, 4, 8]
+        .map((v) => `<button data-v="${v}" class="${local.get('simSpeed', 1) === v ? 'on' : ''}">${v}×</button>`)
+        .join('')}</div></div>
+    </div>` : ''}`);
 
   body.querySelectorAll('[data-set]').forEach((c) => {
     c.onchange = async () => {
@@ -277,10 +283,21 @@ export function openSettings() {
     local.set('vehicleColor', b.dataset.c);
     ctx.setupVehicle();
   };
-  $('s-sim').onchange = (e) => {
-    state.simulate = e.target.checked;
-    local.set('simulate', state.simulate);
-  };
+  if (state.tester) {
+    $('s-sim').onchange = (e) => {
+      state.simulate = e.target.checked;
+      local.set('simulate', state.simulate);
+      $('s-sim-speed-row').classList.toggle('hidden', !state.simulate);
+    };
+    // Testing aid: applies straight away, also to a demo drive already under way.
+    $('s-sim-speed').onclick = (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      $('s-sim-speed').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      local.set('simSpeed', Number(b.dataset.v));
+      ctx.setSimSpeed(Number(b.dataset.v));
+    };
+  }
   $('s-home').onclick = () => homeWorkAction('home');
   $('s-work').onclick = () => homeWorkAction('work');
   if (u) {

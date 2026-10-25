@@ -123,7 +123,7 @@ async function boot() {
 
   carMarker = new maplibregl.Marker({ element: el('div', 'car', CAR), rotationAlignment: 'map', pitchAlignment: 'map' });
 
-  initPanels({ onUserChanged, applyTheme, openSearchFor, openPreview, refreshSound, setupVehicle });
+  initPanels({ onUserChanged, applyTheme, openSearchFor, openPreview, refreshSound, setupVehicle, setSimSpeed: (v) => sim && (sim.speedFactor = v) });
   wireUi();
   setupSheetDrag();
   refreshSound();
@@ -656,6 +656,13 @@ function wireUi() {
   };
   $('btn-stop').onclick = () => endDrive(false);
   $('btn-overview').onclick = overview;
+  // Testing aid: during a demo drive, cycle its speed 1x -> 2x -> 4x -> 8x.
+  $('btn-sim-speed').onclick = () => {
+    const next = { 1: 2, 2: 4, 4: 8, 8: 1 }[local.get('simSpeed', 1)] ?? 1;
+    local.set('simSpeed', next);
+    if (sim) sim.speedFactor = next;
+    renderSimSpeed();
+  };
   $('btn-share-drive').onclick = shareDrive;
   $('btn-add-stop').onclick = () => {
     $('eta-menu').classList.add('hidden');
@@ -1141,17 +1148,24 @@ function startDrive() {
   loadReports(true);
   requestWakeLock();
 
-  const useSim = state.simulate || !state.pos;
+  const useSim = state.simulate || (!state.pos && state.tester);
   if (useSim) {
     if (!state.simulate) toast('No GPS signal, so this is a demo drive.', 3500);
     startSimulation(route);
-  } else driveTick(state.pos);
+  } else if (state.pos) driveTick(state.pos);
+  else toast('Waiting for GPS…', 3500); // directions start with the first fix
   driveCamera();
+}
+
+function renderSimSpeed() {
+  $('btn-sim-speed').classList.toggle('hidden', !sim);
+  $('sim-speed-label').textContent = `Demo speed: ${local.get('simSpeed', 1)}×`;
 }
 
 function startSimulation(route) {
   stopSimulation();
   sim = new Simulator(route, { speedFactor: local.get('simSpeed', 1) });
+  renderSimSpeed();
   const step = () => {
     const f = sim.next();
     handleFix({ lngLat: f.position, heading: f.heading, speed: f.speed, accuracy: f.accuracy, time: Date.now() });
@@ -1165,6 +1179,7 @@ function stopSimulation() {
   clearInterval(simTimer);
   simTimer = null;
   sim = null;
+  renderSimSpeed();
 }
 
 function driveTick(fix) {

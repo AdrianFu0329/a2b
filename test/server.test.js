@@ -328,3 +328,19 @@ test('a new account takes over the places a guest saved on the device', async ()
   assert.deepEqual(list.body.saved.map((p) => p.name), ['Gym', 'Park']);
   assert.equal((await client()('POST', '/api/places/import', guest)).status, 401);
 });
+
+test('testing tools are flagged only for accounts in TESTER_EMAILS', async () => {
+  const tess = client();
+  await tess('POST', '/api/auth/signup', { email: 'Tess@Test.com', password: 'password5', name: 'Tess' });
+  const other = client();
+  await other('POST', '/api/auth/signup', { email: 'olly@test.com', password: 'password6', name: 'Olly' });
+  assert.equal((await tess('GET', '/api/me')).body.tester, false, 'no secret set: nobody is a tester');
+  env.TESTER_EMAILS = ' someone@else.com, tess@test.com ';
+  try {
+    assert.equal((await tess('GET', '/api/me')).body.tester, true);
+    assert.equal((await other('GET', '/api/me')).body.tester, false);
+    assert.equal((await client()('GET', '/api/me')).body.tester, undefined, 'guests get no flag');
+  } finally {
+    delete env.TESTER_EMAILS;
+  }
+});

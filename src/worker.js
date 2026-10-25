@@ -92,7 +92,7 @@ async function route(request, env, url) {
 
   if (path === '/api/me' && method === 'GET') {
     if (!user) return json({ user: null });
-    return json({ user: publicUser(user), stats: await reports.stats(user.id) });
+    return json({ user: publicUser(user), stats: await reports.stats(user.id), tester: isTester(env, user) });
   }
 
   if (path === '/api/me' && method === 'PATCH') {
@@ -338,6 +338,13 @@ async function route(request, env, url) {
 async function withSession(request, db, row, status) {
   const { token, expires } = await createSession(db, row.id);
   return json({ user: publicUser(row) }, status, { 'set-cookie': sessionCookie(request, token, expires) });
+}
+
+// Testing tools (demo drive) are for the accounts listed in the TESTER_EMAILS secret, comma separated
+// (`wrangler secret put TESTER_EMAILS`), so the addresses never ship in the code.
+function isTester(env, user) {
+  const list = String(env.TESTER_EMAILS ?? '').split(',').map((e) => normalizeEmail(e)).filter(Boolean);
+  return list.includes(normalizeEmail(user.email));
 }
 
 function cleanSettings(input) {

@@ -11,6 +11,7 @@ export const state = {
   stats: null,
   settings: { ...DEFAULT_SETTINGS },
   simulate: false,
+  tester: false, // this account may use testing tools (demo drive); set by the server
   places: { saved: [], recent: [] },
   home: null,
   work: null,
