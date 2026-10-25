@@ -13,18 +13,94 @@ export function httpError(message, status) {
 
 // ---------- Search ----------
 
+// Nearby first: one search inside ~50 km; only when that finds too little, a second one everywhere (still
+// weighted towards you). With answers in reach, anything further than FAR_KM is dropped, and results are
+// ordered in distance bands (50 / 150 / 400 km) so the closest come first.
+const LOCAL_KM = 50;
+const BANDS_KM = [50, 150, 400];
+const ENOUGH = 3;
+const FAR_KM = 600;
+const AREA_KINDS = new Set([
+  'suburb', 'neighbourhood', 'quarter', 'city', 'town', 'village', 'hamlet', 'locality', 'residential', 'district',
+  'county', 'state', 'commercial', 'retail', 'mall', 'square', 'island', 'region',
+]);
+
 export async function searchPlaces(env, { q, lat, lng, lang = 'en' }) {
+  const near = Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null;
+  if (!near) return { places: dedupe(await photon(env, { q, lang })) };
+
+  let found = await photon(env, { q, lang, near, bbox: boxAround(near, LOCAL_KM) }).catch(() => null);
+  if (!found || found.length < ENOUGH) {
+    const wide = await photon(env, { q, lang, near }).catch((e) => (found ? [] : Promise.reject(e)));
+    found = dedupe([...(found ?? []), ...wide]);
+  }
+
+  // "nandos eco grandeur": a name, then the area it's in. Look for the name around that area.
+  const split = await nameInArea(env, q, lang, near, found).catch(() => ({ places: [] }));
+  let places = dedupe([...split.places, ...found]).map((p) => ({ ...p, km: Math.round(distance(near, [p.lng, p.lat]) / 100) / 10 }));
+  if (places.some((p) => p.km <= FAR_KM)) places = places.filter((p) => p.km <= FAR_KM);
+  const band = (p) => (p.src ? -1 : BANDS_KM.findIndex((km) => p.km <= km) + 1 || BANDS_KM.length + 1);
+  places = places.map((p, i) => ({ p, i, b: band(p) })).sort((x, y) => x.b - y.b || x.i - y.i).map(({ p }) => withoutSrc(p));
+  return { places: places.slice(0, 10), note: split.note };
+}
+
+async function nameInArea(env, q, lang, near, found) {
+  const words = q.trim().split(/\s+/);
+  if (words.length < 2) return { places: [] };
+  for (let k = 1; k <= Math.min(3, words.length - 1); k++) {
+    const name = words.slice(0, k).join(' ');
+    const areaText = words.slice(k).join(' ');
+    // Already answered: a result named like the name part that sits in the named area.
+    if (found.some((p) => matches(p.name, name) && matches(`${p.name} ${p.address}`, areaText))) return { places: [] };
+    const area = (await photon(env, { q: areaText, lang, near, bbox: boxAround(near, BANDS_KM.at(-1)) }))
+      .find((p) => AREA_KINDS.has(p.category) && matches(p.name, areaText));
+    if (!area) continue;
+    const there = [area.lng, area.lat];
+    const hits = (await photon(env, { q: name, lang, near: there, bbox: boxAround(there, 8) })).filter((p) => matches(p.name, name));
+    if (hits.length) return { places: hits.map((p) => ({ ...p, src: 'area' })) };
+    return { places: [], note: `No "${name}" found near ${area.name} in the map data.` };
+  }
+  return { places: [] };
+}
+
+function withoutSrc({ src, ...p }) {
+  return p;
+}
+
+// Loose text match: case, accents and apostrophes don't matter ("nandos" finds "Nando's").
+export function normalizeText(s) {
+  return String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/['’`.]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+export function matches(text, query) {
+  const hay = normalizeText(text);
+  return normalizeText(query).split(' ').every((w) => w && hay.includes(w));
+}
+
+// A box of roughly `km` in every direction around [lng, lat], as Photon wants it: minLon,minLat,maxLon,maxLat.
+export function boxAround([lng, lat], km) {
+  const dLat = km / 111;
+  const dLng = km / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  return [lng - dLng, lat - dLat, lng + dLng, lat + dLat].map((v) => v.toFixed(4)).join(',');
+}
+
+async function photon(env, { q, lang, near, bbox }) {
   const base = env.GEOCODER_URL || 'https://photon.komoot.io';
   const u = new URL('/api/', base);
   u.searchParams.set('q', q);
   u.searchParams.set('limit', '10');
   if (['en', 'de', 'fr'].includes(lang)) u.searchParams.set('lang', lang);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) {
-    u.searchParams.set('lat', lat);
-    u.searchParams.set('lon', lng);
+  if (near) {
+    u.searchParams.set('lat', near[1]);
+    u.searchParams.set('lon', near[0]);
   }
-  const data = await getJson(u);
-  return dedupe((data.features ?? []).map(photonToPlace));
+  if (bbox) u.searchParams.set('bbox', bbox);
+  const data = await getJson(u).catch(async (e) => {
+    if (e.status !== 502) throw e;
+    await new Promise((r) => setTimeout(r, 400)); // busy public server: one quick retry
+    return getJson(u);
+  });
+  return (data.features ?? []).map(photonToPlace);
 }
 
 export async function reverseGeocode(env, { lat, lng }) {

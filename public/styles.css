@@ -193,6 +193,7 @@ small.hint { display: block; padding: 4px 0 0; }
 .list-head { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 10px 16px 4px; }
 .place-list { list-style: none; margin: 0; padding: 0; }
 .place-list li { display: flex; align-items: center; }
+.place-list li.search-note { display: block; padding: 10px 16px 4px; color: var(--muted); font-size: 14px; }
 .place-row { flex: 1; display: flex; align-items: center; gap: 14px; padding: 12px 16px; text-align: left; min-width: 0; }
 .place-row:active { background: var(--bg-2); }
 .p-ic { width: 36px; height: 36px; border-radius: 50%; background: var(--bg-2); flex: none; display: grid; place-items: center; color: var(--muted); }

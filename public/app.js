@@ -826,7 +826,7 @@ async function runSearch(q, enter = false) {
   const near = state.pos?.lngLat ?? map.getCenter().toArray();
   try {
     const coord = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
-    const { places } = coord
+    const { places, note } = coord
       ? { places: [{ name: 'Coordinates', address: q, lat: Number(coord[1]), lng: Number(coord[2]) }] }
       : await api(`/api/search?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}&lang=${(navigator.language || 'en').slice(0, 2)}`);
     if (seq !== searchSeq) return;
@@ -835,7 +835,9 @@ async function runSearch(q, enter = false) {
     ul.classList.remove('hidden');
     ul.innerHTML = '';
     $('search-status').classList.toggle('hidden', places.length > 0);
-    $('search-status').textContent = places.length ? '' : `No results for "${q}".`;
+    $('search-status').textContent = places.length ? '' : note || `No results for "${q}".`;
+    // e.g. "No "nandos" found near Eco Grandeur in the map data." above the nearest other matches
+    if (note && places.length) ul.append(el('li', 'search-note', esc(note)));
     for (const p of places) {
       const li = el('li');
       const d = formatDistance(distance(near, [p.lng, p.lat]), state.settings.units);

@@ -47,6 +47,16 @@ globalThis.fetch = async (url, init = {}) => {
       + `<node id="2" lat="${s}" lon="${w}"><tag k="barrier" v="toll_booth"/><tag k="name" v="Far booth"/></node></osm>`);
   }
   if (u.includes('/reverse')) return Response.json({ features: [{ geometry: { coordinates: [13.4, 52.5] }, properties: { name: 'Somewhere', city: 'Berlin', country: 'Germany' } }] });
+  if (u.includes('/api/')) {
+    // A few Malaysian places for the nearby-search tests; any other query gets the default answer below.
+    const params = new URL(u).searchParams;
+    const feat = (name, lng, lat, osm_value = 'restaurant', extra = {}) => ({ geometry: { coordinates: [lng, lat] }, properties: { name, osm_value, country: 'Malaysia', ...extra } });
+    const q = params.get('q');
+    if (q === 'eco grandeur') return Response.json({ features: [feat('Eco Grandeur', 101.468, 3.224, 'suburb')] });
+    if (q === 'nandos' && params.get('lat') === '3.224') return Response.json({ features: [feat("Nando's", 101.469, 3.225, 'restaurant', { street: 'Jalan Eco 1' })] });
+    if (q === 'nandos') return Response.json({ features: [feat("Nando's", 101.518, 3.071), feat("Nando's", -0.12, 51.5, 'restaurant', { country: 'UK' })] });
+    if (q === 'nandos eco grandeur') return Response.json({ features: [] });
+  }
   if (u.includes('/api/')) return Response.json({ features: [{ geometry: { coordinates: [13.41, 52.52] }, properties: { name: 'Alexanderplatz', city: 'Berlin', country: 'Germany', osm_value: 'square' } }] });
   throw new Error(`unexpected fetch ${u}`);
 };
@@ -247,6 +257,22 @@ test('a stop splits the drive into legs but stays one route', async () => {
 
 test('polylines round-trip', () => {
   assert.deepEqual(decodePolyline(encode(LINE)), LINE);
+});
+
+test('search looks nearby first, drops far-away results, and understands "name area"', async () => {
+  const near = await client()('GET', '/api/search?q=nandos&lat=3.22&lng=101.47');
+  assert.deepEqual(near.body.places.map((p) => p.lat), [3.071], 'the London one is dropped while one nearby exists');
+  const combo = await client()('GET', '/api/search?q=nandos%20eco%20grandeur&lat=3.22&lng=101.47');
+  assert.equal(combo.body.places[0].name, "Nando's");
+  assert.equal(combo.body.places[0].lat, 3.225, 'the one in Eco Grandeur comes first');
+});
+
+test('search text matching ignores case, accents and apostrophes', async () => {
+  const { matches, boxAround } = await import('../src/lib/providers.js');
+  assert.ok(matches("Nando's", 'nandos'));
+  assert.ok(matches('Café Mutiara', 'cafe'));
+  assert.ok(!matches('McDonald\'s', 'nandos'));
+  assert.deepEqual(boxAround([101.5, 3.2], 50).split(',').map(Number).map(Math.round), [101, 3, 102, 4]);
 });
 
 test('search and reverse geocoding', async () => {

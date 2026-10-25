@@ -223,8 +223,17 @@ async function route(request, env, url) {
   if (path === '/api/search' && method === 'GET') {
     const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
     if (q.length < 2) return json({ places: [] });
-    const places = await searchPlaces(env, { q, lat: num(url, 'lat'), lng: num(url, 'lng'), lang: url.searchParams.get('lang') ?? 'en' });
-    return json({ places }, 200, { 'cache-control': 'public, max-age=300' });
+    // Round the location to ~1 km so nearby people typing the same thing share a cached answer.
+    const round = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : NaN);
+    const lat = round(num(url, 'lat')), lng = round(num(url, 'lng'));
+    const lang = (url.searchParams.get('lang') ?? 'en').slice(0, 5);
+    const key = new Request(`https://cache.a2b/search?q=${encodeURIComponent(q.toLowerCase())}&lat=${lat}&lng=${lng}&lang=${lang}`);
+    const cache = globalThis.caches?.default;
+    const hit = cache && (await cache.match(key));
+    if (hit) return hit;
+    const res = json(await searchPlaces(env, { q, lat, lng, lang }), 200, { 'cache-control': 'public, max-age=600' });
+    if (cache) await cache.put(key, res.clone());
+    return res;
   }
 
   if (path === '/api/reverse' && method === 'GET') {

@@ -69,26 +69,8 @@ export const MAP_THEMES = {
 
   dark: { label: 'Dark', base: 'dark', night: true },
 
-  plum_night: {
-    label: 'Plum night',
-    base: 'dark',
-    night: true,
-    rules: [
-      [/^background$/, { 'background-color': '#1a1419' }],
-      [/^landuse_residential$/, { 'fill-color': '#1e171d' }],
-      [/^(landcover_wood|landuse_park)$/, { 'fill-color': '#1b211b' }],
-      [/^water$/, { 'fill-color': '#141d29' }],
-      [/^waterway$/, { 'line-color': '#141d29' }],
-      [/^building$/, { 'fill-color': '#241c23' }],
-      // Roads in muted greys, so the route line is the one thing that stands out.
-      [/^highway_(path|minor)$/, { 'line-color': '#2e282d' }],
-      [/^highway_major_casing$/, { 'line-color': '#3d3540' }],
-      [/^highway_major_(inner|subtle)$/, { 'line-color': '#2f2930' }],
-      [/^highway_motorway_casing$/, { 'line-color': '#4a414b' }],
-      [/^highway_motorway_(inner|subtle)$/, { 'line-color': '#363039' }],
-      [/^place_|^highway_name/, { 'text-color': '#cdb6c5', 'text-halo-color': '#1a1419' }],
-    ],
-  },
+  // Bright (the day map) recoloured dark, so night shows the same shops, places and road numbers as day.
+  plum_night: { label: 'Plum night', base: 'bright', night: true, rules: brightPlumNight() },
 
   fiord: { label: 'Fiord', base: 'fiord', night: true },
 };
@@ -125,6 +107,41 @@ function brightPlum(strength) {
 // use 200-350, which strings them along a highway. Wider spacing keeps one or two in view at any zoom.
 const SHIELD_LAYER = /shield|^highway_name_motorway$/;
 const SHIELD_SPACING = 700;
+
+// OpenFreeMap "bright", recoloured for night with plum roads and soft, light labels. Kept darker than the
+// route line (#d0569a) so the route still stands out the most.
+function brightPlumNight() {
+  const bg = '#17131a';
+  return [
+    [/^background$|^road_area_pier$|^landcover-(glacier|ice-shelf)$/, { 'background-color': bg, 'fill-color': bg }],
+    [/^road_pier$/, { 'line-color': bg }],
+    [/^landuse-(residential|suburb|railway)$/, { 'fill-color': 'hsla(320,18%,16%,0.6)' }],
+    [/^landuse-(commercial|industrial)$/, { 'fill-color': 'hsla(320,22%,20%,0.45)' }],
+    [/^landuse-(cemetery|hospital|school)$/, { 'fill-color': '#211a22' }],
+    [/^(park|landcover-grass|landcover-grass-park)$/, { 'fill-color': '#18261b' }],
+    [/^landcover-wood$/, { 'fill-color': '#1b2c1e' }],
+    [/^landcover-sand$/, { 'fill-color': '#2a2620' }],
+    [/^water(-intermittent)?$/, { 'fill-color': '#132133' }],
+    [/^waterway/, { 'line-color': '#1a2d44' }],
+    [/^building$/, { 'fill-color': '#251d25' }],
+    [/^building-top$/, { 'fill-color': '#2c222b' }],
+    [/^aeroway-area$/, { 'fill-color': '#221c23' }],
+    [/^aeroway-(taxiway|runway)$/, { 'line-color': '#3a3039' }],
+    [/^highway-area$/, { 'fill-color': 'hsla(320,10%,22%,0.5)' }],
+    [/-path$/, { 'line-color': '#4a3e48' }],
+    [/-(minor|service-track)-casing$/, { 'line-color': '#3d313b' }],
+    [/-(minor|service-track)$/, { 'line-color': '#2d242c' }],
+    [/-(link|secondary-tertiary|primary|trunk|trunk-primary)-casing$/, { 'line-color': '#6e3a5c' }],
+    [/-(link|secondary-tertiary|primary|trunk|trunk-primary)$/, { 'line-color': '#3f2638' }],
+    [/-motorway(-link)?-casing$/, { 'line-color': '#8a3d6c' }],
+    [/-motorway(-link)?$/, { 'line-color': '#552443' }],
+    [/railway|cablecar/, { 'line-color': '#3b343b' }],
+    [/^boundary/, { 'line-color': '#4d434c' }],
+    [/^label_|^highway-name/, { 'text-color': '#eadbe4', 'text-halo-color': bg }],
+    [/^poi_/, { 'text-color': '#cdb9c7', 'text-halo-color': bg }],
+    [/^water|^waterway.*label/, { 'text-color': '#7f9cc0', 'text-halo-color': bg }],
+  ];
+}
 
 const PAINT_PREFIX = { fill: 'fill-', line: 'line-', 'fill-extrusion': 'fill-extrusion-', background: 'background-', symbol: 'text-' };
 
