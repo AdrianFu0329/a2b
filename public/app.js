@@ -67,8 +67,6 @@ let tailFrom = null, tailFor = null; // where the rarely redrawn rest of the dri
 boot();
 
 async function boot() {
-  fitViewport();
-  addEventListener('resize', fitViewport);
   loadLocalSettings();
   applyTheme(true);
   const last = local.get('lastPos');
@@ -295,15 +293,6 @@ function drawDriveLine(force = false) {
 }
 
 const lineFeature = (coordinates) => ({ type: 'Feature', properties: { idx: 0, selected: true }, geometry: { type: 'LineString', coordinates } });
-
-// Opened from the iPhone home screen, iOS can report a viewport that stops short of the bottom of the screen,
-// leaving a blank band under the bottom bars. Stretch the full-screen layers down to the real screen edge.
-function fitViewport() {
-  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
-  const screenH = innerWidth < innerHeight ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
-  const below = standalone ? Math.max(0, Math.min(screenH - innerHeight, 120)) : 0;
-  document.documentElement.style.setProperty('--below', `${below}px`);
-}
 
 // ================= Location =================
 function startLocation() {
