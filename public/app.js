@@ -12,7 +12,7 @@ import {
   isSaved, setHomeWork, armBack,
 } from './core.js';
 import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
-import { initPanels, openMenu, openAuth, renderAvatar, refreshMe } from './panels.js';
+import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe } from './panels.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -709,6 +709,10 @@ function wireUi() {
   tripSheet.init();
   $('btn-stop').onclick = () => endDrive(false);
   $('btn-overview').onclick = overview;
+  $('btn-trip-settings').onclick = () => {
+    tripSheet.set(false);
+    openSettings(); // over the drive: navigation keeps running underneath
+  };
   // Testing aid: during a demo drive, cycle its speed 1x -> 2x -> 4x -> 8x.
   $('btn-sim-speed').onclick = () => {
     const next = { 1: 2, 2: 4, 4: 8, 8: 1 }[local.get('simSpeed', 1)] ?? 1;
