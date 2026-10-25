@@ -7,7 +7,9 @@ import { distance, angleDiff, interpolate } from './geo.js';
 import { pointAtDistance } from './nav.js';
 
 const MIN_MS = 200;
-const MAX_MS = 1200;
+const MAX_MS = 1500;
+// Glide a bit longer than the gap between fixes, so a slightly late fix doesn't leave the car standing still.
+const STRETCH = 1.2;
 const SNAP_M = 250; // further than this between fixes: jump instead of sliding across the map
 const ON_PATH_M = 8;
 
@@ -34,7 +36,7 @@ export class Glide {
     this.from = shown;
     this.to = { ...pose, heading: pose.heading ?? shown.heading };
     this.start = now;
-    this.duration = Math.min(MAX_MS, Math.max(MIN_MS, gap || 1000));
+    this.duration = Math.min(MAX_MS, Math.max(MIN_MS, (gap || 1000) * STRETCH));
   }
 
   done(now) {

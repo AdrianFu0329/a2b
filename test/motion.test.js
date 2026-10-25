@@ -22,24 +22,25 @@ test('slides between fixes over the time between them, never jumping', () => {
   const p1 = [13.4, 52.5009]; // about 100 m north
   g.set({ pos: A, heading: 0 }, 0);
   g.set({ pos: p1, heading: 0 }, 1000);
-  const mid = g.at(1500).pos;
+  const mid = g.at(1600).pos; // the glide takes 1.2 x the 1 s gap
   assert.ok(Math.abs(distance(A, mid) - 50) < 2);
-  assert.ok(!g.done(1500));
-  assert.deepEqual(g.at(2000).pos, p1);
-  assert.ok(g.done(2000));
+  assert.ok(!g.done(2000), 'still moving when the next fix is due');
+  assert.deepEqual(g.at(2200).pos, p1);
+  assert.ok(g.done(2200));
 
-  // A new fix halfway through starts from where the car is drawn, not from the last fix.
-  g.set({ pos: [13.4, 52.5018], heading: 0 }, 2500);
-  g.set({ pos: [13.4, 52.5027], heading: 0 }, 3000);
-  const shownAtSet = g.at(3000).pos;
-  assert.ok(distance(shownAtSet, [13.4, 52.5018]) < 60);
+  // A new fix mid-glide starts from where the car is drawn, not from the last fix.
+  g.set({ pos: [13.4, 52.5018], heading: 0 }, 2500); // 1.5 s gap: glide lasts the 1.5 s cap
+  g.set({ pos: [13.4, 52.5027], heading: 0 }, 3000); // a third of the way there
+  const g2 = g.at(3000).pos;
+  assert.ok(Math.abs(distance(p1, g2) - 33) < 3);
 });
 
 test('turns the short way round', () => {
   const g = new Glide();
   g.set({ pos: A, heading: 350 }, 0);
   g.set({ pos: A, heading: 10 }, 1000);
-  assert.ok(Math.abs(g.at(1500).heading) < 1e-9 || Math.abs(g.at(1500).heading - 360) < 1e-9);
+  const h = g.at(1600).heading;
+  assert.ok(Math.abs(h) < 1e-9 || Math.abs(h - 360) < 1e-9);
 });
 
 test('follows the road round a corner instead of cutting it', () => {
@@ -48,7 +49,7 @@ test('follows the road round a corner instead of cutting it', () => {
   const after = { pos: coords[21], along: path.cum[21], path, heading: 90 }; // 50 m after it
   g.set(before, 0);
   g.set(after, 1000);
-  const mid = g.at(1500).pos;
+  const mid = g.at(1600).pos;
   assert.ok(distance(mid, B) < 1, 'halfway is the corner itself');
 });
 
