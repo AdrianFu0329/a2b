@@ -124,7 +124,7 @@ npm run deploy
 ```
 
 For the live app, a scheduled Claude Code session checks for a new release each month
-(`node scripts/overture-release.mjs`) and opens a pull request with the new data.
+(`node scripts/overture-release.mjs`) and updates the data.
 
 </details>
 
