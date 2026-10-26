@@ -1039,7 +1039,14 @@ function routeAtTap(e) {
 // map, and pushed back up. It follows the finger like an iPhone sheet: while dragging, its height tracks
 // the finger (the route list shrinks, the header and Go stay put); a flick or a long enough drag settles it.
 function setupSheetDrag() {
-  const sheet = $('preview');
+  collapsibleSheet($('preview'), $('route-list'), () => mode === 'preview' && routes.length && fitRoutes());
+  collapsibleSheet($('parking'), $('parking-list'), fitParking);
+}
+
+// A sheet that can be pulled down to a slim bar to see the map, and pushed back up. It follows the finger
+// like an iPhone sheet: while dragging, its height tracks the finger (the list shrinks, the header stays
+// put); a flick or a long enough drag settles it. settled() runs once it has, e.g. to refit the map.
+function collapsibleSheet(sheet, list, settled) {
   let fullH = 0, peekH = 0, startH = 0, timer = null;
   const peeked = () => sheet.classList.contains('peek');
   // Both heights, measured by flipping the layout for a moment (no paint happens in between).
@@ -1057,7 +1064,7 @@ function setupSheetDrag() {
       sheet.classList.remove('dragging', 'settling');
       sheet.style.height = '';
       sheet.classList.toggle('peek', peek);
-      if (mode === 'preview' && routes.length) requestAnimationFrame(fitRoutes);
+      requestAnimationFrame(settled);
     };
     if (!animate || !sheet.classList.contains('dragging')) return done();
     sheet.classList.add('settling');
@@ -1066,8 +1073,8 @@ function setupSheetDrag() {
   };
   sheet.querySelector('.grabber').onclick = () => set(!peeked());
   sheetGesture(sheet, {
-    // Not from inside a route list that's scrolled, so long lists can still be scrolled back up.
-    start: (e) => !(e.target.closest('#route-list') && $('route-list').scrollTop > 0),
+    // Not from inside a list that's scrolled, so long lists can still be scrolled back up.
+    start: (e) => !(e.target.closest(`#${list.id}`) && list.scrollTop > 0),
     move: (dy) => {
       if (!sheet.classList.contains('dragging')) {
         measure();
@@ -1473,6 +1480,7 @@ async function addStop(place) {
 // and drive to one instead. The place you were going to is kept, so you can switch back.
 let parkingFor = null; // the original destination while heading for a car park
 let parkingPins = [];
+let parkingBounds = null; // the car parks and the destination, for framing the map
 
 async function openParking() {
   tripSheet.set(false);
@@ -1480,8 +1488,9 @@ async function openParking() {
   if (!target) return;
   $('parking-for').textContent = `Around ${target.name}`;
   $('parking-list').innerHTML = '';
+  $('parking-peek').textContent = '';
   $('parking-status').innerHTML = '<span class="spinner" aria-hidden="true"></span>Looking for car parks…';
-  $('parking').classList.remove('hidden');
+  $('parking').classList.remove('hidden', 'peek');
   armBack();
   try {
     const { parking } = await api(`/api/parking?lat=${target.lat}&lng=${target.lng}`);
@@ -1510,6 +1519,7 @@ function renderParking(target, list) {
     row('P', '', p.name, info, dest && dest.lat === p.lat && dest.lng === p.lng, () => chooseParking(p));
   }
   $('parking-status').textContent = list.length ? '' : `No car parks mapped within 1 km of ${target.name}.`;
+  $('parking-peek').textContent = list.length ? `${list.length} car park${list.length === 1 ? '' : 's'} · tap a P on the map` : '';
   showParkingPins(target, list);
 }
 
@@ -1517,19 +1527,26 @@ function renderParking(target, list) {
 function showParkingPins(target, list) {
   clearParkingPins();
   if (!list.length) return;
-  const b = new maplibregl.LngLatBounds([target.lng, target.lat], [target.lng, target.lat]);
+  parkingBounds = new maplibregl.LngLatBounds([target.lng, target.lat], [target.lng, target.lat]);
   for (const p of list) {
     const pin = el('div', 'p-pin', 'P');
     pin.onclick = () => chooseParking(p);
     parkingPins.push(new maplibregl.Marker({ element: pin }).setLngLat([p.lng, p.lat]).addTo(map));
-    b.extend([p.lng, p.lat]);
+    parkingBounds.extend([p.lng, p.lat]);
   }
+  fitParking();
+}
+
+// Frames the car parks above the sheet, whatever its height (pulled down, there's room for all of them).
+function fitParking() {
+  if (!parkingBounds || $('parking').classList.contains('hidden')) return;
   stopFollowing();
   clearTimeout(recenterTimer); // stay on the car parks until one is picked or the sheet is closed
-  fitTo(b, { padding: { top: 160, bottom: Math.min(innerHeight * 0.55, $('parking').offsetHeight + 40), left: 50, right: 50 }, pitch: 0, bearing: 0, duration: 700, maxZoom: 17 });
+  fitTo(parkingBounds, { padding: { top: 160, bottom: Math.min(innerHeight * 0.6, $('parking').offsetHeight + 40), left: 50, right: 50 }, pitch: 0, bearing: 0, duration: 600, maxZoom: 17 });
 }
 
 function clearParkingPins() {
+  parkingBounds = null;
   parkingPins.splice(0).forEach((m) => m.remove());
 }
 

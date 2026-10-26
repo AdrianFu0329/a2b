@@ -512,7 +512,15 @@ body.driving .toast { top: calc(140px + var(--safe-top)); }
 .w-ic { display: inline-flex; vertical-align: -3px; color: var(--accent-text); }
 
 /* Parking near the destination (trip menu › Parking nearby). */
-#parking { z-index: 16; }
+#parking { z-index: 16; touch-action: none; user-select: none; -webkit-user-select: none; }
+#parking .grabber { width: 56px; height: 5px; padding: 8px 0; box-sizing: content-box; background-clip: content-box; cursor: pointer; }
+#parking-list { touch-action: pan-y; max-height: 48vh; overflow: auto; } /* a long list still scrolls */
+#parking.peek #parking-list, #parking.peek #parking-status, #parking.peek #parking-for { display: none; }
+#parking.peek .peek-summary { display: block; }
+#parking.dragging { display: flex; flex-direction: column; overflow: hidden; animation: none; }
+#parking.dragging > * { flex: none; }
+#parking.dragging #parking-list { flex: 1 1 auto; min-height: 0; overflow: hidden; max-height: none; }
+#parking.settling { transition: height 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
 .parking-list { list-style: none; margin: 4px 0 0; padding: 0; }
 .parking-list button { width: 100%; display: flex; align-items: center; gap: 14px; padding: 12px 4px; text-align: left; border-bottom: 1px solid var(--line); }
 .parking-list li:last-child button { border-bottom: 0; }
