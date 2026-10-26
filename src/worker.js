@@ -5,6 +5,7 @@ import {
 } from './lib/auth.js';
 import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
 import { constructionTwins } from './lib/construction.js';
+import { parkingNear } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
@@ -265,6 +266,20 @@ async function route(request, env, url) {
     const hit = cache && (await cache.match(key));
     if (hit) return hit;
     const res = json(await searchPlaces(env, { q, lat, lng, lang }), 200, { 'cache-control': 'public, max-age=600' });
+    if (cache) await cache.put(key, res.clone());
+    return res;
+  }
+
+  if (path === '/api/parking' && method === 'GET') {
+    await needSpot();
+    const lat = num(url, 'lat'), lng = num(url, 'lng');
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw httpError('lat and lng are required.', 400);
+    // Car parks don't move: share answers for the same spot (to ~100 m) for a day.
+    const key = new Request(`https://cache.a2b/parking?lat=${lat.toFixed(3)}&lng=${lng.toFixed(3)}`);
+    const cache = globalThis.caches?.default;
+    const hit = cache && (await cache.match(key));
+    if (hit) return hit;
+    const res = json({ parking: await parkingNear(env, [lng, lat]) }, 200, { 'cache-control': 'public, max-age=86400' });
     if (cache) await cache.put(key, res.clone());
     return res;
   }

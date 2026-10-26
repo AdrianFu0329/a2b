@@ -137,6 +137,7 @@
       <div id="eta-menu" class="eta-menu">
         <div id="trip-dest" class="trip-dest"></div>
         <button id="btn-add-stop" class="menu-row"><span class="m-ic addstop"></span><span id="add-stop-label">Add a stop</span></button>
+        <button id="btn-parking" class="menu-row"><span class="m-ic parking"></span><span id="parking-label">Parking nearby</span></button>
         <button id="btn-share-drive" class="menu-row"><span class="m-ic share"></span><span id="share-label">Share drive</span></button>
         <button id="btn-stop-share" class="menu-row hidden"><span class="m-ic stopshare"></span>Stop sharing</button>
         <button id="btn-overview" class="menu-row"><span class="m-ic overview"></span>Overview</button>
@@ -159,6 +160,17 @@
   </section>
 
   <!-- ===== Report menu ===== -->
+  <!-- ===== Car parks near the destination, while driving ===== -->
+  <section id="parking" class="sheet hidden" aria-label="Parking nearby">
+    <div class="grabber"></div>
+    <div class="dest-head">
+      <div class="dest-text"><h2>Parking nearby</h2><p id="parking-for" class="hint"></p></div>
+      <button class="icon-btn" data-close="parking" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    </div>
+    <ul id="parking-list" class="parking-list"></ul>
+    <p id="parking-status" class="hint"></p>
+  </section>
+
   <section id="report-sheet" class="sheet tall hidden" aria-label="Report">
     <div class="grabber"></div>
     <div class="dest-head">

@@ -716,6 +716,8 @@ function wireUi() {
 
   // Drive
   $('btn-eta').onclick = () => !tripSheet.justDragged() && tripSheet.set(!tripSheet.isOpen());
+  $('trip-dest').onclick = () => !tripSheet.justDragged() && tripSheet.set(!tripSheet.isOpen()); // the destination row opens and closes it too
+  $('btn-parking').onclick = openParking;
   tripSheet.init();
   $('btn-stop').onclick = () => endDrive(false);
   $('btn-overview').onclick = overview;
@@ -762,11 +764,12 @@ function refreshSound() {
 
 function closeScreen(id) {
   $(id).classList.add('hidden');
+  if (id === 'parking') closeParking();
   if (id === 'preview') backToBrowse();
   if (id === 'report-sheet') reportDraft = null;
 }
 
-const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'later', 'arrived', 'preview'];
+const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'preview'];
 
 // Closes the top-most screen; returns false when nothing was open.
 function closeTop() {
@@ -1465,6 +1468,92 @@ async function addStop(place) {
   stopMarker = new maplibregl.Marker({ element: el('div', 'drop-pin', DROP_PIN), anchor: 'bottom' }).setLngLat([place.lng, place.lat]).addTo(map);
 }
 
+// ---------- Parking near the destination ----------
+// Like Waze: from the trip menu, see the car parks around where you're going (or around the place itself)
+// and drive to one instead. The place you were going to is kept, so you can switch back.
+let parkingFor = null; // the original destination while heading for a car park
+let parkingPins = [];
+
+async function openParking() {
+  tripSheet.set(false);
+  const target = parkingFor ?? dest;
+  if (!target) return;
+  $('parking-for').textContent = `Around ${target.name}`;
+  $('parking-list').innerHTML = '';
+  $('parking-status').innerHTML = '<span class="spinner" aria-hidden="true"></span>Looking for car parks…';
+  $('parking').classList.remove('hidden');
+  armBack();
+  try {
+    const { parking } = await api(`/api/parking?lat=${target.lat}&lng=${target.lng}`);
+    if ($('parking').classList.contains('hidden')) return;
+    renderParking(target, parking);
+  } catch (e) {
+    $('parking-status').textContent = e.message;
+  }
+}
+
+function renderParking(target, list) {
+  const box = $('parking-list');
+  box.innerHTML = '';
+  const row = (badge, cls, name, info, on, pick) => {
+    const li = el('li', on ? 'on' : '');
+    const b = el('button', '', `<span class="p-badge ${cls}">${badge}</span><span><b>${esc(name)}</b><small>${esc(info)}</small></span>`);
+    b.onclick = pick;
+    li.append(b);
+    box.append(li);
+  };
+  if (parkingFor) row(DEST_PIN, 'dest', `Drive to ${parkingFor.name}`, 'Go back to your destination', false, () => chooseParking(null));
+  for (const p of list) {
+    const info = [p.distance < 60 ? 'At your destination' : `${formatDistance(p.distance, state.settings.units)} away`,
+      p.kind, p.fee === true ? (p.charge ? `Paid · ${p.charge}` : 'Paid') : p.fee === false ? 'Free' : null,
+      p.capacity ? `${p.capacity} spaces` : null, p.customers ? 'Customers only' : null].filter(Boolean).join(' · ');
+    row('P', '', p.name, info, dest && dest.lat === p.lat && dest.lng === p.lng, () => chooseParking(p));
+  }
+  $('parking-status').textContent = list.length ? '' : `No car parks mapped within 1 km of ${target.name}.`;
+  showParkingPins(target, list);
+}
+
+// P markers on the map while choosing, framed with the destination.
+function showParkingPins(target, list) {
+  clearParkingPins();
+  if (!list.length) return;
+  const b = new maplibregl.LngLatBounds([target.lng, target.lat], [target.lng, target.lat]);
+  for (const p of list) {
+    const pin = el('div', 'p-pin', 'P');
+    pin.onclick = () => chooseParking(p);
+    parkingPins.push(new maplibregl.Marker({ element: pin }).setLngLat([p.lng, p.lat]).addTo(map));
+    b.extend([p.lng, p.lat]);
+  }
+  stopFollowing();
+  clearTimeout(recenterTimer); // stay on the car parks until one is picked or the sheet is closed
+  fitTo(b, { padding: { top: 160, bottom: Math.min(innerHeight * 0.55, $('parking').offsetHeight + 40), left: 50, right: 50 }, pitch: 0, bearing: 0, duration: 700, maxZoom: 17 });
+}
+
+function clearParkingPins() {
+  parkingPins.splice(0).forEach((m) => m.remove());
+}
+
+function closeParking() {
+  clearParkingPins();
+  if (mode === 'drive') recenter();
+}
+
+async function chooseParking(p) {
+  $('parking').classList.add('hidden');
+  closeParking();
+  if (p) {
+    parkingFor ??= dest;
+    dest = { name: p.name, address: `Parking for ${parkingFor.name}`, lat: p.lat, lng: p.lng, category: 'parking' };
+  } else if (parkingFor) {
+    dest = parkingFor;
+    parkingFor = null;
+  }
+  destMarker?.setLngLat([dest.lng, dest.lat]);
+  $('parking-label').textContent = parkingFor ? 'Change parking' : 'Parking nearby';
+  renderStopMenu();
+  if (state.pos) await reroute(state.pos, { force: true, note: p ? `Going to ${p.name}.` : `Going to ${dest.name}.` });
+}
+
 async function removeStop() {
   stops = [];
   stopMarker?.remove();
@@ -1508,6 +1597,10 @@ async function arrive() {
 
 async function endDrive(arrived) {
   stopSimulation();
+  parkingFor = null;
+  $('parking-label').textContent = 'Parking nearby';
+  $('parking').classList.add('hidden');
+  clearParkingPins();
   if (share) {
     api(`/api/trips/${share.token}`, { method: 'PATCH', body: { ended: arrived ? 'arrived' : 'stopped' } }).catch(() => {});
     share = null;

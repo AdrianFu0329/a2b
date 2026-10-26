@@ -61,6 +61,20 @@ globalThis.fetch = async (url, init = {}) => {
       + '<tag k="charge" v="2.10 MYR/motorcar;1.10 MYR/taxi"/><tag k="payment:touchngo" v="yes"/><tag k="payment:touchngo_smarttag" v="yes"/><tag k="payment:touchngo_rfid" v="yes"/></node>'
       + `<node id="2" lat="${s}" lon="${w}"><tag k="barrier" v="toll_booth"/><tag k="name" v="Far booth"/></node></osm>`);
   }
+  if (u.includes('/reverse') && u.includes('osm_tag=amenity')) {
+    return Response.json({ features: [
+      { geometry: { coordinates: [13.4012, 52.5021] }, properties: { osm_type: 'W', osm_id: 11, name: 'Far Garage', street: 'Test Street' } },
+      { geometry: { coordinates: [13.4001, 52.5001] }, properties: { osm_type: 'W', osm_id: 12, street: 'Test Street' } },
+      { geometry: { coordinates: [13.4002, 52.5002] }, properties: { osm_type: 'N', osm_id: 13, name: 'Staff only' } },
+    ] });
+  }
+  if (u.includes('openstreetmap.org/api/0.6/ways.json')) {
+    return Response.json({ elements: [
+      { id: 11, tags: { amenity: 'parking', parking: 'multi-storey', fee: 'yes', capacity: '400' } },
+      { id: 12, tags: { amenity: 'parking', fee: 'no' } },
+    ] });
+  }
+  if (u.includes('openstreetmap.org/api/0.6/nodes.json')) return Response.json({ elements: [{ id: 13, tags: { amenity: 'parking', access: 'private' } }] });
   if (u.includes('/reverse')) return Response.json({ features: [{ geometry: { coordinates: [13.4, 52.5] }, properties: { name: 'Somewhere', city: 'Berlin', country: 'Germany' } }] });
   if (u.includes('/api/')) {
     // A few Malaysian places for the nearby-search tests; any other query gets the default answer below.
@@ -513,4 +527,14 @@ test('the usage dashboard counts devices, busy moments and turn-aways, for the o
     for (const k of ['MAX_ACTIVE', 'MAX_GUESTS', 'TESTER_EMAILS']) delete env[k];
     await env.DB.prepare('DELETE FROM presence').run();
   }
+});
+
+test('parking near a destination: nearest first, with what kind it is and whether it charges, never private', async () => {
+  const r = await alice('GET', '/api/parking?lat=52.5&lng=13.4');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.parking.map((p) => p.name), ['Car park on Test Street', 'Far Garage']);
+  const [near, far] = r.body.parking;
+  assert.equal(near.fee, false);
+  assert.ok(near.distance < 30);
+  assert.deepEqual([far.kind, far.fee, far.capacity], ['Multi-storey', true, 400]);
 });
