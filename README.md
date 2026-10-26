@@ -202,4 +202,17 @@ test/                 node --test: navigation engine and the full API on an in-m
 
 Always keep your eyes on the road, and only use the app when it is safe and legal.
 
-Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright).
+## Contributing
+
+Ideas, bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run A2B on
+your computer, test a change and send it in.
+
+## Licence
+
+A2B is free software under the [GNU Affero General Public License v3.0 or later](LICENSE). You can use, study, change
+and share it. If you run a changed version for other people, over the internet included, you must offer them its
+source code under the same licence. The app links to its source from **About**.
+
+The map and place data have their own licences: map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
+(ODbL); places and roads under construction from the [Overture Maps Foundation](https://overturemaps.org) (see
+`public/places/NOTICE.txt` once built).
