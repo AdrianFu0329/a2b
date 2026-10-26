@@ -8,13 +8,13 @@
 import { ACTIVE_MS } from './presence.js';
 
 export const USAGE_DAYS = 30;
-const COUNTERS = new Set(['signups', 'routes', 'searches']);
+const COUNTERS = new Set(['signups', 'routes', 'searches', 'tomtom']); // tomtom: live-traffic lookups (its free quota)
 
 export const dayOf = (now = Date.now()) => new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
 
 export function usageRepo(db) {
   return {
-    // A route, search or sign-up happened.
+    // A route, search, sign-up or traffic lookup happened.
     async bump(field, now = Date.now()) {
       if (!COUNTERS.has(field)) return;
       await db
@@ -53,12 +53,15 @@ export function usageRepo(db) {
           .prepare('SELECT day, COUNT(*) AS devices, SUM(account) AS accounts, SUM(turned_away) AS turned_away FROM usage_devices WHERE day >= ? GROUP BY day')
           .bind(since)
           .all(),
-        db.prepare('SELECT (SELECT COUNT(*) FROM users) AS accounts, (SELECT COUNT(*) FROM reports) AS reports').first(),
+        db
+          .prepare('SELECT (SELECT COUNT(*) FROM users) AS accounts, (SELECT COUNT(*) FROM reports) AS reports, (SELECT COALESCE(SUM(tomtom), 0) FROM usage_daily WHERE day >= ?) AS tomtom_month')
+          .bind(`${dayOf(now).slice(0, 8)}01`)
+          .first(),
       ]);
       const byDay = new Map();
       for (let i = 13; i >= 0; i--) {
         const day = dayOf(now - i * 86400_000);
-        byDay.set(day, { day, devices: 0, accounts: 0, turned_away: 0, peak_active: 0, peak_at: null, signups: 0, routes: 0, searches: 0 });
+        byDay.set(day, { day, devices: 0, accounts: 0, turned_away: 0, peak_active: 0, peak_at: null, signups: 0, routes: 0, searches: 0, tomtom: 0 });
       }
       for (const r of days.results) Object.assign(byDay.get(r.day) ?? {}, r);
       for (const r of devices.results) Object.assign(byDay.get(r.day) ?? {}, r);

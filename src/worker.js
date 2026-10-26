@@ -8,6 +8,7 @@ import {
 } from './lib/auth.js';
 import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
 import { constructionTwins } from './lib/construction.js';
+import { liveTraffic, applyTraffic } from './lib/traffic.js';
 import { parkingNear } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
@@ -336,6 +337,12 @@ async function route(request, env, url) {
         const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
         r.limits = a?.limits ?? null;
         r.tolls = (a?.tolls ?? []).map((at) => ({ at }));
+      }),
+      // Live traffic, when TomTom is set up: the route's time with today's traffic, and where the jams are.
+      ...routes.map(async (r) => {
+        if (!env.TOMTOM_KEY) return;
+        const [, traffic] = await Promise.all([count('tomtom'), liveTraffic(env, r).catch(() => null)]);
+        applyTraffic(r, traffic);
       }),
     ]);
     for (const r of routes) delete r.shapes;

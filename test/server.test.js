@@ -8,6 +8,7 @@ import { createD1 } from './d1-shim.js';
 import { hashPassword, verifyPassword, normalizeEmail } from '../src/lib/auth.js';
 import { extendedExpiry, shouldRemove } from '../src/lib/reports.js';
 import { buildRouteRequest, photonToPlace, lanes } from '../src/lib/providers.js';
+import { applyTraffic } from '../src/lib/traffic.js';
 import { REPORT_TYPES } from '../public/report-types.js';
 import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 
@@ -21,6 +22,8 @@ let failWithExcludes = false;
 let lastLocateBody = null;
 const DETOUR = LINE.map(([lng, lat]) => [lng + 0.003, lat]); // a parallel street ~200 m east
 let osmLookups = 0;
+let tomtomDown = false;
+let tomtomCalls = 0;
 
 function fakeTrip(coords, time) {
   return {
@@ -37,6 +40,18 @@ function fakeTrip(coords, time) {
 
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
+  if (u.includes('api.tomtom.com')) {
+    tomtomCalls++;
+    if (tomtomDown) return Response.json({ error: 'over quota' }, { status: 403 });
+    // Follows the route it's given; the full route has a jam over its third quarter.
+    const points = JSON.parse(init.body).supportingPoints;
+    const full = points.length === 21;
+    return Response.json({ routes: [{
+      summary: { travelTimeInSeconds: full ? 600 : 100, trafficDelayInSeconds: full ? 300 : 0 },
+      legs: [{ points }],
+      sections: full ? [{ sectionType: 'TRAFFIC', startPointIndex: 10, endPointIndex: 15, magnitudeOfDelay: 2, delayInSeconds: 300 }] : undefined,
+    }] });
+  }
   if (u.includes('/locate')) {
     lastLocateBody = JSON.parse(init.body);
     const { lat, lon } = lastLocateBody.locations[0];
@@ -281,6 +296,40 @@ test('routes avoid reported closures and account for reported traffic', async ()
   assert.equal(full.steps[0].street, 'Test Street');
   assert.deepEqual(full.limits, [[0, 50], [10, 30], [15, null]]);
   assert.equal(full.shapes, undefined, 'encoded shapes stay on the server');
+});
+
+test('live traffic from TomTom times each route and marks its jams, and is skipped when TomTom fails', async () => {
+  env.TOMTOM_KEY = 'test-key';
+  try {
+    tomtomCalls = 0;
+    const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    assert.equal(tomtomCalls, 2, 'one lookup per route');
+    const full = r.body.routes.find((x) => x.coords.length === 21);
+    assert.equal(full.duration, 600);
+    assert.equal(full.delay, 0, "drivers' jam reports aren't added on top of live traffic");
+    assert.deepEqual(full.traffic, { delay: 300, jams: [{ from: 0.5, to: 0.75, level: 2, delay: 300 }] });
+    assert.equal(full.steps.reduce((t, s) => t + s.time, 0), 600, 'the countdown while driving uses the live time');
+    assert.equal(r.body.routes[0].duration, 100, 'fastest in traffic first');
+
+    tomtomDown = true;
+    const again = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    const plain = again.body.routes.find((x) => x.coords.length === 21);
+    assert.equal(plain.traffic, undefined);
+    assert.equal(plain.duration, 120 + 240, 'back to the router and the reported jam');
+  } finally {
+    delete env.TOMTOM_KEY;
+    tomtomDown = false;
+  }
+});
+
+test("live traffic puts each jam's delay on the turns it covers", () => {
+  const coords = Array.from({ length: 11 }, (_, i) => [0, i * 0.001]);
+  const steps = [{ begin: 0, end: 5, time: 50 }, { begin: 5, end: 10, time: 50 }, { begin: 10, end: 10, time: 0 }];
+  const r = applyTraffic({ coords, steps, duration: 100 }, { duration: 260, delay: 120, jams: [{ from: 0.6, to: 0.8, level: 3, delay: 120 }] });
+  assert.equal(r.duration, 260);
+  assert.equal(Math.round(r.steps[0].time), 70, 'the free-flowing part takes 140 s, spread by the router\'s times');
+  assert.equal(Math.round(r.steps[1].time), 190, '70 s plus the whole jam');
+  assert.equal(r.steps[2].time, 0);
 });
 
 test('a stop splits the drive into legs but stays one route', async () => {

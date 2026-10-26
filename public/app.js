@@ -32,6 +32,7 @@ const ROUTE = {
   day: { main: '#9b2c6b', casing: '#4a0f31', driven: '#c3b3bd', drivenCasing: '#8f7a87' },
   night: { main: '#d0569a', casing: '#5e1640', driven: '#8a7684', drivenCasing: '#3b2f39' },
 };
+const JAM_COLOURS = { 1: '#f2a516', 2: '#e8442e', 3: '#a3121c' }; // slow, queuing, stationary
 const REPORT_REFRESH_MS = 60_000;
 const STILL_SPEED = 1; // m/s; slower than this counts as standing still
 const BROWSE_RESUME_MS = 15_000;
@@ -144,7 +145,7 @@ async function boot() {
     style: styleUrl(themeNow),
     center: last ?? [10, 25],
     zoom: last ? 15 : 1.6,
-    attributionControl: { compact: true },
+    attributionControl: { compact: true, customAttribution: 'Traffic © TomTom' },
     pixelRatio: Math.min(devicePixelRatio, 2), // 3x screens cost a lot of GPU (and heat) for little gain on a moving map
     maxPitch: 65,
   });
@@ -441,7 +442,7 @@ function drawRoutes() {
   }
   if (lineFor) {
     lineFor = null;
-    for (const id of ['routes-casing', 'routes-main']) map.setPaintProperty(id, 'line-gradient', null);
+    map.setPaintProperty('routes-casing', 'line-gradient', null);
   }
   let features = [];
   if (mode === 'preview') {
@@ -449,6 +450,7 @@ function drawRoutes() {
     features.sort((a, b) => a.properties.selected - b.properties.selected);
   }
   src.setData({ type: 'FeatureCollection', features });
+  map.setPaintProperty('routes-main', 'line-gradient', mode === 'preview' ? routeColours(routes[selected], 0) : null);
   drawManeuverArrow();
 }
 
@@ -475,7 +477,22 @@ function drawDriveLine() {
   trimmedTo = to;
   const c = ROUTE[themeNow];
   map.setPaintProperty('routes-casing', 'line-gradient', ['step', ['line-progress'], c.drivenCasing, to, c.casing]);
-  map.setPaintProperty('routes-main', 'line-gradient', ['step', ['line-progress'], c.driven, to, c.main]);
+  map.setPaintProperty('routes-main', 'line-gradient', routeColours(nav.route, to));
+}
+
+// The selected route's colours along its length: muted where already driven (up to `driven`, a fraction of the
+// length), then the route colour, with live-traffic jams in amber to deep red.
+function routeColours(route, driven) {
+  const c = ROUTE[themeNow];
+  const jams = route?.traffic?.jams ?? [];
+  const cuts = [...new Set([0, driven, ...jams.flatMap((j) => [j.from, j.to])])].filter((x) => x >= 0 && x < 1).sort((x, y) => x - y);
+  const colourAt = (x) => (x < driven ? c.driven : JAM_COLOURS[jams.find((j) => j.from <= x && x < j.to)?.level] ?? c.main);
+  const expr = ['step', ['line-progress'], colourAt(0)];
+  cuts.forEach((at, i) => {
+    const colour = colourAt((at + (cuts[i + 1] ?? 1)) / 2);
+    if (at > 0 && colour !== expr.at(-1)) expr.push(at, colour);
+  });
+  return expr;
 }
 
 function drawTrail() {
@@ -1134,7 +1151,8 @@ function renderRouteOptions() {
     if (r.ferry) badges.push('<span class="badge warn">Ferry</span>');
     const reps = (r.reports ?? []).length;
     if (reps) badges.push(`<span class="badge">${reps} report${reps > 1 ? 's' : ''}</span>`);
-    if (r.delay > 0) badges.push(`<span class="badge warn">+${formatDuration(r.delay)} traffic</span>`);
+    const late = (r.traffic?.delay ?? 0) + (r.delay ?? 0);
+    if (late >= 60) badges.push(`<span class="badge warn">+${formatDuration(late)} traffic</span>`);
     if (r.warning === 'construction') badges.push('<span class="badge warn">May pass roadworks</span>');
     b.innerHTML = `<span class="r-time">${formatDuration(r.duration)}</span><span class="r-info"><b>${r.via ? `via ${esc(r.via)}` : 'Route'} </b>${formatDistance(r.distance, state.settings.units)} · arrive ${formatClock(new Date(Date.now() + r.duration * 1000))}<br>${badges.join('')}</span>`;
     b.onclick = () => selectRoute(i);

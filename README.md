@@ -41,7 +41,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 | Feature | What it does |
 | --- | --- |
 | 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. |
-| 🛣️ **Routes** | Up to three routes with drive time, arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
+| 🛣️ **Routes** | Up to three routes with drive time in live traffic (jams coloured on the line), arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
 | 🗣️ **Turn by turn** | Spoken directions, the next turn and the one after, lane guidance, roundabout exits, a turn arrow on the map, and rerouting when you go off route. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
 | 🅿️ **Parking** | Car parks near your destination, paid or free, with type and spaces. Pick one and the drive reroutes there. |
@@ -106,6 +106,7 @@ Everything A2B uses is free and needs no key:
 | Map tiles | [OpenFreeMap](https://openfreemap.org) | Map looks are in `public/map-themes.js`. |
 | Routing, speed limits, toll booths | [Valhalla public server](https://valhalla1.openstreetmap.de) (`ROUTING_URL`) | Community-run, fair use. |
 | Search | [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Community-run, fair use. |
+| Live traffic (optional) | [TomTom Routing API](https://developer.tomtom.com) (`TOMTOM_KEY` secret) | Times each route with today's traffic; free up to a monthly quota. Without a key, routes use typical speeds. Answers aren't stored. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
@@ -157,6 +158,7 @@ src/
   worker.js             the API
   lib/providers.js      search (Photon) and routing (Valhalla), speed limits, reports along a route
   lib/construction.js   spotting roads that are probably still being built
+  lib/traffic.js        live traffic for a route (TomTom)
   lib/tolls.js          toll plazas and their prices
   lib/parking.js        car parks near a destination
   lib/reports.js        reports, merging, votes, expiry, closures
@@ -193,7 +195,8 @@ test/                   node --test: the navigation engine and the whole API on 
 ## Known limits
 
 - **No CarPlay or Android Auto**, and no navigating in the background: it's a web app, so keep it on screen.
-- **No live traffic feed.** Drive times come from typical road speeds plus the traffic drivers report.
+- **Live traffic needs a TomTom key.** With one, drive times and jams come from TomTom; past its free monthly quota (or
+  without a key) they fall back to typical road speeds plus the traffic drivers report.
 - **Map data gaps.** Roads, tolls, car parks and lanes are only as good as OpenStreetMap's for your area. Fixing a
   spot on [openstreetmap.org](https://www.openstreetmap.org) fixes it for everyone.
 - **Shop listings can be noisy.** Some Overture entries are pinned in the wrong place; well-known landmarks are put
@@ -233,4 +236,4 @@ over the internet included, you must offer them its source code under the same l
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL). Places and roads under
 construction from the [Overture Maps Foundation](https://overturemaps.org) (see `public/places/NOTICE.txt` once built).
 Map tiles by [OpenFreeMap](https://openfreemap.org), routing by [Valhalla](https://github.com/valhalla/valhalla),
-search by [Photon](https://github.com/komoot/photon).
+search by [Photon](https://github.com/komoot/photon), live traffic by [TomTom](https://www.tomtom.com).

@@ -363,7 +363,8 @@ export function annotateWithReports(routes, reports) {
     }
     hits.sort((a, b) => a.at - b.at);
     r.reports = hits;
-    r.delay = hits.filter((h) => h.type === 'traffic').reduce((s, h) => s + (JAM_DELAY[h.subtype] ?? 120), 0);
+    // Live traffic, when there is some, already sees the jams drivers report.
+    r.delay = r.traffic ? 0 : hits.filter((h) => h.type === 'traffic').reduce((s, h) => s + (JAM_DELAY[h.subtype] ?? 120), 0);
     r.duration += r.delay;
   }
   return routes;

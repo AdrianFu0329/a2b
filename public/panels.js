@@ -430,6 +430,8 @@ async function openUsage() {
   const timer = setInterval(async () => (await render()) || clearInterval(timer), 30_000);
 }
 
+const TOMTOM_FREE = 20_000; // TomTom's free Routing API requests a month
+
 function usageHtml({ now, days, totals }) {
   const today = days.at(-1);
   const time = (ms) => (ms ? new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '–');
@@ -448,6 +450,7 @@ function usageHtml({ now, days, totals }) {
       ${stat(today.devices, 'devices')}${stat(`${today.peak_active}/${now.max}`, `busiest, ${time(today.peak_at)}`)}${stat(today.turned_away, 'turned away')}
       ${stat(today.signups, 'sign-ups')}${stat(today.routes, 'routes')}${stat(today.searches, 'searches')}
     </div>
+    <p class="hint" style="padding:6px 18px 0">Live traffic: ${today.tomtom ?? 0} TomTom lookups today, ${totals.tomtom_month ?? 0} this month (${TOMTOM_FREE.toLocaleString()} a month are free).</p>
     <h3>Last 14 days</h3>
     <div class="u-days">${[...days]
       .reverse()
@@ -470,7 +473,7 @@ function openAbout() {
     <p>Keep your eyes on the road. Only use the app when it is safe and legal to do so. Reports from other drivers can be wrong.</p>
     <p>Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>.
        Map tiles by <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>.
-       Routing by <a href="https://valhalla.github.io/valhalla/" target="_blank" rel="noopener">Valhalla</a>, search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>.
+       Routing by <a href="https://valhalla.github.io/valhalla/" target="_blank" rel="noopener">Valhalla</a>, search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>, live traffic by <a href="https://www.tomtom.com" target="_blank" rel="noopener">TomTom</a>.
        Shops and places also from <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a> (Meta, Microsoft, Foursquare, AllThePlaces and others; <a href="/places/NOTICE.txt" target="_blank">licences</a>).</p>
     <!-- While the repository is private, its links (source code, NOTICE) are left out: they'd only show GitHub's 404.
          When it's public again, link https://github.com/thaqif0709/a2b and its NOTICE here. -->
