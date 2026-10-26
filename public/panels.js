@@ -406,7 +406,7 @@ async function openLeaders() {
     const { leaders } = await api('/api/leaderboard');
     body.innerHTML = leaders.length
       ? `<p class="hint" style="padding:8px 18px">Points come from reports and from other drivers thanking and confirming them.</p>${leaders
-          .map((l, i) => `<div class="leader${l.me ? ' me' : ''}"><span class="rank">${i + 1}</span><span class="avatar">${esc(initials(l.name))}</span><span>${esc(l.name)}</span><b>${l.points}</b></div>`)
+          .map((l, i) => `<div class="leader${l.me ? ' me' : ''}"><span class="rank">${i + 1}</span><span class="avatar">${esc(initials(l.name))}</span><span class="name">${esc(l.name)}</span>${l.me ? '<span class="you">You</span>' : ''}<b>${l.points}<small>pts</small></b></div>`)
           .join('')}`
       : '<p class="hint" style="padding:12px 18px">No drivers yet. Be the first to report something!</p>';
   } catch (e) {
