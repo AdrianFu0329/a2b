@@ -149,7 +149,7 @@ for again around it (`src/lib/construction.js`).
 
 A scheduled Claude Code session checks once a month for a new Overture release
 (`node scripts/overture-release.mjs`). When there is one, it rebuilds both data sets with that release, runs
-the tests, deploys, and commits the new construction data.
+the tests and opens a pull request with the new construction data; the update is deployed once it's merged.
 
 ## How it's built
 
