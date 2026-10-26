@@ -44,6 +44,7 @@ use `npx wrangler dev --ip 0.0.0.0` for everything except location.
 3. Add or update tests for logic you change (`test/`), and make sure `npm test` passes.
 4. Try it in a browser, ideally on a phone-sized screen, and say in the PR what you tested.
 5. Open a pull request with what changed and why, plus screenshots for anything visual.
+6. Agree to the [Contributor License Agreement](CLA.md) (a checkbox in the pull request).
 
 The maintainer reviews every pull request before it's merged, and deploys the live app themselves. Contributors
 never need the app's Cloudflare account or secrets.
@@ -58,7 +59,12 @@ never need the app's Cloudflare account or secrets.
   to the public servers modest (cache where you can).
 - **Safety first.** Nothing that encourages using the phone while driving.
 
-## Licence
+## Licence and the contributor agreement
 
-A2B is licensed under the [GNU AGPL v3.0 or later](LICENSE). By sending a pull request, you agree that your
-contribution is released under the same licence.
+A2B is licensed under the [GNU AGPL v3.0 or later](LICENSE), and it will stay free and open source.
+
+Before your first pull request can be merged, you need to agree to the [Contributor License Agreement](CLA.md).
+In short: you keep the copyright to your work, and you give the maintainer a licence to use it, including the
+option to also offer A2B under other licences (for example to a company that can't use the AGPL). That keeps the
+project sustainable without taking anything away from the open source version. Tick the box in the pull request
+template to agree, or write "I agree to the A2B CLA" in your pull request.

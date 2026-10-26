@@ -205,7 +205,8 @@ Always keep your eyes on the road, and only use the app when it is safe and lega
 ## Contributing
 
 Ideas, bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run A2B on
-your computer, test a change and send it in.
+your computer, test a change and send it in. Code contributions need the [Contributor License Agreement](CLA.md): you keep your
+copyright and A2B stays open source.
 
 ## Licence
 
