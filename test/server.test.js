@@ -9,6 +9,8 @@ import { hashPassword, verifyPassword, normalizeEmail } from '../src/lib/auth.js
 import { extendedExpiry, shouldRemove } from '../src/lib/reports.js';
 import { buildRouteRequest, photonToPlace, lanes } from '../src/lib/providers.js';
 import { applyTraffic } from '../src/lib/traffic.js';
+import { camerasAlong } from '../src/lib/cameras.js';
+import { cameraBearing } from '../scripts/build-cameras.mjs';
 import { REPORT_TYPES } from '../public/report-types.js';
 import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 
@@ -23,6 +25,7 @@ let lastLocateBody = null;
 const DETOUR = LINE.map(([lng, lat]) => [lng + 0.003, lat]); // a parallel street ~200 m east
 let osmLookups = 0;
 let tomtomDown = false;
+let cameras = null; // the built speed camera list, as in public/cameras.json
 let tomtomCalls = 0;
 
 function fakeTrip(coords, time) {
@@ -112,6 +115,7 @@ globalThis.fetch = async (url, init = {}) => {
 // The app's static files, as far as the Worker reads them: the construction road tiles.
 const ASSETS = {
   async fetch(req) {
+    if (new URL(req.url).pathname === '/cameras.json' && cameras) return Response.json({ cameras });
     const name = new URL(req.url).pathname.replace('/construction/', '');
     const key = construction && `${Math.floor(construction[0][0] / 0.05)}_${Math.floor(construction[0][1] / 0.05)}`;
     if (name === 'index.json') return Response.json({ tiles: key ? [key] : [] });
@@ -330,6 +334,42 @@ test("live traffic puts each jam's delay on the turns it covers", () => {
   assert.equal(Math.round(r.steps[0].time), 70, 'the free-flowing part takes 140 s, spread by the router\'s times');
   assert.equal(Math.round(r.steps[1].time), 190, '70 s plus the whole jam');
   assert.equal(r.steps[2].time, 0);
+});
+
+test('routes list the fixed speed cameras on them, not the ones across a divided road', async () => {
+  // LINE runs north from 52.5 to 52.509 along 13.4; 0.0003° of longitude is about 20 m here.
+  cameras = [
+    [13.4, 52.5045, 'AES Test Road - Northbound', 0, 60], // on the road
+    [13.4003, 52.506, 'AES Test Road - Southbound', 180, 60], // 20 m off, for the other way: the other carriageway
+    [13.4, 52.5072, 'AES Test Road (SB)', 180, null], // right on the road: named the other way, still warned about
+    [13.4003, 52.508, null, null, null], // 20 m off, says nothing: the other carriageway
+    [13.4003, 52.5085, 'AES Test Road (NB)', 0, null], // 20 m off, named for this way: beside the road
+    [13.43, 52.52, 'Far away', null, 80],
+  ];
+  try {
+    const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    const full = r.body.routes.find((x) => x.coords.length === 21);
+    assert.deepEqual(full.cameras.map((c) => [c.at, c.name, c.limit]), [[10, 'AES Test Road - Northbound', 60], [16, 'AES Test Road (SB)', null], [19, 'AES Test Road (NB)', null]]);
+  } finally {
+    cameras = null;
+  }
+  const none = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+  assert.deepEqual(none.body.routes[0].cameras, [], 'no list built: no cameras');
+});
+
+test('a camera mapped twice is warned about once', () => {
+  const coords = Array.from({ length: 11 }, (_, i) => [0, i * 0.001]);
+  assert.equal(camerasAlong(coords, [[0, 0.005, 'A', 0, 90], [0, 0.0052, 'A', 0, 90], [0, 0.008, 'B', 0, 90]]).length, 2);
+});
+
+test('which way a camera checks, from its name', () => {
+  assert.equal(cameraBearing('AWAS ELITE Highway - Southbound'), 180);
+  assert.equal(cameraBearing('KM 214.4 Lebuhraya PLUS, Alor Gajah (NB)'), 0);
+  assert.equal(cameraBearing('AES Exit Chukai Eastbound'), 90);
+  assert.equal(cameraBearing('Kamera AES Arah Utara'), 0);
+  assert.equal(cameraBearing('AES KM D7.9 Sungai Besi (South)'), null);
+  assert.equal(cameraBearing('AES Jalan Ipoh'), null);
+  assert.equal(cameraBearing(null), null);
 });
 
 test('a stop splits the drive into legs but stays one route', async () => {

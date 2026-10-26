@@ -43,6 +43,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 | 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. |
 | 🛣️ **Routes** | Up to three routes with drive time in live traffic (jams coloured on the line), arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
 | 🗣️ **Turn by turn** | Spoken directions, the next turn and the one after, lane guidance, roundabout exits, a turn arrow on the map, and rerouting when you go off route. |
+| 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
 | 🅿️ **Parking** | Car parks near your destination, paid or free, with type and spaces. Pick one and the drive reroutes there. |
 | 🚧 **Roadworks** | Routes avoid roads that look to be still under construction, and roads drivers report as closed. |
@@ -110,6 +111,7 @@ Everything A2B uses is free and needs no key:
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
+| Fixed speed cameras (AES, AWAS) | OpenStreetMap, found through Photon | Built with `npm run cameras` into `public/cameras.json`, kept in git. |
 
 The community servers ask for fair use, which is why the beta caps how many people use it at once. For more
 traffic, point `ROUTING_URL` and `GEOCODER_URL` at your own [Valhalla](https://github.com/valhalla/valhalla) and
@@ -160,6 +162,7 @@ src/
   lib/providers.js      search (Photon) and routing (Valhalla), speed limits, reports along a route
   lib/construction.js   spotting roads that are probably still being built
   lib/traffic.js        live traffic for a route (TomTom)
+  lib/cameras.js        fixed speed cameras along a route
   lib/tolls.js          toll plazas and their prices
   lib/parking.js        car parks near a destination
   lib/reports.js        reports, merging, votes, expiry, closures

@@ -81,6 +81,8 @@ let trimmedAt = 0, trimmedTo = -1; // when, and to what fraction of the route, t
 let trail = []; // lines driven earlier in this drive: parts of routes replaced by a reroute, and detours off them
 let offTrail = []; // where the car has been since it left the current route
 const tollsSpoken = new Set(); // toll plazas (route + index) already announced this drive
+const camerasWarned = new Set(); // fixed speed cameras (route + index) already announced this drive
+const cameraPins = [];
 
 // ================= Boot =================
 // With Reduce Motion on (an iPhone accessibility setting), MapLibre turns every camera move into an instant
@@ -370,6 +372,22 @@ function drawTolls() {
   if (mode === 'preview' && routes[selected]) pts = (routes[selected].tolls ?? []).map((t) => routes[selected].coords[t.at]);
   else if (mode === 'drive' && nav) pts = (nav.route.tolls ?? []).filter((t) => nav.cum[t.at] > (live?.along ?? 0) - 30).map((t) => nav.coords[t.at]);
   src.setData({ type: 'FeatureCollection', features: pts.map((p) => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: p } })) });
+  drawCameras();
+}
+
+// Fixed speed cameras to mark, like toll plazas: the chosen route's in preview, the ones still ahead while driving.
+function drawCameras() {
+  let list = [];
+  if (mode === 'preview' && routes[selected]) list = (routes[selected].cameras ?? []).map((c) => routes[selected].coords[c.at]);
+  else if (mode === 'drive' && nav) list = (nav.route.cameras ?? []).filter((c) => nav.cum[c.at] > (live?.along ?? 0) - 30).map((c) => nav.coords[c.at]);
+  const key = list.map((p) => p.join()).join(';');
+  if (cameraPins.key === key) return;
+  cameraPins.key = key;
+  cameraPins.splice(0).forEach((m) => m.remove());
+  for (const p of list) {
+    const pin = el('div', 'report-pin cam-pin', `<div class="pin-ic" style="background:${REPORT_TYPES.camera.color}">${reportIcon('camera')}</div>`);
+    cameraPins.push(new maplibregl.Marker({ element: pin }).setLngLat(p).addTo(map));
+  }
 }
 
 // "RM 2.10" for a price from OpenStreetMap.
@@ -405,6 +423,28 @@ function checkTolls() {
     tollsSpoken.add(key);
     speak(`Toll plaza in ${spokenDistance(next.ahead, units)}.`);
   }
+}
+
+// While driving: a spoken warning and a card at about 800 m before each fixed speed camera, with its limit.
+function checkCameras() {
+  if (!state.settings.alerts) return;
+  const units = state.settings.units;
+  const next = (nav?.route.cameras ?? []).map((c) => ({ ...c, ahead: nav.cum[c.at] - live.along })).find((c) => c.ahead > -20);
+  if (!next) return;
+  const key = `${nav.total}:${next.at}`;
+  if (next.ahead <= 0) return drawCameras(); // just passed: take its pin off the map
+  if (next.ahead > 800 || camerasWarned.has(key)) return;
+  camerasWarned.add(key);
+  const limit = next.limit ?? nav.limitAt(next.at);
+  speak(`Speed camera in ${spokenDistance(next.ahead, units)}.${limit && units === 'metric' ? ` The limit is ${limit}.` : ''}`);
+  if (tripSheet.isOpen()) return; // the trip menu is open; the voice is enough
+  const card = $('alert');
+  card.dataset.until = String(Date.now() + 10_000);
+  const sub = [formatDistance(next.ahead, units), limit ? `limit ${limit} km/h` : '', next.name].filter(Boolean).map(esc).join(' · ');
+  card.innerHTML = `<div class="alert-top"><span class="pin-ic" style="background:${REPORT_TYPES.camera.color}">${reportIcon('camera', 26)}</span><div><b>Speed camera ahead</b><small>${sub}</small></div></div>
+    <div class="alert-actions"><button class="btn ghost" data-a="dismiss">OK</button></div><div class="alert-timer"><i style="animation-duration:10000ms"></i></div>`;
+  card.classList.remove('hidden');
+  card.querySelector('[data-a]').onclick = () => card.classList.add('hidden');
 }
 
 // Turn arrow on the map for the next maneuver: from just before the turn to just after it
@@ -1297,6 +1337,7 @@ function startDrive() {
   offTrail = [];
   drawTrail();
   tollsSpoken.clear();
+  camerasWarned.clear();
   $('toll-chip').classList.add('hidden');
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
@@ -1368,6 +1409,7 @@ function driveTick(fix) {
   drawManeuverArrow();
   if (live.prompt) speak(live.prompt);
   checkTolls();
+  checkCameras();
   checkAlerts();
   if (share) pushShare();
 
@@ -1995,6 +2037,7 @@ function checkAlerts() {
   for (const r of onRoute) {
     const ahead = r.at - live.along;
     const status = alerted.get(r.id);
+    if (!status && r.type === 'camera' && (nav.route.cameras ?? []).some((c) => Math.abs(nav.cum[c.at] - r.at) < 150)) continue; // a mapped camera, warned about already
     if (!status && ahead > 0 && ahead < alertRange(r.type)) {
       alerted.set(r.id, 'ahead');
       showAlert(r, ahead);

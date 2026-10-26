@@ -355,6 +355,9 @@ small.hint { display: block; padding: 4px 0 0; }
 .report-pin .pin-ic { width: 34px; height: 34px; border: 2px solid #fff; }
 .report-pin .pin-ic svg { width: 19px; height: 19px; }
 .report-pin.mine .pin-ic { outline: 3px solid var(--primary); }
+.cam-pin { cursor: default; }
+.cam-pin .pin-ic { width: 28px; height: 28px; }
+.cam-pin .pin-ic svg { width: 16px; height: 16px; }
 .rc-head { display: flex; gap: 12px; align-items: center; padding: 10px 0; }
 .rc-head .pin-ic { width: 52px; height: 52px; }
 .rc-head b { font-size: 19px; display: block; }

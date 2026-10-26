@@ -18,7 +18,8 @@
     "test": "node --no-warnings --test test/*.test.js",
     "places": "python3 scripts/build-places.py",
     "predeploy": "node scripts/check-places.mjs && node scripts/app-version.mjs",
-    "construction": "python3 scripts/build-construction.py"
+    "construction": "python3 scripts/build-construction.py",
+    "cameras": "node scripts/build-cameras.mjs"
   },
   "devDependencies": {
     "wrangler": "4.151.3"

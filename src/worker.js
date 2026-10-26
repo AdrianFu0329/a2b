@@ -9,6 +9,7 @@ import {
 import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
 import { constructionTwins } from './lib/construction.js';
 import { liveTraffic, applyTraffic } from './lib/traffic.js';
+import { loadCameras, camerasAlong } from './lib/cameras.js';
 import { parkingNear } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
@@ -344,6 +345,10 @@ async function route(request, env, url) {
         const [, traffic] = await Promise.all([count('tomtom'), liveTraffic(env, r).catch(() => null)]);
         applyTraffic(r, traffic);
       }),
+      // Fixed speed cameras on each route, from the built list.
+      loadCameras(env.ASSETS)
+        .catch(() => [])
+        .then((cams) => routes.forEach((r) => (r.cameras = camerasAlong(r.coords, cams)))),
     ]);
     for (const r of routes) delete r.shapes;
     const plazas = routes.flatMap((r) => r.tolls.map((t) => [t, r.coords[t.at]]));

@@ -22,3 +22,12 @@ if (existsSync(roads)) {
   console.warn('\n⚠  No construction road data in public/construction/. Routes won\'t be checked for roadworks.');
   console.warn('   Build it first: pip install duckdb && npm run construction\n');
 }
+
+const cams = new URL('../public/cameras.json', import.meta.url);
+if (existsSync(cams)) {
+  const { built, count } = JSON.parse(readFileSync(cams, 'utf8'));
+  console.log(`Speed cameras: ${count.toLocaleString()}, built ${built}.`);
+} else {
+  console.warn('\n⚠  No speed camera list in public/cameras.json. Routes won\'t warn about fixed cameras.');
+  console.warn('   Build it first: npm run cameras\n');
+}
