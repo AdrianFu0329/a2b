@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Renders public/icon.svg to the PNG sizes phones want for the home screen. Run: node scripts/render-icons.mjs
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';

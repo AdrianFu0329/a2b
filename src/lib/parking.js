@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Car parks near a destination, for "Parking" in the trip menu. Photon finds the OpenStreetMap car parks
 // around the point (nearest first); one OpenStreetMap API call then fetches their tags, for whether they
 // charge, what kind they are and how many spaces they have. Private car parks are left out. A failing

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Roads that OpenStreetMap still shows as open right beside a road marked under construction. A new dual
 // carriageway is mapped as two one-way halves; mappers sometimes mark one half "under construction" and leave
 // the other as an ordinary road, so the router happily drives down it. A route that runs alongside a

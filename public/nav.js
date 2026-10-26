@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Turn-by-turn engine: snaps GPS fixes to the route, works out the next turn, ETA and what to say.
 // Pure logic (no DOM), so it runs in tests and in the Worker too.
 

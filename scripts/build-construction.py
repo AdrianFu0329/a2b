@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
 """Builds the list of roads under construction that A2B checks routes against (see src/lib/construction.js).
 
 Overture Maps' road network comes from OpenStreetMap and flags roads that are being built. This keeps those

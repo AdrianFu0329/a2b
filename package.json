@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Community-powered driving navigation in the browser: live routes, turn-by-turn voice, and road reports from other drivers.",
+  "author": "Thaqif Syarafuddin bin Roslan",
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",

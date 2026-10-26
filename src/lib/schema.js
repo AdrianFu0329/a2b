@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Database tables, created on first use so a fresh deploy needs no migration step.
 // Keep in sync with migrations/0001_init.sql (which the wrangler CLI path uses).
 const SCHEMA = `

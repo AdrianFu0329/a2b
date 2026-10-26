@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Loose text matching shared by the app, the Worker and scripts/build-places.py: case, accents and
 // apostrophes don't matter ("nandos" finds "Nando's", "cafe" finds "Café").
 

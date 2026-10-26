@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { twinStretches } from '../src/lib/construction.js';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Accounts: PBKDF2 password hashes and random session tokens (only their SHA-256 is stored).
 
 const ITERATIONS = 100_000; // the most Workers' WebCrypto allows for PBKDF2

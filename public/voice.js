@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Spoken directions, read by the phone's own speech voices (speechSynthesis): offline, any language.
 // Phones ship several voices and the default is often the most robotic, so the best-sounding one is picked
 // automatically and Settings lets you choose another. Voices differ between devices, so the choice is kept

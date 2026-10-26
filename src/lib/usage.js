@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Usage numbers for the owner's dashboard (Settings › Testing › Usage): who is using A2B, how busy it got and
 // whether people were turned away. Kept per day (Malaysia time) and only as counts plus one row per device
 // per day, so it stays tiny; rows older than USAGE_DAYS are cleared by the daily clean-up.

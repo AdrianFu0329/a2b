@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Toll plazas along a route. Valhalla says where the route passes a toll booth; what the booth is called,
 // what a car pays and how you can pay come from the booth's OpenStreetMap tags. Those are looked up once per
 // plaza and kept in D1, so routes don't wait on OpenStreetMap and its API isn't asked twice for the same booth.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Road reports: creating, merging duplicates, and the votes that keep them alive or remove them.
 
 import { REPORT_TYPES, isValidReport } from '../../public/report-types.js';
