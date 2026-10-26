@@ -16,10 +16,10 @@ Search a place, pick a route, and get spoken turn-by-turn directions, with road 
 
 <br>
 
-<img src="docs/screenshots/routes.webp" alt="Three routes to Putrajaya with drive times and toll counts" width="200">&nbsp;
-<img src="docs/screenshots/drive.webp" alt="Driving with the next turn, lane guidance and a 3D car" width="200">&nbsp;
-<img src="docs/screenshots/night.webp" alt="The night map while driving" width="200">&nbsp;
-<img src="docs/screenshots/parking.webp" alt="Car parks near the Petronas Towers" width="200">
+<img src="docs/screenshots/routes.webp" alt="Three routes to Putrajaya with drive times and toll counts" width="23%">&nbsp;
+<img src="docs/screenshots/drive.webp" alt="Driving with the next turn, lane guidance and a 3D car" width="23%">&nbsp;
+<img src="docs/screenshots/night.webp" alt="The night map while driving" width="23%">&nbsp;
+<img src="docs/screenshots/parking.webp" alt="Car parks near the Petronas Towers" width="23%">
 
 </div>
 
