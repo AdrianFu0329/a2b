@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { distance, bearing, angleDiff, decodePolyline, formatDistance, formatDuration, cumulative } from '../public/geo.js';
-import { Navigator, Simulator, pointAlong, pointAtDistance, reportsAlong, spokenDistance, sliceAlong } from '../public/nav.js';
+import { Navigator, Simulator, pointAlong, pointAtDistance, reportsAlong, spokenDistance, spokenCodes, sliceAlong } from '../public/nav.js';
 
 // An L-shaped test route: 1 km north, then 500 m east. Roughly 0.009° lat = 1 km.
 const A = [13.4, 52.5], B = [13.4, 52.509], C = [13.4074, 52.509];
@@ -168,4 +168,14 @@ test('sheets settle the way people expect', async () => {
   assert.equal(settle(true, 40, 0.1, 300), true);
   assert.equal(rubberBand(50, 0, 100), 50);
   assert.ok(rubberBand(-100, 0, 100) > -25, 'pulling past the end only stretches a little');
+});
+
+test('exit numbers and long road codes are read digit by digit', () => {
+  assert.equal(spokenCodes('Take the E3108 exit toward Shah Alam.'), 'Take the E three one zero eight exit toward Shah Alam.');
+  assert.equal(spokenCodes('Take exit 1601 on the left.'), 'Take exit one six zero one on the left.');
+  assert.equal(spokenCodes('Take exit 230A.'), 'Take exit two three zero A.');
+  assert.equal(spokenCodes('Keep left to take E2 toward Ipoh.'), 'Keep left to take E2 toward Ipoh.');
+  assert.equal(spokenCodes('Turn right onto FT50.'), 'Turn right onto FT50.');
+  assert.equal(spokenCodes('In 300 meters, turn right.'), 'In 300 meters, turn right.');
+  assert.equal(spokenCodes('Speed camera in 500 meters. The limit is 110.'), 'Speed camera in 500 meters. The limit is 110.');
 });

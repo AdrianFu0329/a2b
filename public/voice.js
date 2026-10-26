@@ -6,6 +6,7 @@
 // the built-in ones. Phones without him, like Android ones, use their best-sounding English voice.
 
 import { state } from './core.js';
+import { spokenCodes } from './nav.js';
 
 const QUALITY = /premium|enhanced|natural|neural|siri|wavenet|online/i;
 
@@ -31,7 +32,7 @@ export function speak(text, { force = false } = {}) {
   if (!text || (!state.settings.voice && !force) || !('speechSynthesis' in window)) return;
   try {
     const v = pickVoice();
-    const u = new SpeechSynthesisUtterance(text);
+    const u = new SpeechSynthesisUtterance(spokenCodes(text));
     if (v) u.voice = v;
     u.lang = v?.lang || 'en-GB';
     speechSynthesis.cancel();

@@ -222,6 +222,17 @@ export function spokenDistance(m, units = 'metric') {
   return `${n} ${word}${n === '1' || u === 'ft' ? '' : 's'}`;
 }
 
+// Exit numbers and road codes read digit by digit, as drivers say them: "exit 3108" and "E3108" become
+// "three one zero eight" rather than "three thousand one hundred and eight". Short ones like E2 or FT50 stay as
+// they are; distances and other plain numbers aren't touched.
+const DIGITS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+const digits = (n) => [...n].map((d) => DIGITS[d]).join(' ');
+export function spokenCodes(text) {
+  return String(text ?? '')
+    .replace(/\b(exit|keluar)(\s+)(\d{3,})([A-Z]?)\b/gi, (_, w, sp, n, x) => `${w}${sp}${digits(n)}${x ? ` ${x}` : ''}`)
+    .replace(/\b([A-Z]{1,3})(\d{3,})([A-Z]?)\b/g, (_, l, n, x) => `${l} ${digits(n)}${x ? ` ${x}` : ''}`);
+}
+
 function lowerFirst(s) {
   return s ? s[0].toLowerCase() + s.slice(1) : s;
 }
