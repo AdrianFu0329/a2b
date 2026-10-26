@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // The car on the map as a real 3D model (a chevron or a small car), drawn into the map with three.js through a
 // MapLibre custom layer, so it sits on the road in the map's own perspective. three.js is loaded on first use;
 // if it can't load or WebGL refuses, start() resolves false and the app keeps its flat arrow.

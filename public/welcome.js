@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // First visit: a short welcome (what A2B is, that it's a beta, and how to put it on the home screen), shown
 // once per device. Its "Let's go" is what asks for location, so the browser's prompt doesn't land on top of it.
 // Also hides the launch splash once the map is ready.

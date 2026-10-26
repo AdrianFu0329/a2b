@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Keeps this device's spot in A2B (see src/lib/presence.js) by checking in every couple of minutes, and
 // covers the app with a waiting screen when it's full, letting the driver in as soon as a spot opens.
 

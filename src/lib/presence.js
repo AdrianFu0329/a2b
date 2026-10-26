@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // How many people can use A2B at once. Routing and search run on free public servers that ask for fair use,
 // so only so many devices get a spot; the rest wait and are let in as spots free up. Accounts get priority:
 // guests can only take some of the spots, signed-in drivers can take any. Nobody already in loses their spot

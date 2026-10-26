@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Bottom sheets that follow the finger, like iPhone sheets. The gesture part (pointer tracking, tap vs
 // drag, flick speed) is shared; each sheet decides what "moving by dy pixels" means for it.
 

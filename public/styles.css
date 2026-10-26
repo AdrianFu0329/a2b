@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+   Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE). */
+
 :root {
   --bg: #ffffff;
   --bg-2: #f3f5f8;
@@ -432,6 +435,7 @@ small.hint { display: block; padding: 4px 0 0; }
 .leader.me { background: color-mix(in srgb, var(--primary) 10%, var(--bg)); }
 .about { padding: 8px 18px; display: grid; gap: 12px; color: var(--text); }
 .about p { color: var(--muted); }
+.about .about-credit { font-size: 12px; line-height: 1.5; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
 .about a { color: var(--accent-text); }
 
 .auth-form { display: grid; gap: 14px; padding: 18px 18px calc(24px + var(--safe-bottom)); align-content: start; max-width: 440px; }

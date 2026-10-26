@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
 """Builds A2B's offline-friendly place search data from Overture Maps (free, open data).
 
 Downloads Overture's places for one country, keeps the reasonably confident ones that are still open, and

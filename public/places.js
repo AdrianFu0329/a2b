@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Place search on the phone, from Overture Maps data built by scripts/build-places.py into /places/.
 // Shops and restaurants that OpenStreetMap lacks (e.g. many in Malaysia) are found here. Only the files
 // for the query's words, in the person's area and the areas around it, are downloaded, and the browser

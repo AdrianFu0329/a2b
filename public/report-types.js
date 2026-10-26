@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // What drivers can report. Shared by the app (menus, map pins) and the Worker (validation, lifetimes).
 // `life` is how long a report stays on the map (minutes) unless other drivers confirm or dismiss it.
 

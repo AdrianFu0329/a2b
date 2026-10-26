@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Shared drives with few requests: when the driver's phone sends an update, how often a viewer asks for one,
 // and how the viewer's map keeps the car moving between updates. Pure logic (no DOM), so it runs in tests.
 

@@ -61,7 +61,9 @@ never need the app's Cloudflare account or secrets.
 
 ## Licence and the contributor agreement
 
-A2B is licensed under the [GNU AGPL v3.0 or later](LICENSE), and it will stay free and open source.
+A2B is licensed under the [GNU AGPL v3.0 or later](LICENSE) with the additional terms in [NOTICE](NOTICE)
+(keeping the author credit, marking changed versions, and not using the A2B name or logo for them). It will stay
+free and open source. New source files start with the same two-line licence and copyright header as the others.
 
 Before your first pull request can be merged, you need to agree to the [Contributor License Agreement](CLA.md).
 In short: you keep the copyright to your work, and you give the maintainer a licence to use it, including the

@@ -218,9 +218,17 @@ copyright, and A2B stays open source.
 
 ## Licence and credits
 
-A2B is free software under the [GNU Affero General Public License v3.0 or later](LICENSE). You can use, study,
-change and share it. If you run a changed version for other people, over the internet included, you must offer them
-its source code under the same licence. The app links to its source from **About**.
+A2B was created by **Thaqif Syarafuddin bin Roslan**.
+Copyright © 2026 Thaqif Syarafuddin bin Roslan and the A2B contributors.
+
+A2B is free software under the [GNU Affero General Public License v3.0 or later](LICENSE), with the additional
+terms in [NOTICE](NOTICE). You can use, study, change and share it. If you run a changed version for other people,
+over the internet included, you must offer them its source code under the same licence, and:
+
+- keep the credit **"Based on A2B by Thaqif Syarafuddin bin Roslan"** with a link to this repository, in your app's
+  About screen and in your README
+- mark your version as changed, and don't present it as the original A2B
+- use your own name and icon: the A2B name and logo aren't licensed for other versions
 
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL). Places and roads under
 construction from the [Overture Maps Foundation](https://overturemaps.org) (see `public/places/NOTICE.txt` once built).

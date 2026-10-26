@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Smooth car movement between GPS fixes. Fixes arrive about once a second; drawing the car only at
 // each fix makes it jump. A Glide moves the shown position from where the car is drawn now to the
 // newest fix over roughly the time until the next one, along the road when the car is on a route.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
+
 // Prints the newest Overture Maps release that has both places and road segments published, e.g. 2026-11-18.0.
 // Used by the monthly data update (see README, Monthly updates); reads Overture's public S3 bucket listing.
 
