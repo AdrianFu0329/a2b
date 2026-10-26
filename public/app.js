@@ -18,6 +18,7 @@ import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
 import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe } from './panels.js';
 import { startPresence, checkIn } from './presence.js';
 import { welcome, hideSplash } from './welcome.js';
+import { watchUpdates, updateCheckpoint } from './update.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -212,6 +213,11 @@ async function boot() {
     }
   }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  watchUpdates({
+    // On the map with nothing open, so a refresh interrupts nothing.
+    idle: () => mode === 'browse' && [...OVERLAYS, 'menu', 'watch', 'gate', 'welcome'].every((id) => $(id).classList.contains('hidden')),
+    driving: () => mode === 'drive',
+  });
 }
 
 async function onUserChanged() {
@@ -1668,6 +1674,7 @@ async function endDrive(arrived) {
     destMarker?.remove();
     map.easeTo({ pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 600 });
   }
+  updateCheckpoint(); // an update that came out during the trip
 }
 
 async function requestWakeLock() {
