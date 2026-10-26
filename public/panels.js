@@ -4,7 +4,7 @@
 // "My A2B" menu, sign in / sign up, settings, saved places, leaderboard and about.
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
-import { voiceChoice, setVoiceChoice, deviceVoices, isGoodVoice } from './voice.js';
+import { pickVoice } from './voice.js';
 import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
 import { onlineLine } from './presence.js';
 
@@ -182,27 +182,13 @@ function openPanel(title, html) {
   return $('panel-body');
 }
 
-// This phone's voices, best first. Tapping one picks it and plays a sample. Voices differ per device, so the
-// choice is kept on this device only.
+// The voice directions are read in (see voice.js), with a sample to hear it.
 function renderVoiceList() {
   const box = $('voice-list');
-  const now = voiceChoice();
-  const row = (choice, name, note) =>
-    `<button class="set-row voice-row${choice === now ? ' on' : ''}" data-voice="${esc(choice)}"><span>${esc(name)}<small>${esc(note)}</small></span></button>`;
-  const phone = deviceVoices().slice(0, 8);
-  const iphone = /iphone|ipad/i.test(navigator.userAgent);
-  box.innerHTML = `
-    ${row('auto', 'Automatic', 'The best voice this phone has')}
-    ${phone.map((v) => row(v.name, v.name, `${v.lang}${isGoodVoice(v) ? ' · high quality' : ''}`)).join('')}
-    ${iphone ? '<p class="hint" style="padding:6px 18px 2px">For a better offline voice, download an Enhanced or Premium one in iPhone Settings › Accessibility › Spoken Content › Voices, then pick it here.</p>' : ''}`;
-  box.onclick = (e) => {
-    const b = e.target.closest('[data-voice]');
-    if (!b) return;
-    setVoiceChoice(b.dataset.voice);
-    box.querySelectorAll('[data-voice]').forEach((x) => x.classList.toggle('on', x === b));
-    const sample = state.settings.units === 'imperial' ? 'In a quarter mile, turn right. Then keep left.' : 'In 300 metres, turn right. Then keep left.';
-    speak(sample, { force: true, choice: b.dataset.voice });
-  };
+  const v = pickVoice();
+  const name = !v ? 'No voice on this phone' : /\bdaniel\b/i.test(v.name) ? 'Daniel' : v.name;
+  box.innerHTML = `<button class="set-row" id="voice-sample"><span>${esc(name)}<small>${v ? 'Tap to hear a sample' : 'Spoken directions need a text-to-speech voice'}</small></span></button>`;
+  $('voice-sample').onclick = () => speak(state.settings.units === 'imperial' ? 'In a quarter mile, turn right. Then keep left.' : 'In 300 metres, turn right. Then keep left.', { force: true });
 }
 
 function toggleRow(key, label, sub = '') {

@@ -146,7 +146,7 @@ public/                 the web app
   nav.js                turn-by-turn engine: GPS snapping, next turn, ETA, voice cues, off route
   motion.js             smooth car movement between GPS fixes
   vehicle3d.js          the 3D chevron and car (three.js)
-  voice.js              choosing and using the phone's voices
+  voice.js              spoken directions in the Daniel voice (or the phone's best English one)
   places.js, text.js    shop search on the phone, and text matching
   map-themes.js         map colours for day and night
   presence.js           keeping a spot, and the waiting screen when it's full
@@ -205,7 +205,7 @@ test/                   node --test: the navigation engine and the whole API on 
   spot on [openstreetmap.org](https://www.openstreetmap.org) fixes it for everyone.
 - **Shop listings can be noisy.** Some Overture entries are pinned in the wrong place; well-known landmarks are put
   first to work around it.
-- **Voices** are your phone's built-in text-to-speech voices.
+- **Voices** are your phone's built-in text-to-speech: Daniel on iPhones, iPads and Macs, the best English voice elsewhere.
 - **50 drivers at a time** during the beta, because of the free servers.
 
 ## Ideas for later

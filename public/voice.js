@@ -1,45 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
 
-// Spoken directions, read by the phone's own speech voices (speechSynthesis): offline, any language.
-// Phones ship several voices and the default is often the most robotic, so the best-sounding one is picked
-// automatically and Settings lets you choose another. Voices differ between devices, so the choice is kept
-// on this device: a voice name, or 'auto'.
+// Spoken directions, read by the phone's own speech voices (speechSynthesis): offline, no download.
+// One voice for now: Daniel (British English, built into iPhones, iPads and Macs), the most natural-sounding of
+// the built-in ones. Phones without him, like Android ones, use their best-sounding English voice.
 
-import { state, local } from './core.js';
+import { state } from './core.js';
 
 const QUALITY = /premium|enhanced|natural|neural|siri|wavenet|online/i;
 
-export function voiceChoice() {
-  return local.get('voiceName') ?? 'auto';
-}
-
-export function setVoiceChoice(name) {
-  local.set('voiceName', name);
-}
-
-// The phone's voices for the prompt language, best-sounding first.
-export function deviceVoices() {
-  if (!('speechSynthesis' in window)) return [];
+// The voice directions are read in, or null when the phone has none.
+export function pickVoice() {
+  if (!('speechSynthesis' in window)) return null;
+  const voices = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
+  const better = (a, b) => QUALITY.test(b.name) - QUALITY.test(a.name);
+  const daniel = voices.filter((v) => /\bdaniel\b/i.test(v.name)).sort(better)[0];
+  if (daniel) return daniel;
   const lang = (navigator.language || 'en-US').toLowerCase();
-  const base = lang.slice(0, 2);
-  const score = (v) => {
-    const l = v.lang.toLowerCase().replace('_', '-');
-    let s = 0;
-    if (l === lang) s += 4;
-    if (QUALITY.test(v.name)) s += 6;
-    if (/google/i.test(v.name)) s += 3; // Chrome's network voices sound far better than the built-in ones
-    if (!v.localService) s += 1;
-    if (v.default) s += 1;
-    return s;
-  };
-  return speechSynthesis
-    .getVoices()
-    .filter((v) => v.lang.toLowerCase().replace('_', '-').startsWith(base))
-    .sort((a, b) => score(b) - score(a) || a.name.localeCompare(b.name));
+  const score = (v) => (v.lang.toLowerCase().replace('_', '-') === lang ? 4 : 0) + (QUALITY.test(v.name) ? 6 : 0) + (/google/i.test(v.name) ? 3 : 0) + (v.default ? 1 : 0);
+  return voices.sort((a, b) => score(b) - score(a))[0] ?? null;
 }
-
-export const isGoodVoice = (v) => QUALITY.test(v.name) || /google/i.test(v.name);
 
 // Voice lists load late on some browsers; ask early so the first direction has them.
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -47,14 +27,13 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   speechSynthesis.addEventListener?.('voiceschanged', () => speechSynthesis.getVoices());
 }
 
-export function speak(text, { force = false, choice = voiceChoice() } = {}) {
+export function speak(text, { force = false } = {}) {
   if (!text || (!state.settings.voice && !force) || !('speechSynthesis' in window)) return;
   try {
-    const voices = deviceVoices();
+    const v = pickVoice();
     const u = new SpeechSynthesisUtterance(text);
-    const v = (choice !== 'auto' && voices.find((x) => x.name === choice)) || voices[0];
     if (v) u.voice = v;
-    u.lang = v?.lang || navigator.language || 'en-US';
+    u.lang = v?.lang || 'en-GB';
     speechSynthesis.cancel();
     speechSynthesis.speak(u);
   } catch {}
