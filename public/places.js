@@ -93,8 +93,8 @@ export async function searchNearby(q, near) {
 //   Before all of them: OpenStreetMap's best landmark for the query, when its name starts like the query
 //   (a sight or venue, else a town, else a station; see photonToPlace). The
 //   other search matches a landmark's other names too ("Petronas Towers" for "petronas twin towers").
-//   Overture places carrying that landmark's name but pinned more than a kilometre from it (3 km for a town)
-//   are dropped:
+//   Overture places carrying that landmark's name but pinned more than a kilometre from it (3 km for a town),
+//   or named with the query but 1.5 km from everything OpenStreetMap has by that name, are dropped:
 //   they're mostly check-in pages people made elsewhere ("Petronas Twin Tower" in Kota Kinabalu).
 export function mergeResults(server, local, q, near) {
   const dup = (a, b) => words(a.name).join(' ') === words(b.name).join(' ') && distance([a.lng, a.lat], [b.lng, b.lat]) < 150;
@@ -104,7 +104,12 @@ export function mergeResults(server, local, q, near) {
   const landmark = ['place', 'area', 'station'].map((k) => candidates.find((p) => p.landmark === k)).find(Boolean);
   const named = landmark ? words(landmark.name).filter((w) => w.length >= 3) : [];
   const reach = landmark?.landmark === 'area' ? 3000 : 1000; // a town is a few km across
-  const misplaced = (l) => named.length > 0 && named.every((w) => words(l.name).includes(w)) && distance([l.lng, l.lat], [landmark.lng, landmark.lat]) > reach;
+  // Where OpenStreetMap has places named like the query ("KLCC Park", "LRT KLCC", "KLCC Convention Centre").
+  const anchors = landmark ? server.filter((p) => matchesWordStarts(p.name, q)) : [];
+  const within = (l, ps, m) => ps.some((p) => distance([l.lng, l.lat], [p.lng, p.lat]) <= m);
+  const misplaced = (l) =>
+    (named.length > 0 && named.every((w) => words(l.name).includes(w)) && !within(l, [landmark], reach)) ||
+    (anchors.length > 0 && matchesWordStarts(l.name, q) && !within(l, anchors, Math.max(reach, 1500)));
   const all = [...server, ...local.filter((l) => !server.some((s) => dup(s, l)) && !misplaced(l))];
   const tier = (p) => {
     if (p === landmark) return -1;

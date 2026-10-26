@@ -91,3 +91,20 @@ test('a sight beats a town of the same name, and a town beats a station', () => 
   assert.equal(r[0].landmark, 'place');
   assert.ok(!r.some((p) => p.name === 'Temple Hindu Batu Caves'));
 });
+
+test('places named after a landmark but pinned far from it are dropped ("klcc")', () => {
+  const user = [101.6869, 3.139]; // ~3.5 km from KLCC
+  const server = [
+    { name: 'KLCC Park', address: 'Kampung Cendana', lat: 3.1553, lng: 101.7139, landmark: 'place' },
+    { name: 'LRT - KLCC', address: 'Kuala Lumpur', lat: 3.1589, lng: 101.7135, landmark: 'station' },
+  ];
+  const local = [
+    { name: 'Twin Tower , KLCC', address: 'Kuala Lumpur', lat: 3.1415, lng: 101.6887 }, // 350 m from the driver
+    { name: 'Suria KLCC Malaysia', address: 'Suria KLCC', lat: 3.1462, lng: 101.6911 },
+    { name: "Nando's", address: 'Suria KLCC', lat: 3.1582, lng: 101.7121 }, // really there: kept
+  ];
+  const names = mergeResults(server, local, 'klcc', user).map((p) => p.name);
+  assert.equal(names[0], 'KLCC Park');
+  assert.ok(!names.includes('Twin Tower , KLCC') && !names.includes('Suria KLCC Malaysia'));
+  assert.ok(mergeResults(server, local, 'nandos klcc', user).some((p) => p.name === "Nando's"));
+});
