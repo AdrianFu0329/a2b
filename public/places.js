@@ -90,11 +90,24 @@ export async function searchNearby(q, near) {
 //      ("nandos eco grandeur" -> Nando's, Ruang Niaga Eco Grandeur)
 //   2. all of the query is somewhere in the name or address
 //   3. the rest (e.g. the Eco Grandeur suburb itself)
+//   Before all of them: OpenStreetMap's best landmark for the query, when its name starts like the query
+//   (a sight or venue, else a town, else a station; see photonToPlace). The
+//   other search matches a landmark's other names too ("Petronas Towers" for "petronas twin towers").
+//   Overture places carrying that landmark's name but pinned more than a kilometre from it (3 km for a town)
+//   are dropped:
+//   they're mostly check-in pages people made elsewhere ("Petronas Twin Tower" in Kota Kinabalu).
 export function mergeResults(server, local, q, near) {
   const dup = (a, b) => words(a.name).join(' ') === words(b.name).join(' ') && distance([a.lng, a.lat], [b.lng, b.lat]) < 150;
-  const all = [...server, ...local.filter((l) => !server.some((s) => dup(s, l)))];
   const first = words(q)[0] ?? '';
+  // A sight or venue before a town of that name, and a town before a station named after it.
+  const candidates = server.filter((p) => p.landmark && matchesWordStarts(p.name, first));
+  const landmark = ['place', 'area', 'station'].map((k) => candidates.find((p) => p.landmark === k)).find(Boolean);
+  const named = landmark ? words(landmark.name).filter((w) => w.length >= 3) : [];
+  const reach = landmark?.landmark === 'area' ? 3000 : 1000; // a town is a few km across
+  const misplaced = (l) => named.length > 0 && named.every((w) => words(l.name).includes(w)) && distance([l.lng, l.lat], [landmark.lng, landmark.lat]) > reach;
+  const all = [...server, ...local.filter((l) => !server.some((s) => dup(s, l)) && !misplaced(l))];
   const tier = (p) => {
+    if (p === landmark) return -1;
     const full = matchesWordStarts(`${p.name} ${p.address ?? ''}`, q);
     if (full && matchesWordStarts(p.name, first)) return 0;
     return full ? 1 : 2;

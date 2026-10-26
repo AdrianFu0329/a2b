@@ -64,3 +64,30 @@ test('merging: best match first, then nearest, without duplicates', () => {
   const far = [{ name: 'Starbucks', address: 'Rawang', lat: 3.29, lng: 101.53 }];
   assert.equal(mergeResults(near, far, 'starbucks', ECO)[0].address, 'Eco Grandeur', 'a closer server result stays above');
 });
+
+test('a landmark comes first, and copies of it pinned far away are dropped', () => {
+  const sentral = [101.6869, 3.139];
+  const server = [{ name: 'Petronas Towers', address: 'Kuala Lumpur', lat: 3.158, lng: 101.7112, category: 'attraction', landmark: 'place' }];
+  const local = [
+    { name: 'PETRONAS Cari Gali Sdn Bhd, XTG PETRONAS Twin Towers', address: 'Level 16, Tower 2 KLCC', lat: 3.1395, lng: 101.687 }, // 4 km off, near the driver
+    { name: 'Petronas Twin Towers Gift Shop', address: 'Suria KLCC', lat: 3.1581, lng: 101.7113 },
+  ];
+  const r = mergeResults(server, local, 'petronas twin towers', sentral);
+  assert.deepEqual(r.map((p) => p.name), ['Petronas Towers', 'Petronas Twin Towers Gift Shop']);
+  // A landmark the query doesn't start with stays where the text match puts it.
+  const klcc = [{ name: 'Suria KLCC', address: 'Kuala Lumpur', lat: 3.158, lng: 101.712, landmark: 'place' }];
+  const nandos = [{ name: "Nando's", address: 'Suria KLCC', lat: 3.1582, lng: 101.7121 }];
+  assert.equal(mergeResults(klcc, nandos, 'nandos klcc', sentral)[0].name, "Nando's");
+});
+
+test('a sight beats a town of the same name, and a town beats a station', () => {
+  const server = [
+    { name: 'Batu Caves', address: '', lat: 3.2378, lng: 101.6812, landmark: 'station' },
+    { name: 'Batu Caves', address: 'Gombak', lat: 3.2369, lng: 101.6833, landmark: 'area' },
+    { name: 'Batu Caves temple', address: '', lat: 3.2376, lng: 101.6832, landmark: 'place' },
+  ];
+  const local = [{ name: 'Temple Hindu Batu Caves', address: 'Kuala Lumpur', lat: 3.149, lng: 101.69 }]; // pinned 10 km away
+  const r = mergeResults(server, local, 'batu caves', [101.6869, 3.139]);
+  assert.equal(r[0].landmark, 'place');
+  assert.ok(!r.some((p) => p.name === 'Temple Hindu Batu Caves'));
+});

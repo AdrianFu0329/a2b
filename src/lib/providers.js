@@ -122,6 +122,18 @@ export async function reverseGeocode(env, { lat, lng }) {
   return f ? photonToPlace(f) : { name: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, address: '', lat, lng, category: 'pin' };
 }
 
+// Well-known places in OpenStreetMap. The app puts the best of these first, ahead of shop listings that
+// merely mention it (see mergeResults in public/places.js).
+const LANDMARK_KEYS = new Set(['tourism', 'historic']);
+const LANDMARK_VALUES = new Set([
+  'leisure:park', 'leisure:stadium', 'leisure:nature_reserve', 'shop:mall', 'amenity:place_of_worship', 'amenity:university',
+  'aeroway:aerodrome', 'building:skyscraper', 'man_made:tower', 'landuse:religious',
+]);
+const STATIONS = new Set(['railway:station', 'railway:stop', 'railway:halt']);
+// Towns and suburbs count too, as areas: they're a few km across.
+const AREA_LANDMARKS = new Set(['city', 'town', 'village', 'suburb', 'quarter', 'neighbourhood']);
+const NOT_LANDMARKS = new Set(['hotel', 'motel', 'hostel', 'guest_house', 'apartment', 'chalet', 'information', 'camp_site']);
+
 export function photonToPlace(f) {
   const p = f.properties ?? {};
   const [lng, lat] = f.geometry.coordinates;
@@ -130,7 +142,11 @@ export function photonToPlace(f) {
   const parts = [p.name && street && street !== p.name ? street : null, p.district || p.locality, p.city, p.state, p.country]
     .filter(Boolean)
     .filter((x, i, a) => x !== name && a.indexOf(x) === i);
-  return { name, address: parts.join(', '), lat, lng, category: p.osm_value || p.type || 'place' };
+  const kv = `${p.osm_key}:${p.osm_value}`;
+  const landmark = p.osm_key === 'place' && AREA_LANDMARKS.has(p.osm_value) ? 'area'
+    : STATIONS.has(kv) ? 'station'
+    : (LANDMARK_KEYS.has(p.osm_key) && !NOT_LANDMARKS.has(p.osm_value)) || LANDMARK_VALUES.has(kv) ? 'place' : null;
+  return { name, address: parts.join(', '), lat, lng, category: p.osm_value || p.type || 'place', ...(landmark && p.name ? { landmark } : {}) };
 }
 
 function dedupe(places) {
