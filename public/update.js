@@ -21,6 +21,9 @@ let announced = false;
 let idle = () => false;
 let driving = () => false;
 
+// The version this page was loaded with (null without a version file), sent along with feedback.
+export const appVersion = () => mine;
+
 async function latest() {
   try {
     const res = await fetch('/version.json', { cache: 'no-store' });

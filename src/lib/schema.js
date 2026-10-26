@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS closure_blocks (report_id INTEGER PRIMARY KEY, lat RE
 CREATE TABLE IF NOT EXISTS presence (device TEXT PRIMARY KEY, user_id INTEGER, admitted INTEGER NOT NULL, last_seen INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS presence_seen ON presence (last_seen);
 CREATE TABLE IF NOT EXISTS usage_daily (day TEXT PRIMARY KEY, peak_active INTEGER NOT NULL DEFAULT 0, peak_at INTEGER, signups INTEGER NOT NULL DEFAULT 0, routes INTEGER NOT NULL DEFAULT 0, searches INTEGER NOT NULL DEFAULT 0, tomtom INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS usage_devices (day TEXT NOT NULL, device TEXT NOT NULL, account INTEGER NOT NULL DEFAULT 0, turned_away INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, device))
+CREATE TABLE IF NOT EXISTS usage_devices (day TEXT NOT NULL, device TEXT NOT NULL, account INTEGER NOT NULL DEFAULT 0, turned_away INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, device));
+CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY, user_id INTEGER, device TEXT, message TEXT NOT NULL, app TEXT, ua TEXT, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS feedback_device ON feedback (device, created_at)
 `;
 
 let ready = null;

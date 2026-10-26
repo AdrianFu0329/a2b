@@ -513,6 +513,38 @@ test('testing tools are flagged only for accounts in TESTER_EMAILS', async () =>
   }
 });
 
+test('feedback: anyone can send it, only the owner can read it and mark it done', async () => {
+  const guest = client('feedback-guest-1');
+  assert.equal((await guest('POST', '/api/feedback', { message: ' ' })).status, 400, 'empty feedback is refused');
+  assert.equal((await guest('POST', '/api/feedback', { message: 'Route to KLCC took a closed road', app: 'abc123' })).status, 201);
+  const fran = client('feedback-fran-1');
+  await fran('POST', '/api/auth/signup', { email: 'fran@test.com', password: 'password8', name: 'Fran' });
+  assert.equal((await fran('POST', '/api/feedback', { message: 'Love the speed camera alerts!' })).status, 201);
+
+  const owner = client();
+  await owner('POST', '/api/auth/signup', { email: 'inbox@test.com', password: 'password9', name: 'Owner' });
+  assert.equal((await owner('GET', '/api/feedback')).status, 404, 'no testers set: nobody can read it');
+  env.TESTER_EMAILS = 'inbox@test.com';
+  try {
+    assert.equal((await fran('GET', '/api/feedback')).status, 404, 'other accounts cannot read it');
+    assert.equal((await guest('GET', '/api/feedback')).status, 404);
+    const { feedback } = (await owner('GET', '/api/feedback')).body;
+    assert.deepEqual(feedback.map((f) => [f.message, f.name, f.email, f.app]), [
+      ['Love the speed camera alerts!', 'Fran', 'fran@test.com', null],
+      ['Route to KLCC took a closed road', null, null, 'abc123'],
+    ]);
+    assert.equal((await fran('DELETE', `/api/feedback/${feedback[0].id}`)).status, 404, 'only the owner marks it done');
+    await owner('DELETE', `/api/feedback/${feedback[0].id}`);
+    assert.equal((await owner('GET', '/api/feedback')).body.feedback.length, 1);
+  } finally {
+    delete env.TESTER_EMAILS;
+  }
+
+  for (let i = 1; i < 10; i++) await guest('POST', '/api/feedback', { message: `Idea number ${i}` });
+  const more = await guest('POST', '/api/feedback', { message: 'One more idea' });
+  assert.equal(more.status, 429, 'ten a day per device');
+});
+
 test('an overloaded routing server reads as busy, not as no route', async () => {
   routingDown = true;
   try {

@@ -89,6 +89,38 @@ async function route(request, env, url) {
     return json(await usage.report(limits(env)));
   }
 
+  // ---------- Feedback ----------
+  // From Settings › Feedback, with or without an account; read by the owner in Settings › Testing.
+  if (path === '/api/feedback' && method === 'POST') {
+    const body = await readJson(request);
+    const message = String(body.message ?? '').trim().slice(0, FEEDBACK_MAX);
+    if (message.length < 3) throw httpError('Write a few words first.', 400);
+    const who = user ? ['user_id = ?', user.id] : validDevice(device) ? ['device = ?', device] : null;
+    if (!who) throw httpError('Missing device id.', 400);
+    const sent = await db.prepare(`SELECT COUNT(*) AS n FROM feedback WHERE ${who[0]} AND created_at > ?`).bind(who[1], Date.now() - 86400_000).first();
+    if (sent.n >= FEEDBACK_PER_DAY) throw httpError("That's a lot of feedback for one day, thank you! Try again tomorrow.", 429);
+    await db
+      .prepare('INSERT INTO feedback (user_id, device, message, app, ua, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(user?.id ?? null, validDevice(device) ? device : null, message, String(body.app ?? '').slice(0, 20) || null, (request.headers.get('user-agent') ?? '').slice(0, 300) || null, Date.now())
+      .run();
+    return json({ ok: true }, 201);
+  }
+
+  if (path === '/api/feedback' && method === 'GET') {
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
+    const rows = await db
+      .prepare('SELECT f.id, f.message, f.app, f.ua, f.created_at, u.name, u.email FROM feedback f LEFT JOIN users u ON u.id = f.user_id ORDER BY f.created_at DESC LIMIT 200')
+      .all();
+    return json({ feedback: rows.results });
+  }
+
+  const doneFeedback = path.match(/^\/api\/feedback\/(\d+)$/);
+  if (doneFeedback && method === 'DELETE') {
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
+    await db.prepare('DELETE FROM feedback WHERE id = ?').bind(Number(doneFeedback[1])).run();
+    return json({ ok: true });
+  }
+
   // ---------- Accounts ----------
   if (path === '/api/auth/signup' && method === 'POST') {
     const body = await readJson(request);
@@ -160,6 +192,7 @@ async function route(request, env, url) {
       db.prepare('DELETE FROM places WHERE user_id = ?').bind(u.id),
       db.prepare('DELETE FROM trips WHERE user_id = ?').bind(u.id),
       db.prepare('DELETE FROM votes WHERE user_id = ?').bind(u.id),
+      db.prepare('DELETE FROM feedback WHERE user_id = ?').bind(u.id),
       db.prepare('UPDATE reports SET removed = 1 WHERE user_id = ?').bind(u.id),
       db.prepare("UPDATE users SET email = 'deleted-' || id || '@invalid', name = 'Former driver', pass_hash = '', pass_salt = '', home = NULL, work = NULL WHERE id = ?").bind(u.id),
     ]);
@@ -444,6 +477,9 @@ async function withSession(request, db, row, status) {
 
 // Testing tools (demo drive) are for the accounts listed in the TESTER_EMAILS secret, comma separated
 // (`wrangler secret put TESTER_EMAILS`), so the addresses never ship in the code.
+const FEEDBACK_MAX = 2000; // characters
+const FEEDBACK_PER_DAY = 10; // per account, or per device without one
+
 function isTester(env, user) {
   const list = String(env.TESTER_EMAILS ?? '').split(',').map((e) => normalizeEmail(e)).filter(Boolean);
   return list.includes(normalizeEmail(user.email));

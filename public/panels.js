@@ -5,6 +5,7 @@
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
 import { pickVoice } from './voice.js';
+import { appVersion } from './update.js';
 import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
 import { onlineLine } from './presence.js';
 
@@ -235,8 +236,12 @@ export function openSettings() {
       <button class="set-row" id="s-pass"><span>Change password</span></button>
       <button class="set-row" id="s-delete" style="color:var(--danger)"><span>Delete account</span></button>
     </div>` : ''}
+    <div class="set-group"><h3>Feedback</h3>
+      <button class="set-row" id="s-feedback"><span>Send feedback<small>Ideas, bugs, a wrong road or a missing place. It goes straight to the developer.</small></span></button>
+    </div>
     ${state.tester ? `<div class="set-group"><h3>Testing</h3>
       <button class="set-row" id="s-usage"><span>Usage<small>Who's on A2B now, and the last two weeks</small></span></button>
+      <button class="set-row" id="s-inbox"><span>Feedback<small>What drivers sent from Settings</small></span></button>
       <label class="set-row"><span>Demo drive<small>Simulate GPS along the route. Handy for trying A2B at a desk.</small></span><input type="checkbox" class="switch" id="s-sim" ${state.simulate ? 'checked' : ''}></label>
       <div class="set-row${state.simulate ? '' : ' hidden'}" id="s-sim-speed-row"><span>Demo speed<small>How fast the demo car drives</small></span><div class="choice" id="s-sim-speed">${[1, 2, 4, 8]
         .map((v) => `<button data-v="${v}" class="${local.get('simSpeed', 1) === v ? 'on' : ''}">${v}×</button>`)
@@ -282,6 +287,7 @@ export function openSettings() {
       $('s-sim-speed-row').classList.toggle('hidden', !state.simulate);
     };
     $('s-usage').onclick = openUsage;
+    $('s-inbox').onclick = openInbox;
     // Testing aid: applies straight away, also to a demo drive already under way.
     $('s-sim-speed').onclick = (e) => {
       const b = e.target.closest('button');
@@ -291,6 +297,7 @@ export function openSettings() {
       ctx.setSimSpeed(Number(b.dataset.v));
     };
   }
+  $('s-feedback').onclick = openFeedback;
   $('s-home').onclick = () => homeWorkAction('home');
   $('s-work').onclick = () => homeWorkAction('work');
   if (u) {
@@ -398,6 +405,60 @@ async function openLeaders() {
   } catch (e) {
     body.innerHTML = `<p class="hint" style="padding:12px 18px">${esc(e.message)}</p>`;
   }
+}
+
+// Feedback for the developer. Without an account it's anonymous; with one, the name and email go along so
+// there's a way to reply.
+function openFeedback() {
+  const u = state.user;
+  const body = openPanel('Send feedback', `<div class="feedback">
+    <p class="hint">What's working, what isn't, and what you'd like to see. A wrong turn or a missing place? Say where.</p>
+    <textarea id="fb-text" class="field" maxlength="2000" rows="7" placeholder="Type your feedback…"></textarea>
+    <p class="hint fb-who">${u ? `Sent with your name and email (${esc(u.email)}), so the developer can reply.` : 'Sent without your name. Log in first if you\'d like a reply.'}</p>
+    <button class="btn primary" id="fb-send" disabled>Send</button>
+  </div>`);
+  const text = $('fb-text');
+  const send = $('fb-send');
+  text.oninput = () => (send.disabled = text.value.trim().length < 3);
+  send.onclick = async () => {
+    send.disabled = true;
+    try {
+      await api('/api/feedback', { method: 'POST', body: { message: text.value, app: appVersion() } });
+      body.innerHTML = '<div class="feedback"><p class="fb-done">Thank you! 🙏</p><p class="hint">Your feedback has been sent to the developer.</p></div>';
+    } catch (e) {
+      toast(e.message);
+      send.disabled = false;
+    }
+  };
+  setTimeout(() => text.focus(), 300);
+}
+
+// The owner's feedback inbox (GET /api/feedback is only answered for tester accounts). Done removes one.
+async function openInbox() {
+  const body = openPanel('Feedback', '<p class="hint" style="padding:12px 18px">Loading…</p>');
+  try {
+    const { feedback } = await api('/api/feedback');
+    const device = (ua = '') => (/iphone|ipad/i.test(ua) ? 'iPhone' : /android/i.test(ua) ? 'Android' : /mac/i.test(ua) ? 'Mac' : /windows/i.test(ua) ? 'Windows' : 'Other');
+    const when = (ms) => new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+    body.innerHTML = feedback.length
+      ? feedback
+        .map((f) => `<div class="fb-item" data-id="${f.id}">
+          <p>${esc(f.message)}</p>
+          <small>${f.email ? `${esc(f.name)} · <a href="mailto:${esc(f.email)}?subject=${encodeURIComponent('Your A2B feedback')}">${esc(f.email)}</a>` : 'Guest'} · ${esc(when(f.created_at))} · ${esc(device(f.ua ?? ''))}${f.app ? ` · ${esc(f.app)}` : ''}</small>
+          <button class="btn ghost" data-done>Done</button>
+        </div>`)
+        .join('')
+      : '<p class="hint" style="padding:12px 18px">No feedback yet.</p>';
+    body.onclick = async (e) => {
+      const item = e.target.closest('[data-done]')?.closest('.fb-item');
+      if (!item) return;
+      try {
+        await api(`/api/feedback/${item.dataset.id}`, { method: 'DELETE' });
+        item.remove();
+        if (!body.querySelector('.fb-item')) body.innerHTML = '<p class="hint" style="padding:12px 18px">All done.</p>';
+      } catch (err) { toast(err.message); }
+    };
+  } catch (e) { body.innerHTML = `<p class="hint" style="padding:12px 18px">${esc(e.message)}</p>`; }
 }
 
 // The owner's usage dashboard (GET /api/stats is only answered for tester accounts). Refreshes while open.

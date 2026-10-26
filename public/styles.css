@@ -181,6 +181,16 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--trip-keep
 small.hint { display: block; padding: 4px 0 0; }
 .error { color: var(--danger); font-size: 14px; }
 .field { width: 100%; height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg-2); padding: 0 14px; margin-top: 12px; }
+textarea.field { height: auto; padding: 12px 14px; resize: vertical; font: inherit; line-height: 1.4; color: var(--text); }
+.feedback { padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+.feedback .btn { width: 100%; }
+.feedback .fb-who { font-size: 13px; }
+.feedback .fb-done { font-size: 22px; font-weight: 800; margin: 18px 0 0; }
+.fb-item { padding: 14px 18px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.fb-item p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fb-item small { color: var(--muted); }
+.fb-item small a { color: var(--accent-text); }
+.fb-item .btn { justify-self: end; padding: 6px 16px; min-height: 0; }
 
 /* ---------- Search ---------- */
 .search-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
