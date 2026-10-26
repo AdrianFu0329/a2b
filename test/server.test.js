@@ -10,6 +10,7 @@ import { extendedExpiry, shouldRemove } from '../src/lib/reports.js';
 import { buildRouteRequest, photonToPlace, lanes } from '../src/lib/providers.js';
 import { applyTraffic } from '../src/lib/traffic.js';
 import { camerasAlong } from '../src/lib/cameras.js';
+import { parkingQuery } from '../src/lib/parking.js';
 import { cameraBearing } from '../scripts/build-cameras.mjs';
 import { REPORT_TYPES } from '../public/report-types.js';
 import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
@@ -412,6 +413,30 @@ test('search and reverse geocoding', async () => {
   assert.equal((await client()('GET', '/api/search?q=a')).body.places.length, 0);
   const rev = await client()('GET', '/api/reverse?lat=52.5&lng=13.4');
   assert.equal(rev.body.place.name, 'Somewhere');
+});
+
+test('searching for parking lists the car parks around you, or around the place named', async () => {
+  const near = await client()('GET', '/api/search?q=parking&lat=52.5&lng=13.4');
+  assert.deepEqual(near.body.parking, { lng: 13.4, lat: 52.5, from: null }, 'searched around you');
+  assert.deepEqual(near.body.places.map((p) => [p.name, p.address, p.category]), [
+    ['Car park on Test Street', 'Free', 'parking'],
+    ['Far Garage', 'Paid · Multi-storey · 400 spaces', 'parking'],
+  ], 'nearest first, private ones left out');
+  const there = await client()('GET', '/api/search?q=car%20park%20near%20alexanderplatz&lat=52.5&lng=13.4');
+  assert.deepEqual(there.body.parking, { lng: 13.41, lat: 52.52, from: 'Alexanderplatz' });
+  assert.match(there.body.places[0].address, /from Alexanderplatz$/);
+  assert.equal((await client()('GET', '/api/search?q=alex&lat=52.5&lng=13.4')).body.parking, undefined, 'other searches as before');
+});
+
+test('which searches are for parking', () => {
+  assert.equal(parkingQuery('parking'), '');
+  assert.equal(parkingQuery('Car Park'), '');
+  assert.equal(parkingQuery('parking klcc'), 'klcc');
+  assert.equal(parkingQuery('mid valley parking'), 'mid valley');
+  assert.equal(parkingQuery('carpark near Pavilion'), 'Pavilion');
+  assert.equal(parkingQuery('tempat letak kereta di Sunway Pyramid'), 'Sunway Pyramid');
+  assert.equal(parkingQuery('nandos'), null);
+  assert.equal(parkingQuery('Parkson'), null);
 });
 
 test('shared drives: owner updates, anyone with the link can watch', async () => {

@@ -6,7 +6,7 @@
 // charge, what kind they are and how many spaces they have. Private car parks are left out. A failing
 // details lookup still returns the car parks, just without the extras.
 
-import { distance } from '../../public/geo.js';
+import { distance, formatDistance } from '../../public/geo.js';
 
 const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
 const OSM_API = 'https://api.openstreetmap.org/api/0.6';
@@ -64,4 +64,33 @@ export function describe(p, tags = {}, dest) {
     capacity: Number.isFinite(capacity) && capacity > 0 ? capacity : null,
     customers: tags.access === 'customers',
   };
+}
+
+// Searching for parking: "parking", "car park", "parking klcc", "mid valley parking", "letak kereta". Search
+// by name only finds car parks named "Parking …", often far away, and misses the many with no name, so these
+// get the car parks around the place named (or around you), nearest first. Returns the remaining place words
+// ('' for parking near you), or null when the search isn't for parking.
+const PARKING_WORDS = /\b(?:car\s*parks?|carparks?|parking|parkings|parkir|(?:tempat\s+)?letak\s+kereta)\b/gi;
+const FILLER = /\b(?:near|at|in|around|by|dekat|di|kat|the|a)\b/gi;
+export function parkingQuery(q) {
+  if (!new RegExp(PARKING_WORDS.source, 'i').test(q)) return null;
+  return q.replace(PARKING_WORDS, ' ').replace(FILLER, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Car parks as search results, around `at` ([lng, lat]); `from` names the place they're near, if any.
+export async function parkingResults(env, at, from = null) {
+  const found = await parkingNear(env, at);
+  return found.map((p) => ({
+    name: p.name,
+    address: [
+      p.fee === true ? 'Paid' : p.fee === false ? 'Free' : null,
+      p.kind,
+      p.capacity ? `${p.capacity} spaces` : null,
+      p.customers ? 'Customers only' : null,
+      from ? `${formatDistance(p.distance)} from ${from}` : null,
+    ].filter(Boolean).join(' · '),
+    lat: p.lat,
+    lng: p.lng,
+    category: 'parking',
+  }));
 }

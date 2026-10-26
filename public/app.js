@@ -933,8 +933,12 @@ async function runSearch(q, enter = false) {
           api(`/api/search?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}&lang=${(navigator.language || 'en').slice(0, 2)}`),
           searchNearby(q, near).catch(() => []),
         ]);
-    const places = mergeResults(server.places, local, q, near);
-    const note = local.length ? null : server.note; // "not in the map data" is moot once Overture found it
+    // A search for parking is answered with the car parks around the place (or you), nearest first: only those.
+    const places = server.parking ? await withOvertureParking(server) : mergeResults(server.places, local, q, near);
+    const from = server.parking?.from;
+    const note = server.parking
+      ? places.length ? `Car parks near ${from ?? 'you'}` : `No car parks mapped near ${from ?? 'you'}.`
+      : local.length ? null : server.note; // "not in the map data" is moot once Overture found it
     if (seq !== searchSeq) return;
     $('search-home').classList.add('hidden');
     const ul = $('results');
@@ -947,16 +951,29 @@ async function runSearch(q, enter = false) {
     for (const p of places) {
       const li = el('li');
       const d = formatDistance(distance(near, [p.lng, p.lat]), state.settings.units);
-      li.innerHTML = `<button class="place-row"><span class="p-ic">${PLACE_ICONS.pin}</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address)}</small></span><span class="p-dist">${d}</span></button>`;
+      li.innerHTML = `<button class="place-row"><span class="p-ic">${PLACE_ICONS[p.category === 'parking' ? 'parking' : 'pin']}</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address)}</small></span><span class="p-dist">${d}</span></button>`;
       li.firstElementChild.onclick = () => pickPlace(p);
       ul.append(li);
     }
-    if (local.some((p) => places.includes(p))) ul.append(el('li', 'search-note', esc(placesAttribution)));
+    if (places.some((p) => !server.places.includes(p))) ul.append(el('li', 'search-note', esc(placesAttribution)));
     if (enter && places.length === 1) pickPlace(places[0]);
   } catch (e) {
     if (seq !== searchSeq) return;
     $('search-status').textContent = e.message;
   }
+}
+
+// The car parks the server found (OpenStreetMap) plus the parking in this phone's Overture listings, often a
+// mall's own ("Parking, Entry C"), within 1.5 km of the same spot, nearest first.
+async function withOvertureParking(server) {
+  const at = [server.parking.lng, server.parking.lat];
+  const from = server.parking.from;
+  const extra = (await Promise.all(['parking', 'car park'].map((w) => searchNearby(w, at).catch(() => [])))).flat()
+    .filter((p) => p.category === 'parking' && distance(at, [p.lng, p.lat]) <= 1500)
+    .map((p) => ({ ...p, address: from ? `${formatDistance(distance(at, [p.lng, p.lat]))} from ${from}` : p.address, category: 'parking' }));
+  const all = [...server.places];
+  for (const p of extra) if (!all.some((x) => distance([x.lng, x.lat], [p.lng, p.lat]) < 40)) all.push(p);
+  return all.sort((a, b) => distance(at, [a.lng, a.lat]) - distance(at, [b.lng, b.lat])).slice(0, 15);
 }
 
 async function pickPlace(p) {

@@ -10,7 +10,7 @@ import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annota
 import { constructionTwins } from './lib/construction.js';
 import { liveTraffic, applyTraffic } from './lib/traffic.js';
 import { loadCameras, camerasAlong } from './lib/cameras.js';
-import { parkingNear } from './lib/parking.js';
+import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
@@ -299,6 +299,8 @@ async function route(request, env, url) {
     const round = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : NaN);
     const lat = round(num(url, 'lat')), lng = round(num(url, 'lng'));
     const lang = (url.searchParams.get('lang') ?? 'en').slice(0, 5);
+    const parking = await searchParking(env, q, num(url, 'lat'), num(url, 'lng'), lang).catch(() => null);
+    if (parking) return parking;
     const key = new Request(`https://cache.a2b/search?q=${encodeURIComponent(q.toLowerCase())}&lat=${lat}&lng=${lng}&lang=${lang}`);
     const cache = globalThis.caches?.default;
     const hit = cache && (await cache.match(key));
@@ -477,6 +479,34 @@ async function withSession(request, db, row, status) {
 
 // Testing tools (demo drive) are for the accounts listed in the TESTER_EMAILS secret, comma separated
 // (`wrangler secret put TESTER_EMAILS`), so the addresses never ship in the code.
+// A search for parking (see parkingQuery): the car parks around the place named, or around the searcher, and
+// where that is, so the app can add the parking it knows from Overture. Null when it isn't a search for parking,
+// or the place named isn't found, so the ordinary search answers instead.
+async function searchParking(env, q, lat, lng, lang) {
+  const area = parkingQuery(q);
+  if (area == null) return null;
+  const here = Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null;
+  let at = here, from = null;
+  if (area) {
+    const { places } = await searchPlaces(env, { q: area, lat, lng, lang });
+    // A mall or venue before a station of the same name ("Mid Valley"), as the app ranks them.
+    const place = ['place', 'area'].map((k) => places.find((p) => p.landmark === k)).find(Boolean) ?? places[0];
+    if (!place) return null;
+    at = [place.lng, place.lat];
+    from = place.name;
+  }
+  if (!at) return null;
+  // Car parks don't move: share answers for the same spot (to ~100 m) for a day.
+  const key = new Request(`https://cache.a2b/search-parking/2?at=${at.map((v) => v.toFixed(3)).join(',')}&from=${encodeURIComponent(from ?? '')}`);
+  const cache = globalThis.caches?.default;
+  const hit = cache && (await cache.match(key));
+  if (hit) return hit;
+  const places = await parkingResults(env, at, from);
+  const res = json({ places, parking: { lng: at[0], lat: at[1], from } }, 200, { 'cache-control': 'public, max-age=86400' });
+  if (cache) await cache.put(key, res.clone());
+  return res;
+}
+
 const FEEDBACK_MAX = 2000; // characters
 const FEEDBACK_PER_DAY = 10; // per account, or per device without one
 

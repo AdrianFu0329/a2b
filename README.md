@@ -45,7 +45,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 | 🗣️ **Turn by turn** | Spoken directions, the next turn and the one after, lane guidance, roundabout exits, a turn arrow on the map, and rerouting when you go off route. |
 | 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
-| 🅿️ **Parking** | Car parks near your destination, paid or free, with type and spaces. Pick one and the drive reroutes there. |
+| 🅿️ **Parking** | Car parks near your destination, paid or free, with type and spaces. Pick one and the drive reroutes there. Or search "parking", "parking klcc" or "letak kereta pavilion". |
 | 🚧 **Roadworks** | Routes avoid roads that look to be still under construction, and roads drivers report as closed. |
 | 🚓 **Reports** | Traffic, police, crashes, hazards, blocked lanes, closures and cameras, with voice alerts ahead and "still there?" checks after. |
 | 🚗 **Your car** | A 3D chevron or car in the colour you like, a speedometer that turns red over the limit, and the road you've driven greyed out. |
