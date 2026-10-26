@@ -14,6 +14,7 @@ import {
 import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
 import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe } from './panels.js';
 import { startPresence, checkIn } from './presence.js';
+import { welcome, hideSplash } from './welcome.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -148,7 +149,11 @@ async function boot() {
   // Let a flick carry the map on and ease to a stop, instead of MapLibre's default quick brake.
   map.dragPan.enable({ linearity: 0.25, easing: (t) => 1 - (1 - t) ** 3, deceleration: 1400, maxSpeed: 2000 });
   // Start the attribution collapsed to its (i) button so it doesn't run under the report button on phones.
-  map.once('load', () => map.getContainer().querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
+  map.once('load', () => {
+    map.getContainer().querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
+    hideSplash();
+  });
+  setTimeout(hideSplash, 4000); // a slow map still shouldn't keep the app behind the splash
   map.on('style.load', () => {
     applyMapTheme(map, MAP_THEMES[mapThemeId()]);
     addMapLayers();
@@ -180,7 +185,9 @@ async function boot() {
   wireUi();
   setupSheetDrag();
   refreshSound();
-  startLocation();
+  // A shared-drive link goes straight to the drive; everyone else sees the welcome once, which then asks for location.
+  if (/^\/drive\//.test(location.pathname)) startLocation();
+  else welcome(startLocation);
   setInterval(() => loadReports(true), REPORT_REFRESH_MS);
   setInterval(() => applyTheme(), 5 * 60_000);
 

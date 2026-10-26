@@ -489,3 +489,23 @@ body.driving .toast { top: calc(140px + var(--safe-top)); }
 .u-peak { color: var(--muted); }
 .u-peak.full { color: var(--danger); font-weight: 700; }
 .u-away { color: var(--danger); }
+
+/* Launch splash, shown until the map is ready. */
+.splash { position: fixed; inset: 0; z-index: 50; display: grid; place-content: center; justify-items: center; gap: 14px; background: #751b4f; color: #fff; transition: opacity 0.35s ease; }
+.splash img { border-radius: 22px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35); animation: splash-in 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
+.splash b { font-size: 34px; font-weight: 800; letter-spacing: -0.5px; }
+.splash-spin { width: 22px; height: 22px; margin-top: 10px; border: 3px solid rgba(255, 255, 255, 0.35); border-top-color: #fff; border-radius: 50%; animation: spin 0.9s linear infinite; }
+.splash.out { opacity: 0; pointer-events: none; }
+@keyframes splash-in { from { transform: scale(0.8); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* First visit welcome: the waiting-screen card, a step above it. */
+.welcome { z-index: 19; }
+.welcome .gate-card { text-align: left; justify-items: start; }
+.welcome .gate-card img, .welcome .gate-card h2 { justify-self: center; }
+.w-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; font-size: 15px; line-height: 1.4; }
+.w-list li { display: flex; gap: 10px; }
+.w-list span { flex: none; width: 22px; text-align: center; }
+.w-install { font-size: 14px; color: var(--muted); background: var(--bg-2); border-radius: 14px; padding: 12px 14px; }
+.w-install:empty { display: none; }
+.w-install b { color: var(--text); }
+.w-ic { display: inline-flex; vertical-align: -3px; color: var(--accent-text); }

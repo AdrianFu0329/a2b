@@ -15,6 +15,12 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <!-- Launch splash: covers the blank map until it's drawn (welcome.js hides it) -->
+  <div id="splash" class="splash" aria-hidden="true">
+    <img src="/icon.svg" alt="" width="96" height="96">
+    <b>A2B</b>
+    <span class="splash-spin"></span>
+  </div>
   <div id="map" aria-label="Map"></div>
 
   <!-- ===== Browsing the map ===== -->
@@ -187,6 +193,22 @@
       <button class="menu-row hidden" id="m-logout"><span class="m-ic out"></span>Log out</button>
     </nav>
   </aside>
+
+  <!-- ===== First visit welcome (welcome.js) ===== -->
+  <section id="welcome" class="gate welcome hidden" aria-label="Welcome to A2B">
+    <div class="gate-card">
+      <img src="/icon.svg" alt="" width="64" height="64">
+      <h2>Welcome to A2B</h2>
+      <p>Free navigation for Malaysia, built by one person with an AI coding assistant and still improving.</p>
+      <ul class="w-list">
+        <li><span>🗺️</span>Search places, pick a route, and get turn-by-turn voice</li>
+        <li><span>🚧</span>It's a beta: 50 drivers at a time, and no CarPlay or Android Auto yet</li>
+        <li><span>📍</span>Next, your phone asks to share your location so A2B can show where you are</li>
+      </ul>
+      <p id="welcome-install" class="w-install"></p>
+      <button id="welcome-go" class="btn primary wide">Let's go</button>
+    </div>
+  </section>
 
   <!-- ===== Waiting screen, when A2B is full (presence.js) ===== -->
   <section id="gate" class="gate hidden" aria-live="polite" aria-label="A2B is full">
