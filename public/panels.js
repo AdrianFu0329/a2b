@@ -4,6 +4,7 @@
 // "My A2B" menu, sign in / sign up, settings, saved places, leaderboard and about.
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
+import { stopSharing } from './probe.js';
 import { pickVoice } from './voice.js';
 import { appVersion } from './update.js';
 import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
@@ -202,6 +203,31 @@ function choiceRow(key, label, options) {
     .join('')}</div></div>`;
 }
 
+// What sharing speeds really means, in plain words, before the driver says yes. Off until then.
+export function openProbeConsent() {
+  const body = openPanel('Share speeds for live traffic', `
+    <div class="set-group"><h3>How it works</h3>
+      <p class="hint" style="padding:4px 18px">While you drive, the app sends a small batch of recent fixes about
+      every 30 seconds: your position rounded to about 100&nbsp;m on this phone, speed, direction and time. The server folds
+      them straight into anonymous per-street totals (street block, direction, average speed, how many fixes from
+      how many drivers)
+      and never stores your raw trail. Totals older than a day are deleted every night.</p>
+      <p class="hint" style="padding:4px 18px">Streets where enough drivers crawl show as slow for everyone, and
+      add to route times next to jams drivers report by hand. Turn the switch off any time to stop sharing.</p>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn ghost" id="probe-no">Not now</button>
+      <button class="btn primary" id="probe-yes">Share my speeds</button>
+    </div>`);
+  body.querySelector('#probe-no').onclick = () => openSettings();
+  body.querySelector('#probe-yes').onclick = async () => {
+    local.set('probeConsent', true);
+    await saveSettings({ traffic_probe: true });
+    toast('Thanks, you are helping everyone see slow traffic.');
+    openSettings();
+  };
+}
+
 export function openSettings() {
   const u = state.user;
   const body = openPanel('Settings', `
@@ -216,6 +242,9 @@ export function openSettings() {
       ${toggleRow('avoid_highways', 'Avoid highways')}
       ${toggleRow('avoid_ferries', 'Avoid ferries')}
       <p class="hint" style="padding:4px 18px">Roads that other drivers report as closed are avoided automatically.</p>
+    </div>
+    <div class="set-group"><h3>Traffic</h3>
+      ${toggleRow('traffic_probe', 'Share speeds for live traffic', 'Off by default. Helps everyone see slow traffic.')}
     </div>
     <div class="set-group"><h3>Display</h3>
       ${choiceRow('units', 'Units', [['metric', 'km'], ['imperial', 'miles']])}
@@ -250,6 +279,13 @@ export function openSettings() {
 
   body.querySelectorAll('[data-set]').forEach((c) => {
     c.onchange = async () => {
+      // Traffic sharing needs an explicit yes on the consent screen, not just a flipped switch.
+      if (c.dataset.set === 'traffic_probe' && c.checked && local.get('probeConsent', false) !== true) {
+        c.checked = false;
+        openProbeConsent();
+        return;
+      }
+      if (c.dataset.set === 'traffic_probe' && !c.checked) stopSharing();
       await saveSettings({ [c.dataset.set]: c.checked });
       if (c.dataset.set === 'voice') ctx.refreshSound();
     };
