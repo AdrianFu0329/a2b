@@ -12,6 +12,8 @@ dependencies {
     implementation project(':capacitor-community-background-geolocation')
     implementation project(':capacitor-community-keep-awake')
     implementation project(':capacitor-community-text-to-speech')
+    implementation project(':capacitor-app')
+    implementation project(':capacitor-share')
 
 }
 

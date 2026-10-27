@@ -13,6 +13,13 @@ const plugin = (name) => (inApp && cap.isPluginAvailable(name) ? cap.Plugins[nam
 export const keepAwake = plugin('KeepAwake');
 export const nativeVoice = plugin('TextToSpeech');
 export const nativeCalendar = plugin('Calendar');
+export const nativeShare = plugin('Share');
+
+// Android's back button closes whatever is open, as it does in a browser: an open panel leaves a history entry
+// (see armBack in core.js). With nothing open the app goes to the background rather than closing, so a drive
+// carries on.
+const app = plugin('App');
+app?.addListener('backButton', () => (history.state?.a2bBack ? history.back() : app.minimizeApp()));
 const geo = plugin('BackgroundGeolocation');
 export const nativeLocation = Boolean(geo);
 const notifications = plugin('NotificationPermission');

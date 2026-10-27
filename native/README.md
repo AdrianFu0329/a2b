@@ -4,14 +4,17 @@ A [Capacitor](https://capacitorjs.com) shell around the web app, so A2B can be i
 giving directions with the screen off or another app on top. Status: a spike, for testing; not on the Play Store.
 
 The app loads the live web app (`https://a2b-beta.pages.dev`) rather than a bundled copy, so sign-in, `/api` and shop
-search work unchanged and a web deploy updates the app too. Inside the app, `public/native.js` swaps three browser
-features for native plugins:
+search work unchanged and a web deploy updates the app too. Inside the app, `public/native.js` swaps these browser
+features for native ones:
 
 | Browser | In the app | Why |
 | --- | --- | --- |
 | `speechSynthesis` | `@capacitor-community/text-to-speech` | Android's WebView has no speech voices at all. |
 | `watchPosition` | `@capacitor-community/background-geolocation` | GPS stops once the app is out of sight. While driving it runs as a foreground service, with a notification. |
 | Wake Lock | `@capacitor-community/keep-awake` | Keeps the screen on while driving. |
+| `navigator.share` / clipboard | `@capacitor/share` | The WebView has neither, so sharing a drive opens the phone's share sheet. |
+| `.ics` download ("Leave later") | `CalendarPlugin.java` | The WebView can't save files, so the phone's calendar opens with the event filled in. |
+| Browser back | `@capacitor/app` | Without it Android's back button closes the app. Back now closes what's open, as in a browser; with nothing open the app goes to the background and a drive carries on. |
 
 `capacitor.config.js` sets `useLegacyBridge`, so plugin results reach the page through `evaluateJavascript`. With the
 default bridge (`postMessage`), the WebView stops delivering them about a minute after the screen goes off: the GPS

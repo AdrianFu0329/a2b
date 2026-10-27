@@ -19,7 +19,7 @@ import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe }
 import { startPresence, checkIn } from './presence.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
-import { keepAwake, nativeCalendar, nativeLocation, watchLocation } from './native.js';
+import { keepAwake, nativeCalendar, nativeLocation, nativeShare, watchLocation } from './native.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -1773,7 +1773,9 @@ async function shareDrive() {
       renderShareMenu();
     }
     const text = `I'm driving to ${dest.name}. Follow my drive and ETA:`;
-    if (navigator.share) await navigator.share({ title: 'My drive', text, url: share.url }).catch(() => {});
+    // The Android app's WebView has neither navigator.share nor clipboard access, so it uses the phone's share sheet.
+    if (nativeShare) await nativeShare.share({ title: 'My drive', text, url: share.url, dialogTitle: 'Share your drive' }).catch(() => {});
+    else if (navigator.share) await navigator.share({ title: 'My drive', text, url: share.url }).catch(() => {});
     else {
       await navigator.clipboard?.writeText(share.url);
       toast('Link copied. Anyone with it can follow this drive until you arrive.');
