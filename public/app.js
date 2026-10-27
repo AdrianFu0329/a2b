@@ -57,6 +57,7 @@ let themeNow = null;
 
 // Preview / drive state
 let dest = null;
+let travel = local.get('travel', 'drive'); // 'drive' | 'walk', remembered for next time
 let stops = []; // places to visit on the way, in order, not yet reached
 let routes = [];
 let selected = 0;
@@ -929,6 +930,14 @@ function wireUi() {
   $('btn-eta').onclick = () => !tripSheet.justDragged() && tripSheet.set(!tripSheet.isOpen());
   $('trip-dest').onclick = () => !tripSheet.justDragged() && tripSheet.set(!tripSheet.isOpen()); // the destination row opens and closes it too
   $('btn-parking').onclick = openParking;
+  for (const b of $('travel-seg').querySelectorAll('button')) {
+    b.onclick = () => {
+      if (b.dataset.travel === travel) return;
+      travel = b.dataset.travel;
+      local.set('travel', travel);
+      if (mode === 'preview' && dest) openPreview(dest); // fresh routes for the new way of getting there
+    };
+  }
   tripSheet.init();
   $('btn-stop').onclick = () => endDrive(false);
   $('btn-overview').onclick = overview;
@@ -1234,6 +1243,7 @@ async function openPreview(place) {
   $('dest-name').textContent = place.name;
   $('dest-addr').textContent = place.address || '';
   // Placeholder cards the shape of real ones, so the sheet doesn't jump when the routes arrive.
+  renderTravel();
   $('route-list').innerHTML = '<div class="route-opt skeleton" aria-hidden="true"><i></i><i></i></div>'.repeat(2);
   $('btn-go').disabled = true;
   updateSaveStar();
@@ -1266,6 +1276,10 @@ async function openPreview(place) {
   }
 }
 
+function renderTravel() {
+  for (const b of $('travel-seg').querySelectorAll('button')) b.classList.toggle('on', b.dataset.travel === travel);
+}
+
 // What the server did about closures, worth a line under the route options.
 function routeNote(rs) {
   if (rs.closuresIgnored) return "Couldn't find a way around a reported closure, so these routes may pass it.";
@@ -1278,7 +1292,7 @@ async function requestRoutes(from, to, heading, via = []) {
   const { routes: rs, closures_ignored: closuresIgnored, construction_avoided: constructionAvoided } = await api('/api/route', {
     method: 'POST',
     body: {
-      from, to, heading,
+      from, to, heading, travel,
       via: via.map((p) => [p.lng, p.lat]),
       units: s.units,
       lang: navigator.language || 'en-US',
@@ -1474,7 +1488,7 @@ function backToBrowse() {
   drawRoutes();
   for (const id of ['preview', 'later', 'drive-ui', 'arrived', 'report-card']) $(id).classList.add('hidden');
   $('browse-ui').classList.remove('hidden');
-  document.body.classList.remove('driving');
+  document.body.classList.remove('driving', 'walking');
   follow = true;
   $('btn-recenter').classList.add('following');
   map.easeTo({ pitch: 0, bearing: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, ...(state.pos ? { center: state.pos.lngLat, zoom: 15.5 } : {}), duration: 700 });
@@ -1570,6 +1584,7 @@ function startDrive() {
   tripSheet.set(false);
   $('alert').classList.add('hidden');
   document.body.classList.add('driving');
+  document.body.classList.toggle('walking', travel === 'walk');
   armBack();
   follow = true;
   $('btn-recenter-drive').classList.add('hidden');
@@ -1627,13 +1642,16 @@ function driveTick(fix) {
   moveCar({ pos: live.snapped, heading, along: live.along, path: nav });
   renderBanner();
   renderEta();
-  renderLimit(live.limit, fix.speed);
+  if (travel !== 'walk') renderLimit(live.limit, fix.speed);
   drawDriveLine();
   drawManeuverArrow();
   if (live.prompt) speak(live.prompt);
-  checkTolls();
-  checkCameras();
-  checkAlerts();
+  // Tolls, speed cameras and road reports ahead are for drivers.
+  if (travel !== 'walk') {
+    checkTolls();
+    checkCameras();
+    checkAlerts();
+  }
   if (share) pushShare();
 
   const stopStep = nav.steps.findIndex((st) => st.type === 'stop');
@@ -1951,7 +1969,7 @@ async function endDrive(arrived) {
   else {
     mode = 'browse';
     $('drive-ui').classList.add('hidden');
-    document.body.classList.remove('driving');
+    document.body.classList.remove('driving', 'walking');
     drawRoutes();
     destMarker?.remove();
     map.easeTo({ pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 600 });
