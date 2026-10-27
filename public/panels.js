@@ -4,6 +4,7 @@
 // "My A2B" menu, sign in / sign up, settings, saved places, leaderboard and about.
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
+import { stopSharing } from './probe.js';
 import { pickVoice } from './voice.js';
 import { appVersion } from './update.js';
 import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
@@ -26,6 +27,8 @@ export function initPanels(callbacks) {
   $('m-install').onclick = install;
   $('auth-switch').onclick = () => setAuthMode(authMode === 'signup' ? 'login' : 'signup');
   $('auth-form').onsubmit = submitAuth;
+  const forgot = $('auth-forgot');
+  if (forgot) forgot.onclick = recoverAccount;
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     installPrompt = e;
@@ -110,6 +113,8 @@ function setAuthMode(mode) {
   document.querySelector('#auth-form .name-row').classList.toggle('hidden', !signup);
   document.querySelector('#auth-form [name=password]').autocomplete = signup ? 'new-password' : 'current-password';
   $('auth-error').classList.add('hidden');
+  const forgot = $('auth-forgot');
+  if (forgot) forgot.classList.toggle('hidden', signup);
 }
 
 async function submitAuth(e) {
@@ -127,19 +132,26 @@ async function submitAuth(e) {
   busy(authMode === 'signup' ? 'Creating account…' : 'Logging in…');
   $('auth-error').classList.add('hidden');
   try {
-    await api(`/api/auth/${authMode}`, { method: 'POST', body });
+    const res = await api(`/api/auth/${authMode}`, { method: 'POST', body });
     await refreshMe();
+    let code = null;
     if (authMode === 'signup') {
       busy('Copying your places…');
       await bringGuestPlaces();
+      code = res.recovery_code ?? null;
     }
     $('auth').classList.add('hidden');
     $('auth-form').reset();
     await ctx.onUserChanged();
     ctx.applyTheme();
     ctx.refreshSound();
-    toast(authMode === 'signup' ? `Welcome, ${state.user.name}!` : `Welcome back, ${state.user.name}!`);
-    if (authReason === 'report') $('btn-report').click();
+    if (code) {
+      // The code panel stays until it is dismissed, so it can't be lost like a prompt could.
+      openRecoveryCode(code);
+    } else {
+      toast(authMode === 'signup' ? `Welcome, ${state.user.name}!` : `Welcome back, ${state.user.name}!`);
+      if (authReason === 'report') $('btn-report').click();
+    }
   } catch (err) {
     $('auth-error').textContent = err.message;
     $('auth-error').classList.remove('hidden');
@@ -173,6 +185,67 @@ async function logout() {
   state.stats = null;
   await ctx.onUserChanged();
   toast('Logged out');
+}
+
+// The recovery code is shown once and never again: a panel with a copy button keeps it on screen until it
+// is dismissed, so it can't be lost the way a prompt can.
+function openRecoveryCode(code) {
+  openPanel('Save your recovery code', `<div class="feedback">
+    <p class="hint">Write this down somewhere safe. It resets your password if you ever lose it — there is no other way to see it again.</p>
+    <input id="rc-code" class="field" readonly value="${esc(code)}" style="font-family:monospace;text-align:center;letter-spacing:1px">
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn primary" id="rc-copy" style="flex:1">Copy code</button>
+      <button class="btn ghost" id="rc-done" style="flex:1">I've saved it</button>
+    </div>
+  </div>`);
+  $('rc-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      toast('Copied — keep it somewhere safe');
+    } catch {
+      const input = $('rc-code');
+      input.focus();
+      input.select();
+      toast('Copy it manually — long-press the code');
+    }
+  };
+  $('rc-done').onclick = () => $('panel').classList.add('hidden');
+}
+
+// Locked out without a password: the recovery code shown once at sign-up sets a new one. A form panel, not
+// prompts, so every field stays visible; wrong answers read the same so the form can't list accounts.
+function recoverAccount() {
+  $('auth').classList.add('hidden'); // the reset form is a panel; the sign-in screen would sit on top of it
+  openPanel('Reset your password', `<div class="feedback">
+    <p class="hint">Enter the account email, the recovery code shown when you signed up, and a new password.</p>
+    <input id="rc-email" class="field" type="email" autocomplete="email" placeholder="Account email">
+    <input id="rc-code-in" class="field" placeholder="Recovery code">
+    <input id="rc-pass" class="field" type="password" autocomplete="new-password" placeholder="New password (at least 8 characters)">
+    <p id="rc-error" class="error hidden"></p>
+    <button class="btn primary wide" id="rc-go" style="margin-top:12px">Reset password</button>
+  </div>`);
+  $('rc-go').onclick = async () => {
+    const err = $('rc-error');
+    const email = $('rc-email').value.trim(), code = $('rc-code-in').value.trim(), password = $('rc-pass').value;
+    if (!email || !code || !password) {
+      err.textContent = 'Fill in all three fields first.';
+      err.classList.remove('hidden');
+      return;
+    }
+    err.classList.add('hidden');
+    try {
+      await api('/api/auth/recover', { method: 'POST', body: { email, code, password } });
+      await refreshMe();
+      $('panel').classList.add('hidden');
+      $('auth').classList.add('hidden');
+      $('auth-form').reset();
+      await ctx.onUserChanged();
+      toast(`Welcome back, ${state.user.name}!`);
+    } catch (e) {
+      err.textContent = e.message;
+      err.classList.remove('hidden');
+    }
+  };
 }
 
 // ================= Panels =================
@@ -213,6 +286,31 @@ function choiceRow(key, label, options) {
     .join('')}</div></div>`;
 }
 
+// What sharing speeds really means, in plain words, before the driver says yes. Off until then.
+export function openProbeConsent() {
+  const body = openPanel('Share speeds for live traffic', `
+    <div class="set-group"><h3>How it works</h3>
+      <p class="hint" style="padding:4px 18px">While you drive, the app sends a small batch of recent fixes about
+      every 30 seconds: your position rounded to about 100&nbsp;m on this phone, speed, direction and time. The server folds
+      them straight into anonymous per-street totals (street block, direction, average speed, how many fixes from
+      how many drivers)
+      and never stores your raw trail. Totals older than a day are deleted every night.</p>
+      <p class="hint" style="padding:4px 18px">Streets where enough drivers crawl show as slow for everyone, and
+      add to route times next to jams drivers report by hand. Turn the switch off any time to stop sharing.</p>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn ghost" id="probe-no">Not now</button>
+      <button class="btn primary" id="probe-yes">Share my speeds</button>
+    </div>`);
+  body.querySelector('#probe-no').onclick = () => openSettings();
+  body.querySelector('#probe-yes').onclick = async () => {
+    local.set('probeConsent', true);
+    await saveSettings({ traffic_probe: true });
+    toast('Thanks, you are helping everyone see slow traffic.');
+    openSettings();
+  };
+}
+
 export function openSettings() {
   const u = state.user;
   const body = openPanel('Settings', `
@@ -227,6 +325,9 @@ export function openSettings() {
       ${toggleRow('avoid_highways', 'Avoid highways')}
       ${toggleRow('avoid_ferries', 'Avoid ferries')}
       <p class="hint" style="padding:4px 18px">Roads that other drivers report as closed are avoided automatically.</p>
+    </div>
+    <div class="set-group"><h3>Traffic</h3>
+      ${toggleRow('traffic_probe', 'Share speeds for live traffic', 'Off by default. Helps everyone see slow traffic.')}
     </div>
     <div class="set-group"><h3>Display</h3>
       ${choiceRow('units', 'Units', [['metric', 'km'], ['imperial', 'miles']])}
@@ -265,6 +366,13 @@ export function openSettings() {
 
   body.querySelectorAll('[data-set]').forEach((c) => {
     c.onchange = async () => {
+      // Traffic sharing needs an explicit yes on the consent screen, not just a flipped switch.
+      if (c.dataset.set === 'traffic_probe' && c.checked && local.get('probeConsent', false) !== true) {
+        c.checked = false;
+        openProbeConsent();
+        return;
+      }
+      if (c.dataset.set === 'traffic_probe' && !c.checked) stopSharing();
       await saveSettings({ [c.dataset.set]: c.checked });
       if (c.dataset.set === 'voice') ctx.refreshSound();
     };
