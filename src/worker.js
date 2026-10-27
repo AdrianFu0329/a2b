@@ -14,6 +14,8 @@ import { loadCameras, camerasAlong } from './lib/cameras.js';
 import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
+import { locationsRepo } from './lib/locations.js';
+import { distance } from '../public/geo.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
 
@@ -66,6 +68,7 @@ async function route(request, env, url) {
   const parts = path.split('/').filter(Boolean); // ['api', ...]
   const user = await currentUser(db, request);
   const reports = reportsRepo(db);
+  const locations = locationsRepo(db);
   const needUser = () => {
     if (!user) throw httpError('Sign in first.', 401);
     return user;
@@ -345,6 +348,28 @@ async function route(request, env, url) {
     return json({ ok: true });
   }
 
+  // ---------- A2B's own places (src/lib/locations.js) ----------
+  if (path === '/api/locations' && method === 'GET') {
+    await needSpot();
+    const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
+    const lat = num(url, 'lat'), lng = num(url, 'lng');
+    const near = Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null;
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 10, 1), 50);
+    return json({ places: q.length < 2 ? [] : await locations.search(q, near, limit) });
+  }
+  if (path === '/api/locations' && method === 'POST') {
+    const u = needUser();
+    return json({ place: await locations.add(u, await readJson(request)) }, 201);
+  }
+  if (path === '/api/locations/mine' && method === 'GET') {
+    return json({ places: await locations.mine(needUser()) });
+  }
+  if (parts[1] === 'locations' && /^\d+$/.test(parts[2] ?? '') && method === 'DELETE') {
+    const u = needUser();
+    await locations.remove(u, Number(parts[2]), { tester: isTester(env, u) });
+    return json({ ok: true });
+  }
+
   // ---------- Search and routing ----------
   if (path === '/api/search' && method === 'GET') {
     await needSpot();
@@ -361,7 +386,7 @@ async function route(request, env, url) {
     const cache = globalThis.caches?.default;
     const hit = cache && (await cache.match(key));
     if (hit) return hit;
-    const res = json(await searchPlaces(env, { q, lat, lng, lang }), 200, { 'cache-control': 'public, max-age=600' });
+    const res = json(await searchBoth(env, locations, { q, lat, lng, lang }), 200, { 'cache-control': 'public, max-age=600' });
     if (cache) await cache.put(key, res.clone());
     return res;
   }
@@ -384,7 +409,9 @@ async function route(request, env, url) {
     await needSpot();
     const lat = num(url, 'lat'), lng = num(url, 'lng');
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw httpError('lat and lng are required.', 400);
-    return json({ place: await reverseGeocode(env, { lat, lng }) });
+    // A2B's own streets and places first; the public geocoder only when there's nothing close.
+    const own = await locations.nearest([lng, lat]).catch(() => null);
+    return json({ place: own ?? (await reverseGeocode(env, { lat, lng })) });
   }
 
   if (path === '/api/route' && method === 'POST') {
@@ -600,6 +627,19 @@ async function searchParking(env, q, lat, lng, lang) {
 
 const FEEDBACK_MAX = 2000; // characters
 const FEEDBACK_PER_DAY = 10; // per account, or per device without one
+
+// Search: A2B's own places first, then the public geocoder's for anything they don't already cover. Either one
+// failing still answers with the other.
+async function searchBoth(env, locations, { q, lat, lng, lang }) {
+  const near = Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null;
+  const [own, photon] = await Promise.allSettled([locations.search(q, near), searchPlaces(env, { q, lat, lng, lang })]);
+  const mine = own.status === 'fulfilled' ? own.value.map(({ id, kind, source, ...p }) => p) : [];
+  if (photon.status === 'rejected' && !mine.length) throw photon.reason;
+  const theirs = photon.status === 'fulfilled' ? photon.value : { places: [] };
+  const same = (a, b) => a.name.toLowerCase() === b.name.toLowerCase() && distance([a.lng, a.lat], [b.lng, b.lat]) < 150;
+  const extra = theirs.places.filter((p) => !mine.some((m) => same(m, p)));
+  return { ...theirs, places: [...mine, ...extra].slice(0, 10) };
+}
 
 function isTester(env, user) {
   const list = String(env.TESTER_EMAILS ?? '').split(',').map((e) => normalizeEmail(e)).filter(Boolean);

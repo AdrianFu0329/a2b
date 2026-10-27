@@ -92,6 +92,7 @@ const REASONS = {
   report: 'Sign up to report what you see. Other drivers can thank you, and you earn points.',
   vote: 'Sign up to confirm or dismiss reports from other drivers.',
   share: 'Sign up to share your drive and ETA with friends.',
+  addplace: 'Sign up to add places that are missing from the map, so other drivers can find them too.',
 };
 
 export function openAuth(reason = null, mode = 'signup') {
@@ -513,6 +514,39 @@ async function openLeaders() {
   } catch (e) {
     body.innerHTML = `<p class="hint" style="padding:12px 18px">${esc(e.message)}</p>`;
   }
+}
+
+// A place that's missing from search, added at a spot on the map (see src/lib/locations.js). Drivers find it
+// straight away; testers can remove wrong ones.
+const PLACE_KINDS = ['Restaurant', 'Cafe', 'Shop', 'Petrol station', 'Office', 'School', 'Mosque', 'Clinic', 'Car park', 'Other'];
+export function openAddPlace(at, guess = {}) {
+  if (!state.user) return openAuth('addplace');
+  openPanel('Add a missing place', `<div class="feedback add-place">
+    <p class="hint">At ${at.lat.toFixed(5)}, ${at.lng.toFixed(5)}. Other drivers can find it in search as soon as you add it.</p>
+    <input id="ap-name" class="field" maxlength="80" placeholder="Name, e.g. Warung Pak Abu" autocomplete="off">
+    <select id="ap-kind" class="field">${PLACE_KINDS.map((k) => `<option>${k}</option>`).join('')}</select>
+    <input id="ap-addr" class="field" maxlength="120" placeholder="Address (optional)" value="${esc(guess.kind === 'street' ? [guess.name, guess.address].filter(Boolean).join(', ') : guess.address ?? '')}">
+    <button class="btn primary" id="ap-send" disabled>Add place</button>
+  </div>`);
+  const name = $('ap-name');
+  const send = $('ap-send');
+  name.oninput = () => (send.disabled = name.value.trim().length < 2);
+  send.onclick = async () => {
+    send.disabled = true;
+    try {
+      const kind = $('ap-kind').value;
+      const { place } = await api('/api/locations', {
+        method: 'POST',
+        body: { name: name.value, address: $('ap-addr').value, category: kind === 'Other' ? '' : kind, lat: at.lat, lng: at.lng },
+      });
+      history.back(); // closes the panel
+      toast(`Added ${place.name}. Thanks!`);
+    } catch (e) {
+      toast(e.message);
+      send.disabled = false;
+    }
+  };
+  setTimeout(() => name.focus(), 300);
 }
 
 // Feedback for the developer. Without an account it's anonymous; with one, the name and email go along so

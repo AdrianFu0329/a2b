@@ -113,7 +113,7 @@ Everything A2B uses is free and needs no key:
 | --- | --- | --- |
 | Map tiles | [OpenFreeMap](https://openfreemap.org) | Map looks are in `public/map-themes.js`. |
 | Routing, speed limits, toll booths | [Valhalla public server](https://valhalla1.openstreetmap.de) (`ROUTING_URL`) | Community-run, fair use. |
-| Search | [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Community-run, fair use. |
+| Search | A2B's own place index, then [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Shops, landmarks, streets and addresses from Overture Maps and OpenStreetMap, plus places drivers add, searched in the database (`npm run locations`). Photon fills the gaps; it's community-run, fair use. |
 | Live traffic (optional) | [TomTom Routing API](https://developer.tomtom.com) (`TOMTOM_KEY` secret) | Times each route with today's traffic; free up to a monthly quota. Without a key, routes use typical speeds. Answers aren't stored. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
@@ -129,6 +129,7 @@ Overture publishes new data monthly ([calendar](https://docs.overturemaps.org/re
 ```bash
 pip install duckdb
 npm run places          # shop search data (not kept in git)
+npm run locations -- --load remote   # A2B's own place search, into the database
 npm run construction    # roads under construction
 npm run deploy
 ```

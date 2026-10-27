@@ -11,6 +11,7 @@ import { buildRouteRequest, photonToPlace, lanes, searchPlaces, corridorBox, rou
 import { applyTraffic } from '../src/lib/traffic.js';
 import { camerasAlong } from '../src/lib/cameras.js';
 import { parkingQuery } from '../src/lib/parking.js';
+import { ftsQuery } from '../src/lib/locations.js';
 import { cameraBearing } from '../scripts/build-cameras.mjs';
 import { REPORT_TYPES } from '../public/report-types.js';
 import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
@@ -149,11 +150,12 @@ function client(device) {
   };
 }
 
-// Search, routing, reverse and parking need a checked-in spot; feedback needs only a valid device id (it stays
+// Search (ours too), routing, reverse and parking need a checked-in spot; feedback needs only a valid device id (it stays
 // open even when A2B is full). Everything else (accounts, places, reports, trips) doesn't.
 function needsSpot(method, path) {
   if (path === '/api/presence') return false;
   if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/reverse') || path.startsWith('/api/parking'))) return true;
+  if (method === 'GET' && path.startsWith('/api/locations?')) return true;
   return method === 'POST' && path === '/api/route';
 }
 
@@ -905,5 +907,63 @@ test('presence check-ins admit new devices without a per-network throttle', asyn
     for (let i = 0; i < 5; i++) assert.equal((await check(`fresh-device-${i}`)).status, 200);
   } finally {
     await env.DB.prepare('DELETE FROM presence').run();
+  }
+});
+
+// ---------- A2B's own places ----------
+async function loadLocations(rows) {
+  const db = env.DB;
+  await db.batch(rows.map(([name, address, category, kind, lat, lng, source]) =>
+    db.prepare('INSERT INTO locations (name, address, category, kind, lat, lng, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0)').bind(name, address, category, kind, lat, lng, source)));
+  await db.prepare("INSERT INTO locations_fts (locations_fts) VALUES ('rebuild')").run();
+}
+
+test('own place search matches word prefixes, ignoring accents and punctuation', () => {
+  assert.equal(ftsQuery("Nando's Bangsar"), '"nando"* "s"* "bangsar"*');
+  assert.equal(ftsQuery('Café  Kopi'), '"cafe"* "kopi"*');
+  assert.equal(ftsQuery(' -- '), null);
+});
+
+test('own places: searched by name, nearest first, and ahead of the public geocoder', async () => {
+  await loadLocations([
+    ['Nasi Lemak Antarabangsa', 'Kampung Baru, Kuala Lumpur', 'restaurant', 'place', 3.165, 101.700, 'overture'],
+    ['Nasi Lemak Antarabangsa', 'Johor Bahru', 'restaurant', 'place', 1.46, 103.76, 'overture'],
+    ['Jalan Ampang', 'Kuala Lumpur', 'street', 'street', 3.1601, 101.7101, 'osm'],
+  ]);
+  await client()('GET', '/api/me'); // creates the tables
+  const r = await client()('GET', '/api/locations?q=nasi%20lem&lat=3.16&lng=101.70');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.places.map((p) => p.address), ['Kampung Baru, Kuala Lumpur', 'Johor Bahru'], 'nearest first');
+  assert.ok(r.body.places[0].km < 1);
+  const s = await client()('GET', '/api/search?q=nasi%20lemak&lat=3.16&lng=101.70');
+  assert.equal(s.body.places[0].name, 'Nasi Lemak Antarabangsa', 'own places come first');
+  assert.ok(s.body.places.some((p) => p.name === 'Alexanderplatz'), 'topped up from the public geocoder');
+  const rev = await client()('GET', '/api/reverse?lat=3.1602&lng=101.7102');
+  assert.equal(rev.body.place.name, 'Jalan Ampang', 'what is here comes from our own streets');
+});
+
+test('drivers can add places, see and remove their own; testers can remove any', async () => {
+  const guest = await client()('POST', '/api/locations', { name: 'Warung Pak Abu', lat: 3.1, lng: 101.6 });
+  assert.equal(guest.status, 401);
+  assert.equal((await alice('POST', '/api/locations', { name: 'x', lat: 3.1, lng: 101.6 })).status, 400);
+  const added = await alice('POST', '/api/locations', { name: 'Warung Pak Abu', category: 'Restaurant', address: 'Jalan Tepi, Shah Alam', lat: 3.07, lng: 101.52 });
+  assert.equal(added.status, 201);
+  assert.equal(added.body.place.source, 'driver');
+  let found = await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52');
+  assert.equal(found.body.places[0].name, 'Warung Pak Abu', 'searchable straight away');
+  assert.equal((await alice('GET', '/api/locations/mine')).body.places.length, 1);
+  const erin = client();
+  await erin('POST', '/api/auth/signup', { email: 'erin.places@test.com', password: 'password5', name: 'Erin' });
+  assert.equal((await erin('DELETE', `/api/locations/${added.body.place.id}`)).status, 404, "not someone else's");
+  assert.equal((await alice('DELETE', `/api/locations/${added.body.place.id}`)).status, 200);
+  found = await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52');
+  assert.equal(found.body.places.length, 0);
+  const loaded = (await client()('GET', '/api/locations?q=jalan%20ampang')).body.places[0];
+  assert.equal((await alice('DELETE', `/api/locations/${loaded.id}`)).status, 404, 'loaded places only by testers');
+  env.TESTER_EMAILS = 'alice@test.com';
+  try {
+    assert.equal((await alice('DELETE', `/api/locations/${loaded.id}`)).status, 200);
+  } finally {
+    delete env.TESTER_EMAILS;
   }
 });
