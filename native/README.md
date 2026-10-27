@@ -1,7 +1,8 @@
-# A2B for Android
+# A2B for Android and iOS
 
-A [Capacitor](https://capacitorjs.com) shell around the web app, so A2B can be installed as an Android app and keep
-giving directions with the screen off or another app on top. Status: a spike, for testing; not on the Play Store.
+A [Capacitor](https://capacitorjs.com) shell around the web app, so A2B can be installed as an Android or iPhone app
+and keep giving directions with the screen off or another app on top. Status: a spike, for testing; not in the Play Store
+or App Store.
 
 The app loads the live web app (`https://a2b-beta.pages.dev`) rather than a bundled copy, so sign-in, `/api` and shop
 search work unchanged and a web deploy updates the app too. Inside the app, `public/native.js` swaps these browser
@@ -49,8 +50,28 @@ plugin that asks.
 The launcher, themed and notification icons are vector drawables drawn from `public/icon.svg`
 (`res/drawable/ic_launcher_*.xml`, `ic_notification.xml`), with PNG copies of `public/icon-512.png` for Android 7.
 
+## iOS
+
+You need Xcode and, for a phone, an Apple developer account (a free one works for your own phone).
+
+```bash
+cd native
+npm install && npx cap sync ios
+npx cap open ios                              # then pick a simulator or your iPhone and press Run
+```
+
+The Simulator shares the Mac's network, so `A2B_URL=http://localhost:8787 npx cap sync ios` tries a local copy. A
+phone needs the Mac's address instead (`npx wrangler dev --ip 0.0.0.0`, then `A2B_URL=http://<mac-ip>:8787`).
+
+What's iOS-specific, in `ios/App/App/`:
+
+- `AppDelegate.swift` sets the audio session to playback (the text-to-speech plugin doesn't on iOS), and
+  `Info.plist` has the location and audio background modes, so directions carry on with the screen off.
+- `CalendarPlugin.swift` opens the New Event screen for "Leave later"; `A2BViewController.swift` registers it and
+  `SceneDelegate.swift` uses that controller.
+
 ## Not done yet
 
 - The splash screen on Android 11 and older is still Capacitor's (Android 12+ shows the A2B icon).
 - A signed release build, the Play Store listing, and its background location declaration.
-- iOS.
+- iOS on a real iPhone (tested on the Simulator only), signing, and the App Store listing.

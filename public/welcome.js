@@ -6,7 +6,7 @@
 // Also hides the launch splash once the map is ready.
 
 import { $, local } from './core.js';
-import { inApp } from './native.js';
+import { inApp, platform } from './native.js';
 
 const SHARE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M8 10H6v10h12V10h-2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
@@ -16,7 +16,8 @@ const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.
 // done(): called once the driver is through (straight away for people who've seen it before).
 export function welcome(done) {
   if (local.get('welcomed', false)) return done();
-  if (inApp) $('welcome-ask').lastChild.textContent = 'Next, your phone asks to share your location so A2B can show where you are, and to show a notification while it gives directions';
+  // Android shows a notification while directions run in the background; iOS shows its own location indicator.
+  if (platform === 'android') $('welcome-ask').lastChild.textContent = 'Next, your phone asks to share your location so A2B can show where you are, and to show a notification while it gives directions';
   $('welcome-install').innerHTML = installed()
     ? ''
     : isIos()

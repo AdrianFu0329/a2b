@@ -8,6 +8,7 @@
 
 const cap = typeof window === 'undefined' ? null : window.Capacitor;
 export const inApp = Boolean(cap?.isNativePlatform?.());
+export const platform = inApp ? cap.getPlatform() : 'web'; // 'android' | 'ios' | 'web'
 const plugin = (name) => (inApp && cap.isPluginAvailable(name) ? cap.Plugins[name] : null);
 
 export const keepAwake = plugin('KeepAwake');
