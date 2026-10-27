@@ -9,6 +9,7 @@ import { pickVoice } from './voice.js';
 import { appVersion } from './update.js';
 import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
 import { onlineLine } from './presence.js';
+import { tileCount, clearOfflineTiles, originUsage } from './offline.js';
 
 let ctx; // callbacks from app.js
 let authMode = 'signup';
@@ -257,6 +258,16 @@ function openPanel(title, html) {
 }
 
 // The voice directions are read in (see voice.js), with a sample to hear it.
+async function renderOfflineSize() {
+  const el = $('s-offline-size');
+  if (!el) return;
+  const [count, usage] = await Promise.all([tileCount(), originUsage()]);
+  const fresh = $('s-offline-size');
+  if (!fresh) return; // settings closed while counting
+  const mb = usage?.usage ? ` · ${(usage.usage / 1048576).toFixed(0)} MB used by the app` : '';
+  fresh.textContent = count ? `${count.toLocaleString()} map tiles${mb}` : `Nothing saved yet${mb}`;
+}
+
 function renderVoiceList() {
   const box = $('voice-list');
   const v = pickVoice();
@@ -328,6 +339,10 @@ export function openSettings() {
         .map(([c, l]) => `<button data-c="${c}" aria-label="${l}" title="${l}" class="${local.get('vehicleColor', DEFAULT_COLOR) === c ? 'on' : ''}" style="--c:${c}"></button>`)
         .join('')}</div></div>
     </div>
+    <div class="set-group"><h3>Offline maps</h3>
+      <label class="set-row"><span>Save maps for drives<small>Keep the map along your route on this phone, for tunnels and dead spots</small></span><input type="checkbox" class="switch" id="s-offline" ${local.get('offlineMaps', true) ? 'checked' : ''}></label>
+      <div class="set-row"><span>Saved on this phone<small id="s-offline-size">…</small></span><div class="choice"><button id="s-offline-clear">Clear</button></div></div>
+    </div>
     <div class="set-group"><h3>Places</h3>
       <button class="set-row" id="s-home"><span>Home<small>${esc(state.home?.address || state.home?.name || 'Not set')}</small></span></button>
       <button class="set-row" id="s-work"><span>Work<small>${esc(state.work?.address || state.work?.name || 'Not set')}</small></span></button>
@@ -371,6 +386,14 @@ export function openSettings() {
       if (group.dataset.choice === 'theme') ctx.applyTheme();
     };
   });
+  // Saved maps live on this device only (like the vehicle), so they bypass the synced settings.
+  $('s-offline').onchange = (e) => local.set('offlineMaps', e.target.checked);
+  $('s-offline-clear').onclick = async () => {
+    await clearOfflineTiles();
+    toast('Saved maps cleared.');
+    renderOfflineSize();
+  };
+  renderOfflineSize();
   renderVoiceList();
   if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => $('voice-list') && renderVoiceList();
   // Kept on this device: it's about how this screen looks.

@@ -20,6 +20,7 @@ import { startPresence, checkIn } from './presence.js';
 import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
+import { prefetchRouteTiles } from './offline.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -197,6 +198,15 @@ async function boot() {
   if (/^\/drive\//.test(location.pathname)) startLocation();
   else welcome(startLocation);
   setInterval(() => loadReports(true), REPORT_REFRESH_MS);
+  // Dead spots don't stop the drive: the loaded route keeps guiding, and everything needing the
+  // network (rerouting, reports) resumes on its own when the signal is back.
+  addEventListener('offline', () => { if (mode === 'drive') toast('No connection. The saved map and directions keep working; rerouting needs internet.', 4000); });
+  addEventListener('online', () => {
+    if (mode !== 'drive') return;
+    toast('Back online.');
+    loadReports(true);
+    if (live?.offRoute && state.pos) reroute(state.pos);
+  });
   setInterval(() => applyTheme(), 5 * 60_000);
   startProbeSender(); // opt-in traffic sharing batches; silent unless the driver said yes
 
@@ -1390,6 +1400,12 @@ function startDrive() {
   computeOnRoute();
   loadReports(true);
   requestWakeLock();
+  // Save the corridor's map tiles while still online, so dead spots show map, not blank.
+  if (local.get('offlineMaps', true)) {
+    prefetchRouteTiles(route.coords, () => map.getStyle())
+      .then(({ fetched }) => { if (fetched > 50) toast('Map saved along this route — it keeps showing without signal.'); })
+      .catch(() => {});
+  }
 
   const useSim = state.simulate || (!state.pos && state.tester);
   if (useSim) {
@@ -1448,6 +1464,7 @@ function driveTick(fix) {
   }
 
   $('offroute').classList.toggle('hidden', !live.offRoute);
+  setOffrouteNote(live.offRoute);
   if (live.offRoute && (!offTrail.length || distance(offTrail.at(-1), fix.lngLat) > 5)) offTrail.push(fix.lngLat);
   if (live.offRoute) reroute(fix);
   if (live.arrived) arrive();
@@ -1539,6 +1556,19 @@ function renderEta() {
   $('eta-dist-unit').textContent = u;
 }
 
+// Off route with no connection, "Recalculating…" is a lie: say what's actually wrong instead.
+function setOffrouteNote(offRoute) {
+  const el = $('offroute');
+  const offline = offRoute && !navigator.onLine;
+  if (offline && !el.dataset.offline) {
+    el.dataset.offline = '1';
+    el.textContent = 'No connection — rejoin the highlighted route.';
+  } else if (!offline && el.dataset.offline) {
+    delete el.dataset.offline;
+    el.innerHTML = '<span class="spinner" aria-hidden="true"></span>Recalculating…';
+  }
+}
+
 async function reroute(fix, { force = false, note } = {}) {
   if (rerouting || (!force && Date.now() - lastReroute < REROUTE_GAP_MS) || !dest) return;
   rerouting = true;
@@ -1556,7 +1586,9 @@ async function reroute(fix, { force = false, note } = {}) {
     if (rs.closuresIgnored) toast("Couldn't find a way around a reported closure.");
     if (share) pushShare(true);
   } catch (e) {
-    toast(e.message);
+    // The common mid-drive failure is a dead spot: say so, and keep guiding on the loaded route.
+    if (!navigator.onLine || e.status === 0) toast("You're offline, so the route can't be recalculated. Stay on the highlighted route.", 4000);
+    else toast(e.message);
   } finally {
     rerouting = false;
   }
@@ -1941,6 +1973,7 @@ function scheduleReportLoad() {
 }
 
 async function loadReports(force = false) {
+  if (!navigator.onLine) return; // dead spot: reports refresh with the connection
   if (!map || map.getZoom() < 9 || mode === 'watch') {
     if (map && map.getZoom() < 9) for (const id of [...reportMarkers.keys()]) dropReport(id);
     return;
