@@ -149,11 +149,12 @@ function client(device) {
   };
 }
 
-// Search, routing and feedback need a checked-in spot; everything else (accounts, places, reports, trips) doesn't.
+// Search, routing, reverse and parking need a checked-in spot; feedback needs only a valid device id (it stays
+// open even when A2B is full). Everything else (accounts, places, reports, trips) doesn't.
 function needsSpot(method, path) {
   if (path === '/api/presence') return false;
   if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/reverse') || path.startsWith('/api/parking'))) return true;
-  return method === 'POST' && (path === '/api/route' || path === '/api/feedback');
+  return method === 'POST' && path === '/api/route';
 }
 
 let alice, bob;
@@ -717,7 +718,7 @@ test('parking near a destination: nearest first, with what kind it is and whethe
 
 // ---------- Hunt fixes (Oct 2026): one regression test per finding ----------
 
-test('route, search, reverse and feedback need a device and a spot', async () => {
+test('route, search and reverse need a device and a spot; feedback needs only a device', async () => {
   const route = (headers) =>
     worker.fetch(
       new Request('https://a2b.test/api/route', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ from: [13.4, 52.5], to: [13.4, 52.509] }) }),
@@ -731,28 +732,27 @@ test('route, search, reverse and feedback need a device and a spot', async () =>
     new Request('https://a2b.test/api/feedback', { method: 'POST', headers: { 'content-type': 'application/json', 'x-a2b-device': 'stranger-device-1' }, body: JSON.stringify({ message: 'hello there' }) }),
     env,
   );
-  assert.equal(fb.status, 503, 'feedback needs a spot too: minting a device id is not enough');
+  assert.equal(fb.status, 201, 'feedback stays open with just a device id, even with no spot');
+  const fbBare = await worker.fetch(
+    new Request('https://a2b.test/api/feedback', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'hello there' }) }),
+    env,
+  );
+  assert.equal(fbBare.status, 400, 'feedback without any device id is still refused');
 });
 
-test('sign-ups need a device and are throttled per network', async () => {
-  const ip = { 'cf-connecting-ip': '10.9.9.10', 'x-a2b-device': 'signup-device-1' };
-  const signup = (email, headers = ip) =>
+test('sign-ups need a device; a taken address gets the same neutral 409', async () => {
+  const device = { 'x-a2b-device': 'signup-device-1' };
+  const signup = (email, headers = { 'content-type': 'application/json', ...device }) =>
     worker.fetch(
-      new Request('https://a2b.test/api/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ email, password: 'password1', name: 'Farmer' }) }),
+      new Request('https://a2b.test/api/auth/signup', { method: 'POST', headers, body: JSON.stringify({ email, password: 'password1', name: 'Farmer' }) }),
       env,
     );
   assert.equal((await signup('nodevice@test.com', { 'content-type': 'application/json' })).status, 400);
-  try {
-    for (let i = 0; i < 5; i++) assert.equal((await signup(`farmer${i}@test.com`)).status, 201);
-    assert.equal((await signup('farmer5@test.com')).status, 429, 'farming accounts takes a new network');
-    // A taken address gets the same answer either way, so sign-ups can't list accounts.
-    await env.DB.prepare("DELETE FROM rate_limits WHERE key LIKE 'signup:%'").run();
-    const dup = await signup('farmer0@test.com');
-    assert.equal(dup.status, 409);
-    assert.equal((await dup.json()).error, 'This email address is already registered.');
-  } finally {
-    await env.DB.prepare("DELETE FROM rate_limits WHERE key LIKE 'signup:%'").run();
-  }
+  assert.equal((await signup('farmer0@test.com')).status, 201);
+  // A taken address gets the same answer either way (plus a UNIQUE race guard in the endpoint).
+  const dup = await signup('farmer0@test.com');
+  assert.equal(dup.status, 409);
+  assert.equal((await dup.json()).error, 'This email address is already registered.');
 });
 
 test('reports far from the driver are refused when their position is known', async () => {
@@ -789,18 +789,20 @@ test('changing the password ends other sessions and rotates your own', async () 
   assert.equal((await s1('GET', '/api/me')).body.user.name, 'Pascal', 'your own session keeps working');
 });
 
-test('sign-ins are throttled per network before passwords are checked', async () => {
+test('sign-ins are throttled per address, not per network', async () => {
   const attempt = (email) =>
     worker.fetch(
-      new Request('https://a2b.test/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '10.9.9.11' }, body: JSON.stringify({ email, password: 'wrong-password' }) }),
+      new Request('https://a2b.test/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password: 'wrong-password' }) }),
       env,
     );
   try {
-    for (let i = 0; i < 30; i++) assert.equal((await attempt(`rotating${i}@test.com`)).status, 401);
-    assert.equal((await attempt('one-more@test.com')).status, 429, 'rotating addresses cannot burn CPU forever');
+    // One address hammered: stops at 8 wrong passwords a quarter hour.
+    for (let i = 0; i < 8; i++) assert.equal((await attempt('hammered@test.com')).status, 401);
+    assert.equal((await attempt('hammered@test.com')).status, 429, 'wrong passwords for one account stop here');
+    // A different address is unaffected: there is no shared per-network throttle.
+    assert.equal((await attempt('someone-else@test.com')).status, 401);
   } finally {
-    await env.DB.prepare("DELETE FROM rate_limits WHERE key LIKE 'login:%'").run();
-    await env.DB.prepare("DELETE FROM login_failures WHERE email LIKE 'rotating%'").run();
+    await env.DB.prepare("DELETE FROM login_failures WHERE email IN ('hammered@test.com', 'someone-else@test.com')").run();
   }
 });
 
@@ -868,6 +870,12 @@ test('a forgotten password is recovered with the code shown at sign-up', async (
   assert.equal((await c('GET', '/api/me')).body.user, null, 'recovery signs every device out');
   assert.equal((await other('POST', '/api/auth/login', { email: 'loss@test.com', password: 'newpassword16' })).status, 200, 'the new password works');
   assert.equal((await other('POST', '/api/auth/recover', { email: 'loss@test.com', code: signup.body.recovery_code, password: 'anotherpassword16' })).status, 401, 'a code works once');
+  // No expiry: a code from sign-up day still works months later.
+  const old = client();
+  const signupOld = await old('POST', '/api/auth/signup', { email: 'oldcode@test.com', password: 'password18', name: 'Old' });
+  const oldId = (await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind('oldcode@test.com').first()).id;
+  await env.DB.prepare('UPDATE recovery_codes SET created_at = ? WHERE user_id = ?').bind(Date.now() - 90 * 86400_000, oldId).run();
+  assert.equal((await old('POST', '/api/auth/recover', { email: 'oldcode@test.com', code: signupOld.body.recovery_code, password: 'newpassword18' })).status, 200, 'a 90-day-old code still resets the password');
 });
 
 test('sessions slide while driving and can be revoked one by one', async () => {
@@ -891,14 +899,11 @@ test('sessions slide while driving and can be revoked one by one', async () => {
   assert.equal((await a('DELETE', '/api/me/sessions/deadbeefcafe')).status, 404);
 });
 
-test('presence check-ins are throttled per network', async () => {
-  const ip = { 'cf-connecting-ip': '10.9.9.9' };
-  const check = (d) => worker.fetch(new Request('https://a2b.test/api/presence', { method: 'POST', headers: { 'x-a2b-device': d, ...ip } }), env);
+test('presence check-ins admit new devices without a per-network throttle', async () => {
+  const check = (d) => worker.fetch(new Request('https://a2b.test/api/presence', { method: 'POST', headers: { 'x-a2b-device': d } }), env);
   try {
-    for (let i = 0; i < 30; i++) assert.equal((await check(`hoard-device-${i}`)).status, 200);
-    assert.equal((await check('hoard-device-31')).status, 429, 'minting devices takes a new network');
+    for (let i = 0; i < 5; i++) assert.equal((await check(`fresh-device-${i}`)).status, 200);
   } finally {
-    await env.DB.prepare("DELETE FROM rate_limits WHERE key LIKE 'presence:%'").run();
     await env.DB.prepare('DELETE FROM presence').run();
   }
 });

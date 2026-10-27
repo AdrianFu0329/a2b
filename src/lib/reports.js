@@ -124,23 +124,28 @@ export function reportsRepo(db) {
         const fresh = await db.prepare('SELECT r.*, u.name AS reporter FROM reports r JOIN users u ON u.id = r.user_id WHERE r.id = ?').bind(id).first();
         return { report: publicReport(fresh, user.id), points: 0 };
       }
-      // One atomic update moves every counter, so a vote is never lost between reading and writing them.
+      // One atomic update moves the counters, so two votes at the same moment can't lose one between
+      // reading and writing them. Lifetime and removal are derived from the fresh row afterwards.
       let dropped = 0;
       if (opposite) {
         dropped = (await db.prepare('DELETE FROM votes WHERE report_id = ? AND user_id = ? AND vote = ?').bind(id, user.id, opposite).run()).meta.changes;
       }
-      const next = {
-        thanks: r.thanks + (vote === 'thanks' ? 1 : 0),
-        still: Math.max(0, r.still + (vote === 'still' ? 1 : 0) - (opposite === 'still' && dropped ? 1 : 0)),
-        gone: Math.max(0, r.gone + (vote === 'gone' ? 1 : 0) - (opposite === 'gone' && dropped ? 1 : 0)),
-        expires_at: vote === 'still' ? extendedExpiry(r.type, r.expires_at, now) : r.expires_at,
-        removed: r.removed,
-      };
-      if (vote === 'gone' && (own || shouldRemove({ still: next.still, gone: next.gone }))) next.removed = 1;
       await db
-        .prepare('UPDATE reports SET thanks = ?, still = ?, gone = ?, expires_at = ?, removed = ? WHERE id = ?')
-        .bind(next.thanks, next.still, next.gone, next.expires_at, next.removed, id)
+        .prepare('UPDATE reports SET thanks = thanks + ?, still = MAX(0, still + ?), gone = MAX(0, gone + ?) WHERE id = ?')
+        .bind(
+          vote === 'thanks' ? 1 : 0,
+          (vote === 'still' ? 1 : 0) - (opposite === 'still' && dropped ? 1 : 0),
+          (vote === 'gone' ? 1 : 0) - (opposite === 'gone' && dropped ? 1 : 0),
+          id,
+        )
         .run();
+      const counted = await db.prepare('SELECT r.*, u.name AS reporter FROM reports r JOIN users u ON u.id = r.user_id WHERE r.id = ?').bind(id).first();
+      let expires_at = counted.expires_at, removed = counted.removed;
+      if (vote === 'still') expires_at = extendedExpiry(counted.type, counted.expires_at, now);
+      if (vote === 'gone' && (own || shouldRemove({ still: counted.still, gone: counted.gone }))) removed = 1;
+      if (expires_at !== counted.expires_at || removed !== counted.removed) {
+        await db.prepare('UPDATE reports SET expires_at = ?, removed = ? WHERE id = ?').bind(expires_at, removed, id).run();
+      }
       // The reporter earns a point whenever someone thanks or confirms them; voters earn one for helping.
       let points = 0;
       const stmts = [];
@@ -151,7 +156,7 @@ export function reportsRepo(db) {
       }
       if (stmts.length) await db.batch(stmts);
       const fresh = await db.prepare('SELECT r.*, u.name AS reporter FROM reports r JOIN users u ON u.id = r.user_id WHERE r.id = ?').bind(id).first();
-      return { report: publicReport({ ...fresh, ...next }, user.id), points, removed: Boolean(next.removed) };
+      return { report: publicReport({ ...fresh, expires_at, removed }, user.id), points, removed: Boolean(removed) };
     },
 
     async closuresNear([w, s, e, n]) {

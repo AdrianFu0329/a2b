@@ -18,12 +18,8 @@ import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
 
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
-const LOGIN_MAX_FAILURES = 8;
-const LOGIN_MAX_PER_IP = 30; // rotating emails can't dodge the per-address throttle: the KDF never runs past this
-const SIGNUP_WINDOW_MS = 60 * 60_000;
-const SIGNUP_MAX_PER_IP = 5; // farming accounts takes a new network every five
-const PRESENCE_NEW_WINDOW_MS = 60 * 60_000;
-const PRESENCE_NEW_PER_IP = 30; // minting devices is free, so new ones are throttled per network
+const LOGIN_MAX_FAILURES = 8; // per address: wrong passwords for one account stop here (per-network throttles
+// were dropped: behind the Pages proxy every client shares one IP, so they would lock out everyone at once)
 const RECENTS_KEPT = 20;
 const FULL_MESSAGE = 'A2B is full right now. You will be let in when a spot opens.';
 const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean' };
@@ -52,7 +48,6 @@ export default {
       env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
       env.DB.prepare('DELETE FROM trips WHERE updated_at < ?').bind(now - 2 * 86400_000),
       env.DB.prepare('DELETE FROM login_failures WHERE at < ?').bind(now - LOGIN_WINDOW_MS),
-      env.DB.prepare('DELETE FROM rate_limits WHERE at < ?').bind(now - SIGNUP_WINDOW_MS),
       env.DB.prepare('DELETE FROM presence WHERE last_seen < ?').bind(now - 86400_000),
       env.DB.prepare('DELETE FROM usage_devices WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
       env.DB.prepare('DELETE FROM usage_daily WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
@@ -84,11 +79,6 @@ async function route(request, env, url) {
 
   if (path === '/api/presence' && method === 'POST') {
     if (!validDevice(device)) throw httpError('Missing device id.', 400);
-    const seen = await db.prepare('SELECT 1 FROM presence WHERE device = ?').bind(device).first();
-    const ip = clientIp(request);
-    if (!seen && ip && (await tooMany(db, `presence:${ip}`, PRESENCE_NEW_PER_IP, PRESENCE_NEW_WINDOW_MS))) {
-      throw httpError('Too many devices from your network. Try again later.', 429);
-    }
     const result = await presence.checkIn(device, user, limits(env), { always: Boolean(user && isTester(env, user)) });
     await usage.sawDevice(device, user, result).catch((e) => console.warn('usage', e.message));
     return json(result);
@@ -103,7 +93,9 @@ async function route(request, env, url) {
   // ---------- Feedback ----------
   // From Settings › Feedback, with or without an account; read by the owner in Settings › Testing.
   if (path === '/api/feedback' && method === 'POST') {
-    await needSpot(); // signed-in or checked-in: self-minted device ids alone don't write to the database
+    // Open to anyone with a valid device id, even when A2B is full: that's exactly when feedback is most
+    // needed. The 10-a-day limit below still applies.
+    if (!validDevice(device)) throw httpError('Missing device id. Update the app to the latest version.', 400);
     const body = await readJson(request);
     const message = String(body.message ?? '').trim().slice(0, FEEDBACK_MAX);
     if (message.length < 3) throw httpError('Write a few words first.', 400);
@@ -136,14 +128,13 @@ async function route(request, env, url) {
   // ---------- Accounts ----------
   if (path === '/api/auth/signup' && method === 'POST') {
     if (!validDevice(device)) throw httpError('Missing device id. Update the app to the latest version.', 400);
-    const ip = clientIp(request);
-    if (ip && (await tooMany(db, `signup:${ip}`, SIGNUP_MAX_PER_IP, SIGNUP_WINDOW_MS))) throw httpError('Too many accounts created from your network. Try again in an hour.', 429);
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
     if (!email) throw httpError('Enter a valid email address.', 400);
     const bad = validatePassword(body.password);
     if (bad) throw httpError(bad, 400);
-    // The message stays the same whether the address is taken: different answers would let anyone list accounts.
+    // The message stays the same whether the address is taken, but the status still differs (409 vs 201),
+    // so this endpoint can still tell whether an address is registered.
     if (await db.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) throw httpError('This email address is already registered.', 409);
     const { hash, salt } = await hashPassword(body.password);
     const settings = cleanSettings(body.settings ?? {});
@@ -163,9 +154,6 @@ async function route(request, env, url) {
   }
 
   if (path === '/api/auth/login' && method === 'POST') {
-    const ip = clientIp(request);
-    // Before the password hash runs: rotating addresses can't turn the KDF into a CPU fire.
-    if (ip && (await tooMany(db, `login:${ip}`, LOGIN_MAX_PER_IP, LOGIN_WINDOW_MS))) throw httpError('Too many sign-in attempts from your network. Try again in 15 minutes.', 429);
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
     if (!email) throw httpError('Wrong email or password.', 401);
@@ -543,22 +531,6 @@ async function withSession(request, db, row, status, { device = null, recovery =
   const body = { user: publicUser(row) };
   if (recovery) body.recovery_code = recovery; // shown once: there is no other way to see it again
   return json(body, status, { 'set-cookie': sessionCookie(request, token, expires) });
-}
-
-// The network in front of Workers (Cloudflare gives cf-connecting-ip); absent locally and in tests, where no
-// per-network throttle applies.
-function clientIp(request) {
-  const cf = (request.headers.get('cf-connecting-ip') ?? '').trim();
-  if (cf) return cf.slice(0, 80);
-  const first = (request.headers.get('x-forwarded-for') ?? '').split(',')[0].trim();
-  return first ? first.slice(0, 80) : null;
-}
-
-async function tooMany(db, key, max, windowMs) {
-  const row = await db.prepare('SELECT COUNT(*) AS n FROM rate_limits WHERE key = ? AND at > ?').bind(key, Date.now() - windowMs).first();
-  if (row.n >= max) return true;
-  await db.prepare('INSERT INTO rate_limits (key, at) VALUES (?, ?)').bind(key, Date.now()).run();
-  return false;
 }
 
 // The driver's last shared-drive position, when it's fresh: what "around you" means for a report.

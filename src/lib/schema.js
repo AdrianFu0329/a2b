@@ -37,8 +37,6 @@ CREATE TABLE IF NOT EXISTS usage_daily (day TEXT PRIMARY KEY, peak_active INTEGE
 CREATE TABLE IF NOT EXISTS usage_devices (day TEXT NOT NULL, device TEXT NOT NULL, account INTEGER NOT NULL DEFAULT 0, turned_away INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, device));
 CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY, user_id INTEGER, device TEXT, message TEXT NOT NULL, app TEXT, ua TEXT, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS feedback_device ON feedback (device, created_at);
-CREATE TABLE IF NOT EXISTS rate_limits (key TEXT NOT NULL, at INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS rate_limits_key ON rate_limits (key, at);
 CREATE TABLE IF NOT EXISTS recovery_codes (user_id INTEGER PRIMARY KEY, code_hash TEXT NOT NULL, created_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)
 `;
 
