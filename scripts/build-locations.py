@@ -74,7 +74,7 @@ def main():
     places = step('shops and landmarks', f"""
         WITH p AS (
           SELECT names.primary AS name,
-                 coalesce(addresses[1].freeform, '') || CASE WHEN addresses[1].locality IS NULL THEN '' ELSE ', ' || addresses[1].locality END AS address,
+                 concat_ws(', ', nullif(trim(addresses[1].freeform), ''), nullif(trim(addresses[1].locality), '')) AS address,
                  coalesce(basic_category, taxonomy.primary, '') AS category, (bbox.ymin + bbox.ymax) / 2 AS lat, (bbox.xmin + bbox.xmax) / 2 AS lng,
                  contains(CAST(sources AS VARCHAR), 'OpenStreetMap') AS osm, addresses[1].country AS country
           FROM read_parquet('{base}/theme=places/type=place/*', hive_partitioning=1)
