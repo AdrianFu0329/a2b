@@ -213,6 +213,7 @@ function openRecoveryCode(code) {
 // Locked out without a password: the recovery code shown once at sign-up sets a new one. A form panel, not
 // prompts, so every field stays visible; wrong answers read the same so the form can't list accounts.
 function recoverAccount() {
+  $('auth').classList.add('hidden'); // the reset form is a panel; the sign-in screen would sit on top of it
   openPanel('Reset your password', `<div class="feedback">
     <p class="hint">Enter the account email, the recovery code shown when you signed up, and a new password.</p>
     <input id="rc-email" class="field" type="email" autocomplete="email" placeholder="Account email">
