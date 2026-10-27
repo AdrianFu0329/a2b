@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, pass_hash TEXT NOT NULL, pass_salt TEXT NOT NULL,
   points INTEGER NOT NULL DEFAULT 0, home TEXT, work TEXT, settings TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, device TEXT, created_at INTEGER NOT NULL DEFAULT 0, last_seen INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);
 CREATE TABLE IF NOT EXISTS reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, type TEXT NOT NULL, subtype TEXT, lat REAL NOT NULL, lng REAL NOT NULL,
@@ -36,7 +36,10 @@ CREATE INDEX IF NOT EXISTS presence_seen ON presence (last_seen);
 CREATE TABLE IF NOT EXISTS usage_daily (day TEXT PRIMARY KEY, peak_active INTEGER NOT NULL DEFAULT 0, peak_at INTEGER, signups INTEGER NOT NULL DEFAULT 0, routes INTEGER NOT NULL DEFAULT 0, searches INTEGER NOT NULL DEFAULT 0, tomtom INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS usage_devices (day TEXT NOT NULL, device TEXT NOT NULL, account INTEGER NOT NULL DEFAULT 0, turned_away INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, device));
 CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY, user_id INTEGER, device TEXT, message TEXT NOT NULL, app TEXT, ua TEXT, created_at INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS feedback_device ON feedback (device, created_at)
+CREATE INDEX IF NOT EXISTS feedback_device ON feedback (device, created_at);
+CREATE TABLE IF NOT EXISTS rate_limits (key TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS rate_limits_key ON rate_limits (key, at);
+CREATE TABLE IF NOT EXISTS recovery_codes (user_id INTEGER PRIMARY KEY, code_hash TEXT NOT NULL, created_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)
 `;
 
 let ready = null;

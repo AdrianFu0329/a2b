@@ -25,6 +25,8 @@ export function initPanels(callbacks) {
   $('m-install').onclick = install;
   $('auth-switch').onclick = () => setAuthMode(authMode === 'signup' ? 'login' : 'signup');
   $('auth-form').onsubmit = submitAuth;
+  const forgot = $('auth-forgot');
+  if (forgot) forgot.onclick = recoverAccount;
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     installPrompt = e;
@@ -109,6 +111,8 @@ function setAuthMode(mode) {
   document.querySelector('#auth-form .name-row').classList.toggle('hidden', !signup);
   document.querySelector('#auth-form [name=password]').autocomplete = signup ? 'new-password' : 'current-password';
   $('auth-error').classList.add('hidden');
+  const forgot = $('auth-forgot');
+  if (forgot) forgot.classList.toggle('hidden', signup);
 }
 
 async function submitAuth(e) {
@@ -126,11 +130,13 @@ async function submitAuth(e) {
   busy(authMode === 'signup' ? 'Creating account…' : 'Logging in…');
   $('auth-error').classList.add('hidden');
   try {
-    await api(`/api/auth/${authMode}`, { method: 'POST', body });
+    const res = await api(`/api/auth/${authMode}`, { method: 'POST', body });
     await refreshMe();
     if (authMode === 'signup') {
       busy('Copying your places…');
       await bringGuestPlaces();
+      // The recovery code is shown once and never again: a prompt keeps it copyable so it can be written down.
+      if (res.recovery_code) prompt('Write down this recovery code. It resets your password if you ever lose it:', res.recovery_code);
     }
     $('auth').classList.add('hidden');
     $('auth-form').reset();
@@ -172,6 +178,28 @@ async function logout() {
   state.stats = null;
   await ctx.onUserChanged();
   toast('Logged out');
+}
+
+// Locked out without a password: the recovery code shown once at sign-up sets a new one. Every prompt can be
+// cancelled; wrong answers read the same so the form can't list accounts.
+async function recoverAccount() {
+  const email = prompt('Account email:');
+  if (!email) return;
+  const code = prompt('Recovery code (the one shown when you signed up):');
+  if (!code) return;
+  const password = prompt('New password (at least 8 characters):');
+  if (!password) return;
+  try {
+    await api('/api/auth/recover', { method: 'POST', body: { email, code, password } });
+    await refreshMe();
+    $('auth').classList.add('hidden');
+    $('auth-form').reset();
+    await ctx.onUserChanged();
+    toast(`Welcome back, ${state.user.name}!`);
+  } catch (err) {
+    $('auth-error').textContent = err.message;
+    $('auth-error').classList.remove('hidden');
+  }
 }
 
 // ================= Panels =================

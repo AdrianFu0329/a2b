@@ -10,12 +10,13 @@ import { httpError } from './providers.js';
 const MIN = 60_000;
 const MERGE_RADIUS_M = 150;
 const MERGE_WINDOW = 15 * MIN;
-const REPORT_COOLDOWN = 20_000;
+const REPORT_COOLDOWN = 60_000; // one report a minute per driver: fast enough on the road, slow for a script
+const REPORT_RADIUS_M = 10_000; // a report should come from near it: within this of the driver's known position
 
-// Each "still there" adds half the type's life, but a report never lives more than 3 lifetimes from now.
+// Each "still there" adds a quarter of the type's life, but a report never lives more than 2 lifetimes from now.
 export function extendedExpiry(type, currentExpiry, now = Date.now()) {
   const life = REPORT_TYPES[type].life * MIN;
-  return Math.min(Math.max(currentExpiry, now) + life / 2, now + life * 3);
+  return Math.min(Math.max(currentExpiry, now) + life / 4, now + life * 2);
 }
 
 // Removed when "not there" clearly outweighs "still there".
@@ -59,11 +60,15 @@ export function reportsRepo(db) {
     },
 
     // roadAt(point, heading): where to block the road for a closure (see roadMidpoint), or null.
-    async create(user, body, { roadAt } = {}) {
+    // reporterAt: the driver's last known position ([lng, lat]) or null when it isn't known.
+    async create(user, body, { roadAt, reporterAt = null } = {}) {
       const { type, subtype = null, comment = null } = body;
       const lat = Number(body.lat), lng = Number(body.lng);
       if (!isValidReport(type, subtype)) throw httpError('Unknown report type.', 400);
       if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) throw httpError('Report needs a location.', 400);
+      // Reports from far away reroute drivers who are actually there, so when the driver's position is known
+      // the report has to be near it. Without a known position (no shared drive lately) it still goes through.
+      if (reporterAt && distance(reporterAt, [lng, lat]) > REPORT_RADIUS_M) throw httpError('You can only report what is around you.', 403);
       const now = Date.now();
 
       const near = (
@@ -73,8 +78,9 @@ export function reportsRepo(db) {
           .all()
       ).results.find((r) => distance([r.lng, r.lat], [lng, lat]) <= MERGE_RADIUS_M);
       if (near) {
-        // Someone already reported this: count it as a confirmation instead of a second pin.
-        const res = await this.vote(user, near.id, 'still');
+        // Someone already reported this: it counts as a thanks, not a second pin and not a life-extending
+        // confirmation (merged confirmations used to inflate "still there" until nothing could remove the report).
+        const res = await this.vote(user, near.id, 'thanks');
         return { ...res, merged: true };
       }
 
@@ -108,34 +114,44 @@ export function reportsRepo(db) {
 
       // still and gone are one opinion per driver; switching replaces the old one.
       const opposite = vote === 'still' ? 'gone' : vote === 'gone' ? 'still' : null;
-      const had = (await db.prepare('SELECT vote FROM votes WHERE report_id = ? AND user_id = ?').bind(id, user.id).all()).results.map((v) => v.vote);
-      if (had.includes(vote)) return { report: publicReport(r, user.id), points: 0 };
-
       const now = Date.now();
-      const next = { ...r };
-      const stmts = [db.prepare('INSERT INTO votes (report_id, user_id, vote, created_at) VALUES (?, ?, ?, ?)').bind(id, user.id, vote, now)];
-      if (opposite && had.includes(opposite)) {
-        stmts.push(db.prepare('DELETE FROM votes WHERE report_id = ? AND user_id = ? AND vote = ?').bind(id, user.id, opposite));
-        next[opposite] = Math.max(0, next[opposite] - 1);
+      // Claim the vote first: concurrent taps from two devices can't both add to the count.
+      const claimed = await db
+        .prepare('INSERT OR IGNORE INTO votes (report_id, user_id, vote, created_at) VALUES (?, ?, ?, ?)')
+        .bind(id, user.id, vote, now)
+        .run();
+      if (!claimed.meta.changes) {
+        const fresh = await db.prepare('SELECT r.*, u.name AS reporter FROM reports r JOIN users u ON u.id = r.user_id WHERE r.id = ?').bind(id).first();
+        return { report: publicReport(fresh, user.id), points: 0 };
       }
-      next[vote] += 1;
-      if (vote === 'still') next.expires_at = extendedExpiry(r.type, r.expires_at, now);
-      if (vote === 'gone' && (own || shouldRemove(next))) next.removed = 1;
-
-      stmts.push(
-        db
-          .prepare('UPDATE reports SET thanks = ?, still = ?, gone = ?, expires_at = ?, removed = ? WHERE id = ?')
-          .bind(next.thanks, next.still, next.gone, next.expires_at, next.removed, id),
-      );
+      // One atomic update moves every counter, so a vote is never lost between reading and writing them.
+      let dropped = 0;
+      if (opposite) {
+        dropped = (await db.prepare('DELETE FROM votes WHERE report_id = ? AND user_id = ? AND vote = ?').bind(id, user.id, opposite).run()).meta.changes;
+      }
+      const next = {
+        thanks: r.thanks + (vote === 'thanks' ? 1 : 0),
+        still: Math.max(0, r.still + (vote === 'still' ? 1 : 0) - (opposite === 'still' && dropped ? 1 : 0)),
+        gone: Math.max(0, r.gone + (vote === 'gone' ? 1 : 0) - (opposite === 'gone' && dropped ? 1 : 0)),
+        expires_at: vote === 'still' ? extendedExpiry(r.type, r.expires_at, now) : r.expires_at,
+        removed: r.removed,
+      };
+      if (vote === 'gone' && (own || shouldRemove({ still: next.still, gone: next.gone }))) next.removed = 1;
+      await db
+        .prepare('UPDATE reports SET thanks = ?, still = ?, gone = ?, expires_at = ?, removed = ? WHERE id = ?')
+        .bind(next.thanks, next.still, next.gone, next.expires_at, next.removed, id)
+        .run();
       // The reporter earns a point whenever someone thanks or confirms them; voters earn one for helping.
       let points = 0;
+      const stmts = [];
       if (!own && vote !== 'gone') stmts.push(db.prepare('UPDATE users SET points = points + 1 WHERE id = ?').bind(r.user_id));
-      if (!own && vote !== 'thanks' && !had.length) {
+      if (!own && vote !== 'thanks' && !dropped) {
         points = 1;
         stmts.push(db.prepare('UPDATE users SET points = points + 1 WHERE id = ?').bind(user.id));
       }
-      await db.batch(stmts);
-      return { report: publicReport(next, user.id), points, removed: Boolean(next.removed) };
+      if (stmts.length) await db.batch(stmts);
+      const fresh = await db.prepare('SELECT r.*, u.name AS reporter FROM reports r JOIN users u ON u.id = r.user_id WHERE r.id = ?').bind(id).first();
+      return { report: publicReport({ ...fresh, ...next }, user.id), points, removed: Boolean(next.removed) };
     },
 
     async closuresNear([w, s, e, n]) {

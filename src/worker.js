@@ -3,10 +3,10 @@
 
 import { ensureSchema } from './lib/schema.js';
 import {
-  hashPassword, verifyPassword, normalizeEmail, validatePassword, cleanName, createSession, currentUser, destroySession,
-  sessionCookie, publicUser,
+  hashPassword, verifyPassword, normalizeEmail, validatePassword, cleanName, createSession, createRecoveryCode,
+  consumeRecoveryCode, currentUser, destroySession, sessionCookie, publicUser, sha256, readCookie,
 } from './lib/auth.js';
-import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
+import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox, corridorBox, routeReportBox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
 import { constructionTwins } from './lib/construction.js';
 import { liveTraffic, applyTraffic } from './lib/traffic.js';
 import { loadCameras, camerasAlong } from './lib/cameras.js';
@@ -19,6 +19,11 @@ import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_FAILURES = 8;
+const LOGIN_MAX_PER_IP = 30; // rotating emails can't dodge the per-address throttle: the KDF never runs past this
+const SIGNUP_WINDOW_MS = 60 * 60_000;
+const SIGNUP_MAX_PER_IP = 5; // farming accounts takes a new network every five
+const PRESENCE_NEW_WINDOW_MS = 60 * 60_000;
+const PRESENCE_NEW_PER_IP = 30; // minting devices is free, so new ones are throttled per network
 const RECENTS_KEPT = 20;
 const FULL_MESSAGE = 'A2B is full right now. You will be let in when a spot opens.';
 const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean' };
@@ -47,6 +52,7 @@ export default {
       env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
       env.DB.prepare('DELETE FROM trips WHERE updated_at < ?').bind(now - 2 * 86400_000),
       env.DB.prepare('DELETE FROM login_failures WHERE at < ?').bind(now - LOGIN_WINDOW_MS),
+      env.DB.prepare('DELETE FROM rate_limits WHERE at < ?').bind(now - SIGNUP_WINDOW_MS),
       env.DB.prepare('DELETE FROM presence WHERE last_seen < ?').bind(now - 86400_000),
       env.DB.prepare('DELETE FROM usage_devices WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
       env.DB.prepare('DELETE FROM usage_daily WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
@@ -66,18 +72,23 @@ async function route(request, env, url) {
     return user;
   };
   // Search and routing use the free public servers, so they need one of the spots (see presence.js).
-  // Older copies of the app don't send a device id; they're let through until they update.
   const presence = presenceRepo(db);
   const usage = usageRepo(db);
   const count = (field) => usage.bump(field).catch((e) => console.warn('usage', e.message)); // never fails a request
   const device = request.headers.get('x-a2b-device');
   const needSpot = async () => {
-    if (!validDevice(device) || (user && isTester(env, user)) || (await presence.hasSpot(device))) return;
+    if (!validDevice(device)) throw httpError('Missing device id. Update the app to the latest version.', 400);
+    if ((user && isTester(env, user)) || (await presence.hasSpot(device))) return;
     throw Object.assign(httpError(FULL_MESSAGE, 503), { code: 'full' });
   };
 
   if (path === '/api/presence' && method === 'POST') {
     if (!validDevice(device)) throw httpError('Missing device id.', 400);
+    const seen = await db.prepare('SELECT 1 FROM presence WHERE device = ?').bind(device).first();
+    const ip = clientIp(request);
+    if (!seen && ip && (await tooMany(db, `presence:${ip}`, PRESENCE_NEW_PER_IP, PRESENCE_NEW_WINDOW_MS))) {
+      throw httpError('Too many devices from your network. Try again later.', 429);
+    }
     const result = await presence.checkIn(device, user, limits(env), { always: Boolean(user && isTester(env, user)) });
     await usage.sawDevice(device, user, result).catch((e) => console.warn('usage', e.message));
     return json(result);
@@ -92,6 +103,7 @@ async function route(request, env, url) {
   // ---------- Feedback ----------
   // From Settings › Feedback, with or without an account; read by the owner in Settings › Testing.
   if (path === '/api/feedback' && method === 'POST') {
+    await needSpot(); // signed-in or checked-in: self-minted device ids alone don't write to the database
     const body = await readJson(request);
     const message = String(body.message ?? '').trim().slice(0, FEEDBACK_MAX);
     if (message.length < 3) throw httpError('Write a few words first.', 400);
@@ -123,23 +135,37 @@ async function route(request, env, url) {
 
   // ---------- Accounts ----------
   if (path === '/api/auth/signup' && method === 'POST') {
+    if (!validDevice(device)) throw httpError('Missing device id. Update the app to the latest version.', 400);
+    const ip = clientIp(request);
+    if (ip && (await tooMany(db, `signup:${ip}`, SIGNUP_MAX_PER_IP, SIGNUP_WINDOW_MS))) throw httpError('Too many accounts created from your network. Try again in an hour.', 429);
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
     if (!email) throw httpError('Enter a valid email address.', 400);
     const bad = validatePassword(body.password);
     if (bad) throw httpError(bad, 400);
-    if (await db.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) throw httpError('An account with this email already exists. Log in instead.', 409);
+    // The message stays the same whether the address is taken: different answers would let anyone list accounts.
+    if (await db.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) throw httpError('This email address is already registered.', 409);
     const { hash, salt } = await hashPassword(body.password);
     const settings = cleanSettings(body.settings ?? {});
-    const row = await db
-      .prepare('INSERT INTO users (email, name, pass_hash, pass_salt, settings, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING *')
-      .bind(email, cleanName(body.name, email), hash, salt, JSON.stringify(settings), Date.now())
-      .first();
+    let row;
+    try {
+      row = await db
+        .prepare('INSERT INTO users (email, name, pass_hash, pass_salt, settings, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING *')
+        .bind(email, cleanName(body.name, email), hash, salt, JSON.stringify(settings), Date.now())
+        .first();
+    } catch (e) {
+      // Two sign-ups for the same address at once: the loser gets the same answer as a plain duplicate.
+      if (String(e.message).includes('UNIQUE')) throw httpError('This email address is already registered.', 409);
+      throw e;
+    }
     await count('signups');
-    return withSession(request, db, row, 201);
+    return withSession(request, db, row, 201, { device, recovery: await createRecoveryCode(db, row.id) });
   }
 
   if (path === '/api/auth/login' && method === 'POST') {
+    const ip = clientIp(request);
+    // Before the password hash runs: rotating addresses can't turn the KDF into a CPU fire.
+    if (ip && (await tooMany(db, `login:${ip}`, LOGIN_MAX_PER_IP, LOGIN_WINDOW_MS))) throw httpError('Too many sign-in attempts from your network. Try again in 15 minutes.', 429);
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
     if (!email) throw httpError('Wrong email or password.', 401);
@@ -151,7 +177,26 @@ async function route(request, env, url) {
       throw httpError('Wrong email or password.', 401);
     }
     await db.prepare('DELETE FROM login_failures WHERE email = ?').bind(email).run();
-    return withSession(request, db, row, 200);
+    return withSession(request, db, row, 200, { device });
+  }
+
+  // A lost password shouldn't lose the account: the recovery code shown once at sign-up resets it. The answers
+  // stay the same for unknown addresses, so the endpoint can't list who has an account.
+  if (path === '/api/auth/recover' && method === 'POST') {
+    const body = await readJson(request);
+    const email = normalizeEmail(body.email);
+    const bad = validatePassword(body.password);
+    if (bad) throw httpError(bad, 400);
+    const row = email ? await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() : null;
+    if (!row || !(await consumeRecoveryCode(db, row.id, body.code))) throw httpError('Wrong email or recovery code.', 401);
+    const { hash, salt } = await hashPassword(body.password);
+    await db.batch([
+      db.prepare('UPDATE users SET pass_hash = ?, pass_salt = ? WHERE id = ?').bind(hash, salt, row.id),
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.id),
+      db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(row.id),
+    ]);
+    const me = await db.prepare('SELECT * FROM users WHERE id = ?').bind(row.id).first();
+    return withSession(request, db, me, 200, { device });
   }
 
   if (path === '/api/auth/logout' && method === 'POST') {
@@ -161,13 +206,17 @@ async function route(request, env, url) {
 
   if (path === '/api/me' && method === 'GET') {
     if (!user) return json({ user: null });
-    return json({ user: publicUser(user), stats: await reports.stats(user.id), tester: isTester(env, user) });
+    const sessions = (
+      await db.prepare('SELECT token_hash, device, last_seen FROM sessions WHERE user_id = ? ORDER BY last_seen DESC').bind(user.id).all()
+    ).results.map((s) => ({ id: s.token_hash.slice(0, 12), device: s.device, last_seen: s.last_seen, current: s.token_hash === user.token_hash }));
+    return json({ user: publicUser(user), stats: await reports.stats(user.id), tester: isTester(env, user), sessions });
   }
 
   if (path === '/api/me' && method === 'PATCH') {
     const u = needUser();
     const body = await readJson(request);
     const sets = [], args = [];
+    let revokeSessions = false;
     if ('name' in body) sets.push('name = ?'), args.push(cleanName(body.name, u.email));
     for (const k of ['home', 'work']) {
       if (k in body) sets.push(`${k} = ?`), args.push(body[k] ? JSON.stringify(cleanPlace(body[k])) : null);
@@ -179,10 +228,25 @@ async function route(request, env, url) {
       if (bad) throw httpError(bad, 400);
       const { hash, salt } = await hashPassword(body.password);
       sets.push('pass_hash = ?', 'pass_salt = ?'), args.push(hash, salt);
+      revokeSessions = true; // a changed password signs every device out, including stolen sessions
     }
     if (!sets.length) return json({ user: publicUser(u) });
     const row = await db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ? RETURNING *`).bind(...args, u.id).first();
+    if (revokeSessions) {
+      await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(u.id).run();
+      const sess = await createSession(db, u.id, validDevice(device) ? device : null);
+      return json({ user: publicUser(row) }, 200, { 'set-cookie': sessionCookie(request, sess.token, sess.expires) });
+    }
     return json({ user: publicUser(row) });
+  }
+
+  // Sign one device out remotely (the list comes with /api/me).
+  const sessDel = path.match(/^\/api\/me\/sessions\/([0-9a-f]{12})$/);
+  if (sessDel && method === 'DELETE') {
+    const u = needUser();
+    const res = await db.prepare('DELETE FROM sessions WHERE user_id = ? AND substr(token_hash, 1, 12) = ?').bind(u.id, sessDel[1]).run();
+    if (!res.meta.changes) throw httpError('Session not found.', 404);
+    return json({ ok: true });
   }
 
   if (path === '/api/me' && method === 'DELETE') {
@@ -298,7 +362,7 @@ async function route(request, env, url) {
     // Round the location to ~1 km so nearby people typing the same thing share a cached answer.
     const round = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : NaN);
     const lat = round(num(url, 'lat')), lng = round(num(url, 'lng'));
-    const lang = (url.searchParams.get('lang') ?? 'en').slice(0, 5);
+    const lang = cleanLang(url.searchParams.get('lang'));
     const parking = await searchParking(env, q, num(url, 'lat'), num(url, 'lng'), lang).catch(() => null);
     if (parking) return parking;
     const key = new Request(`https://cache.a2b/search?q=${encodeURIComponent(q.toLowerCase())}&lat=${lat}&lng=${lng}&lang=${lang}`);
@@ -336,9 +400,9 @@ async function route(request, env, url) {
     const body = await readJson(request);
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('Route needs a start and a destination.', 400);
-    const area = bbox([from, to], 0.05);
-    const exclude = body.avoid_closures === false ? [] : await reports.closuresNear(area);
     const via = (Array.isArray(body.via) ? body.via : []).slice(0, 3).map(lngLat).filter(Boolean);
+    const area = corridorBox([from, ...via, to]);
+    const exclude = body.avoid_closures === false ? [] : await reports.closuresNear(area);
     const opts = {
       from, to, via, exclude,
       avoid: body.avoid ?? {},
@@ -367,7 +431,7 @@ async function route(request, env, url) {
       if (twins[i]?.length) r.warning = 'construction';
     });
     const [live] = await Promise.all([
-      reports.inBox(bbox(routes.flatMap((r) => [r.coords[0], r.coords.at(-1)]).concat([from, to]), 0.2), user?.id),
+      reports.inBox(routeReportBox(routes, [from, to]), user?.id),
       // Speed limits and toll plazas are nice-to-haves: a slow or failing lookup never holds up the route.
       ...routes.map(async (r) => {
         const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
@@ -408,7 +472,9 @@ async function route(request, env, url) {
 
   if (path === '/api/reports' && method === 'POST') {
     const u = needUser();
-    return json(await reports.create(u, await readJson(request), { roadAt: (p, heading) => roadMidpoint(env, p, heading) }), 201);
+    const body = await readJson(request);
+    const reporterAt = await lastPosition(db, u.id);
+    return json(await reports.create(u, body, { roadAt: (p, heading) => roadMidpoint(env, p, heading), reporterAt }), 201);
   }
 
   if (parts[1] === 'reports' && parts[3] === 'vote' && method === 'POST') {
@@ -472,9 +538,41 @@ async function route(request, env, url) {
   throw httpError('Not found.', 404);
 }
 
-async function withSession(request, db, row, status) {
-  const { token, expires } = await createSession(db, row.id);
-  return json({ user: publicUser(row) }, status, { 'set-cookie': sessionCookie(request, token, expires) });
+async function withSession(request, db, row, status, { device = null, recovery = null } = {}) {
+  const { token, expires } = await createSession(db, row.id, validDevice(device) ? device : null);
+  const body = { user: publicUser(row) };
+  if (recovery) body.recovery_code = recovery; // shown once: there is no other way to see it again
+  return json(body, status, { 'set-cookie': sessionCookie(request, token, expires) });
+}
+
+// The network in front of Workers (Cloudflare gives cf-connecting-ip); absent locally and in tests, where no
+// per-network throttle applies.
+function clientIp(request) {
+  const cf = (request.headers.get('cf-connecting-ip') ?? '').trim();
+  if (cf) return cf.slice(0, 80);
+  const first = (request.headers.get('x-forwarded-for') ?? '').split(',')[0].trim();
+  return first ? first.slice(0, 80) : null;
+}
+
+async function tooMany(db, key, max, windowMs) {
+  const row = await db.prepare('SELECT COUNT(*) AS n FROM rate_limits WHERE key = ? AND at > ?').bind(key, Date.now() - windowMs).first();
+  if (row.n >= max) return true;
+  await db.prepare('INSERT INTO rate_limits (key, at) VALUES (?, ?)').bind(key, Date.now()).run();
+  return false;
+}
+
+// The driver's last shared-drive position, when it's fresh: what "around you" means for a report.
+async function lastPosition(db, userId) {
+  const t = await db
+    .prepare('SELECT lng, lat FROM trips WHERE user_id = ? AND lat IS NOT NULL AND updated_at > ? ORDER BY updated_at DESC LIMIT 1')
+    .bind(userId, Date.now() - 30 * 60_000)
+    .first();
+  return t ? [t.lng, t.lat] : null;
+}
+
+// Cache keys are built from this, so it has to be URL-safe: letters and dashes only.
+function cleanLang(v) {
+  return ((v ?? 'en').match(/[a-zA-Z-]+/)?.[0] ?? 'en').slice(0, 5);
 }
 
 // Testing tools (demo drive) are for the accounts listed in the TESTER_EMAILS secret, comma separated
@@ -517,6 +615,7 @@ function isTester(env, user) {
 
 function cleanSettings(input) {
   const out = {};
+  if (!input || typeof input !== 'object') return out;
   for (const [k, rule] of Object.entries(SETTINGS_KEYS)) {
     if (!(k in input)) continue;
     const v = input[k];
@@ -558,8 +657,11 @@ async function readJson(request) {
   const text = await request.text();
   if (text.length > MAX_BODY) throw httpError('Request too large.', 413);
   try {
-    return JSON.parse(text || '{}');
-  } catch {
+    const data = JSON.parse(text || '{}');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw httpError('Body must be JSON.', 400);
+    return data;
+  } catch (e) {
+    if (e.status) throw e;
     throw httpError('Body must be JSON.', 400);
   }
 }
