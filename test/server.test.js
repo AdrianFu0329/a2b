@@ -173,6 +173,13 @@ test('route requests carry avoid options, heading and closures', () => {
   assert.equal(body.units, 'miles');
 });
 
+test('walking routes ask Valhalla for a pedestrian route', () => {
+  const body = buildRouteRequest({ from: [1, 2], to: [3, 4], travel: 'walk', avoid: { tolls: true } });
+  assert.equal(body.costing, 'pedestrian');
+  assert.equal(body.costing_options.auto, undefined, 'no car options on foot');
+  assert.equal(buildRouteRequest({ from: [1, 2], to: [3, 4] }).costing, 'auto', 'driving stays the default');
+});
+
 test('turn lanes keep only junctions with a lane to follow', () => {
   assert.deepEqual(lanes([{ directions: 8, active: 8 }, { directions: 66 }]), [{ d: 8, use: 8 }, { d: 66, use: 0 }]);
   assert.deepEqual(lanes([{ directions: 2, valid: 2 }, { directions: 64, active: 64 }]), [{ d: 2, use: 2 }, { d: 64, use: 64 }]);
@@ -301,6 +308,20 @@ test('routes avoid reported closures and account for reported traffic', async ()
   assert.equal(full.steps[0].street, 'Test Street');
   assert.deepEqual(full.limits, [[0, 50], [10, 30], [15, null]]);
   assert.equal(full.shapes, undefined, 'encoded shapes stay on the server');
+});
+
+test('walking routes skip closures, reported traffic and the driving extras', async () => {
+  const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], travel: 'walk' });
+  assert.equal(r.status, 200);
+  assert.equal(lastRouteBody.costing, 'pedestrian');
+  assert.equal(lastRouteBody.exclude_locations.length, 0, 'road closures are for cars');
+  assert.equal(r.body.closures_avoided, 0);
+  for (const route of r.body.routes) {
+    assert.equal(route.travel, 'walk');
+    assert.equal(route.delay, 0, 'traffic reports add no time on foot');
+    assert.deepEqual([route.tolls, route.cameras, route.reports, route.limits], [[], [], [], null]);
+    assert.equal(route.shapes, undefined);
+  }
 });
 
 test('live traffic from TomTom times each route and marks its jams, and is skipped when TomTom fails', async () => {
