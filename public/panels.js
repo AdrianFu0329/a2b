@@ -522,11 +522,10 @@ function openAbout() {
        Map tiles by <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>.
        Routing by <a href="https://valhalla.github.io/valhalla/" target="_blank" rel="noopener">Valhalla</a>, search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>, live traffic by <a href="https://www.tomtom.com" target="_blank" rel="noopener">TomTom</a>.
        Shops and places also from <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a> (Meta, Microsoft, Foursquare, AllThePlaces and others; <a href="/places/NOTICE.txt" target="_blank">licences</a>).</p>
-    <!-- While the repository is private, its links (source code, NOTICE) are left out: they'd only show GitHub's 404.
-         When it's public again, link https://github.com/thaqif0709/a2b and its NOTICE here. -->
-    <p>Ideas and bug reports welcome.</p>
+    <p>A2B is free and open source. <a href="https://github.com/thaqif0709/a2b" target="_blank" rel="noopener">Source code</a>, ideas and bug reports welcome, or send feedback from Settings.</p>
     <p class="about-credit">© 2026 Thaqif Syarafuddin bin Roslan and the A2B contributors.
-       Licensed under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU AGPL v3</a> with additional terms.</p>
+       <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU AGPL v3</a> with
+       <a href="https://github.com/thaqif0709/a2b/blob/main/NOTICE" target="_blank" rel="noopener">additional terms</a>.</p>
     <!-- Copies and modified versions must keep this credit (NOTICE, AGPL section 7(b)):
          Based on A2B by Thaqif Syarafuddin bin Roslan (https://github.com/thaqif0709/a2b) -->
   </div>`);
