@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NotificationPermission.class);
+        registerPlugin(CalendarPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

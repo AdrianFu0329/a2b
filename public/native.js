@@ -12,6 +12,7 @@ const plugin = (name) => (inApp && cap.isPluginAvailable(name) ? cap.Plugins[nam
 
 export const keepAwake = plugin('KeepAwake');
 export const nativeVoice = plugin('TextToSpeech');
+export const nativeCalendar = plugin('Calendar');
 const geo = plugin('BackgroundGeolocation');
 export const nativeLocation = Boolean(geo);
 const notifications = plugin('NotificationPermission');

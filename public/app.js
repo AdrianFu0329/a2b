@@ -19,7 +19,7 @@ import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe }
 import { startPresence, checkIn } from './presence.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
-import { keepAwake, nativeLocation, watchLocation } from './native.js';
+import { keepAwake, nativeCalendar, nativeLocation, watchLocation } from './native.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -1326,6 +1326,14 @@ function downloadCalendar() {
   const { leave, arrive } = laterTimes();
   const stamp = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const link = `${location.origin}/?to=${dest.lat},${dest.lng}&name=${encodeURIComponent(dest.name)}`;
+  if (nativeCalendar) {
+    // The Android app can't save files, so the phone's calendar opens with the event filled in.
+    nativeCalendar
+      .add({ title: `Drive to ${dest.name}`, begin: +leave, end: +arrive, description: `Open in A2B: ${link}` })
+      .then(() => $('later').classList.add('hidden'))
+      .catch(() => toast("Couldn't open a calendar on this phone."));
+    return;
+  }
   const ics = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//A2B//Leave later//EN', 'BEGIN:VEVENT',
     `UID:${Date.now()}@a2b`, `DTSTAMP:${stamp(new Date())}`, `DTSTART:${stamp(leave)}`, `DTEND:${stamp(arrive)}`,
