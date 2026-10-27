@@ -6,9 +6,17 @@
 // the corridor around the active route, prefetched when a drive starts while still online.
 
 export const TILE_CACHE = 'a2b-tiles-v1'; // keep in step with public/sw.js
-const MAX_CACHED_TILES = 6000; // past this, the oldest prefetches are dropped to bound phone storage
-const PREFETCH_ZOOMS = [12, 13, 14, 15, 16]; // street detail without the label-only zooms above
+export const MAX_CACHED_TILES = 2000; // past this, the oldest entries are dropped to bound phone storage
+export const PREFETCH_ZOOMS = [12, 13, 14]; // street detail; z15+ is overzoomed from z14, so fetching it wastes data
 const FETCH_AT_ONCE = 6;
+// Per-drive prefetch budgets: a full corridor at z12–14 can be ~100 MB on a long drive, so cap it
+// and prefetch the start of the route first (tilesForCoords orders low zoom first, and route order
+// within each zoom, so a cap keeps context plus the first kilometres in detail).
+const PREFETCH_BUDGET_TILES = 800;
+const PREFETCH_BUDGET_BYTES = 50 * 1024 * 1024;
+// On metered connections fetch just the start of the drive; the full corridor waits for Wi-Fi.
+const METERED_BUDGET_TILES = 300;
+const METERED_BUDGET_BYTES = 15 * 1024 * 1024;
 
 // ---------- Pure tile maths (unit-tested in test/offline.test.js) ----------
 
@@ -76,45 +84,111 @@ export async function originUsage() {
 // ---------- Prefetch ----------
 
 // Tile URL templates for the map's vector sources, resolved through their TileJSON so a new tile
-// release (OpenFreeMap versions the tile path) is picked up without a code change. Raster sources
-// (hillshading) are decorative and world-covering at low zoom, so they are left out.
+// release (OpenFreeMap versions the tile path) is picked up without a code change. Also returns the
+// TileJSON zoom range so prefetching can clamp to zooms that exist (MapLibre overzooms z14 for
+// z15+, so requesting z15+ tiles would fetch nothing). Raster sources (hillshading) are decorative
+// and world-covering at low zoom, so they are left out.
 export async function tileTemplates(style) {
+  const info = await tileSourceInfo(style);
+  return info.templates;
+}
+
+export async function tileSourceInfo(style) {
   const urls = [...new Set(Object.values(style?.sources ?? {}).filter((s) => s.type === 'vector' && s.url).map((s) => s.url))];
   const templates = [];
+  let minzoom = 0;
+  let maxzoom = 22;
+  let found = false;
   await Promise.all(urls.map(async (url) => {
     try {
       const res = await fetch(url);
       if (!res.ok) return;
-      for (const t of (await res.json()).tiles ?? []) templates.push(t);
+      const tj = await res.json();
+      for (const t of tj.tiles ?? []) templates.push(t);
+      // Clamp to what the source actually serves; TileJSON top-level min/maxzoom is authoritative.
+      if (typeof tj.minzoom === 'number' || typeof tj.maxzoom === 'number') {
+        if (!found) {
+          found = true;
+          minzoom = typeof tj.minzoom === 'number' ? tj.minzoom : 0;
+          maxzoom = typeof tj.maxzoom === 'number' ? tj.maxzoom : 22;
+        } else {
+          if (typeof tj.minzoom === 'number') minzoom = Math.max(minzoom, tj.minzoom);
+          if (typeof tj.maxzoom === 'number') maxzoom = Math.min(maxzoom, tj.maxzoom);
+        }
+      }
     } catch {}
   }));
-  return templates;
+  if (!found) {
+    // No zoom info (unreachable TileJSON in a test, or a source without one): fall back to the
+    // OpenFreeMap planet range so we still don't request overzoomed tiles.
+    minzoom = 0;
+    maxzoom = 14;
+  }
+  return { templates, minzoom, maxzoom };
+}
+
+// Which prefetch budget applies right now. Metered (usually cellular) connections and Data Saver
+// get a smaller start-of-route budget; Wi-Fi, ethernet, desktops without the API, and unknown
+// types get the full corridor budget.
+export function prefetchBudget(connection = globalThis.navigator?.connection) {
+  const type = connection?.type ?? '';
+  const saveData = connection?.saveData === true;
+  const metered = saveData || type === 'cellular';
+  if (metered) return { maxTiles: METERED_BUDGET_TILES, maxBytes: METERED_BUDGET_BYTES, metered: true };
+  return { maxTiles: PREFETCH_BUDGET_TILES, maxBytes: PREFETCH_BUDGET_BYTES, metered: false };
 }
 
 // Fetch the route corridor into the tile cache. Already-cached tiles are served from cache by the
 // worker, so re-driving a familiar road costs almost nothing. Never throws: prefetch is best-effort.
-export async function prefetchRouteTiles(coords, getStyle, { zooms = PREFETCH_ZOOMS, maxTiles = MAX_CACHED_TILES, onProgress } = {}) {
+//
+// The list is ordered low-zoom-first and route-order within each zoom, so stopping at the budget
+// keeps whole-route context plus the FIRST part of the drive in street detail — the part the driver
+// needs before the signal plausibly returns. On metered connections the budget is smaller; the rest
+// of the corridor is picked up by the worker as the map loads it.
+export async function prefetchRouteTiles(coords, getStyle, { zooms = PREFETCH_ZOOMS, maxTiles, maxBytes, onProgress } = {}) {
   try {
     if (!coords?.length || typeof caches === 'undefined') return { fetched: 0, total: 0 };
-    const templates = await tileTemplates(getStyle());
+    const budget = prefetchBudget();
+    const tileCap = maxTiles ?? budget.maxTiles;
+    const byteCap = maxBytes ?? budget.maxBytes;
+    const { templates, minzoom, maxzoom } = await tileSourceInfo(getStyle());
     if (!templates.length) return { fetched: 0, total: 0 };
-    const tiles = tilesForCoords(coords, zooms).slice(0, maxTiles);
+    const clamped = zooms.filter((z) => z >= minzoom && z <= maxzoom);
+    if (!clamped.length) return { fetched: 0, total: 0 };
+    const tiles = tilesForCoords(coords, clamped).slice(0, tileCap);
     let fetched = 0;
+    let bytes = 0;
+    let stopped = false;
     const queue = [...tiles];
+    const estimateTileBytes = (z) => (z >= 14 ? 200 * 1024 : z === 13 ? 100 * 1024 : 50 * 1024);
     await Promise.all(Array.from({ length: Math.min(FETCH_AT_ONCE, queue.length) }, async () => {
-      while (queue.length) {
+      while (queue.length && !stopped) {
         const t = queue.shift();
         for (const template of templates) {
+          if (stopped) break;
           try {
             const res = await fetch(tileUrl(template, t));
-            if (res.ok) fetched++;
+            if (!res.ok) continue;
+            fetched++;
+            // Track data use so a long drive can't burn ~100 MB unasked: prefer the real size,
+            // fall back to a per-zoom estimate when the header is missing (e.g. compressed).
+            let size = Number(res.headers?.get?.('content-length'));
+            if (!Number.isFinite(size) || size <= 0) {
+              try {
+                size = (await res.clone().arrayBuffer()).byteLength || estimateTileBytes(t.z);
+              } catch {
+                size = estimateTileBytes(t.z);
+              }
+            }
+            bytes += size;
+            if (bytes >= byteCap) stopped = true;
           } catch {} // went offline mid-prefetch: the tiles so far still count
         }
         onProgress?.(fetched, tiles.length);
       }
     }));
     await trimTileCache();
-    return { fetched, total: tiles.length };
+    return { fetched, total: tiles.length, truncated: stopped };
   } catch {
     return { fetched: 0, total: 0 };
   }
