@@ -86,7 +86,7 @@ self.addEventListener('fetch', (e) => {
         .then((res) => {
           if (res.ok) {
             const copy = res.clone();
-            caches.open(MAPS).then((c) => c.put(e.request, copy));
+            e.waitUntil(caches.open(MAPS).then((c) => c.put(e.request, copy)).catch(() => {}));
           }
           return res;
         })
@@ -101,7 +101,7 @@ self.addEventListener('fetch', (e) => {
       const hit = await c.match(e.request);
       if (hit) return hit;
       const res = await fetch(e.request);
-      if (res.ok) c.put(e.request, res.clone());
+      if (res.ok) e.waitUntil(c.put(e.request, res.clone()).catch(() => {}));
       return res;
     }).catch(() => caches.match(e.request)));
     return;
@@ -113,8 +113,9 @@ self.addEventListener('fetch', (e) => {
       const res = await fetch(e.request);
       if (res.ok) {
         // Trim at most every 100 writes or 30 s — never on every write — so panning the map
-        // doesn't keep the phone hot listing the whole cache.
-        c.put(e.request, res.clone()).catch(() => {});
+        // doesn't keep the phone hot listing the whole cache. Puts are held open so a worker
+        // shutdown straight after the response can't lose the write.
+        e.waitUntil(c.put(e.request, res.clone()).catch(() => {}));
         scheduleTileTrim(e, c);
       }
       return res;
@@ -130,7 +131,7 @@ self.addEventListener('fetch', (e) => {
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(key, copy));
+          e.waitUntil(caches.open(CACHE).then((c) => c.put(key, copy)).catch(() => {}));
         }
         return res;
       })
