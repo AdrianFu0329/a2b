@@ -123,6 +123,7 @@ Everything A2B uses is free and needs no key:
 The community servers ask for fair use, which is why the beta caps how many people use it at once. For more
 traffic, point `ROUTING_URL` and `GEOCODER_URL` at your own [Valhalla](https://github.com/valhalla/valhalla) and
 [Photon](https://github.com/komoot/photon) servers, or a hosted provider such as [Stadia Maps](https://stadiamaps.com).
+`server/routing/` runs A2B's own Valhalla for Malaysia, Singapore and Brunei with one `docker compose up -d`.
 
 Overture publishes new data monthly ([calendar](https://docs.overturemaps.org/release-calendar/)). Rebuild with:
 

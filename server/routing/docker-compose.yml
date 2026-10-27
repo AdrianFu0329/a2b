@@ -1,0 +1,18 @@
+# A2B's own routing server: Valhalla (https://github.com/valhalla/valhalla) with OpenStreetMap's Malaysia,
+# Singapore and Brunei roads, so routes need no outside service. See README.md here.
+services:
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./data:/custom_files
+    environment:
+      - tile_urls=https://download.geofabrik.de/asia/malaysia-singapore-brunei-latest.osm.pbf
+      - use_tiles_ignore_pbf=True
+      - build_admins=True       # countries, so it knows Malaysia drives on the left
+      - build_time_zones=True
+      - build_elevation=False
+      - serve_tiles=True
+      - server_threads=4
