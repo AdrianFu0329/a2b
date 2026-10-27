@@ -3,10 +3,12 @@
 
 // Spoken directions, read by the phone's own speech voices (speechSynthesis): offline, no download.
 // One voice for now: Daniel (British English, built into iPhones, iPads and Macs), the most natural-sounding of
-// the built-in ones. Phones without him, like Android ones, use their best-sounding English voice.
+// the built-in ones. Phones without him, like Android ones, use their best-sounding English voice. In the Android
+// app the phone's own text-to-speech reads them instead (see native.js), so they carry on with the screen off.
 
 import { state } from './core.js';
 import { spokenCodes } from './nav.js';
+import { nativeVoice } from './native.js';
 
 const QUALITY = /premium|enhanced|natural|neural|siri|wavenet|online/i;
 
@@ -29,7 +31,14 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 }
 
 export function speak(text, { force = false } = {}) {
-  if (!text || (!state.settings.voice && !force) || !('speechSynthesis' in window)) return;
+  if (!text || (!state.settings.voice && !force)) return;
+  if (nativeVoice) {
+    // A new direction cuts off the one being read, like cancel() below. Phones without British English use their own.
+    const say = (lang) => nativeVoice.speak({ text: spokenCodes(text), lang });
+    say('en-GB').catch(() => say(undefined).catch(() => {}));
+    return;
+  }
+  if (!('speechSynthesis' in window)) return;
   try {
     const v = pickVoice();
     const u = new SpeechSynthesisUtterance(spokenCodes(text));

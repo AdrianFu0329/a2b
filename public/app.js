@@ -19,6 +19,7 @@ import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe }
 import { startPresence, checkIn } from './presence.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
+import { keepAwake, nativeLocation, watchLocation } from './native.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -554,6 +555,7 @@ function keepTrail(at) {
 
 // ================= Location =================
 function startLocation() {
+  if (nativeLocation) return watchLocation(onFix, locationFailed, { background: mode === 'drive' }).catch(() => locationFailed());
   if (!('geolocation' in navigator)) return locationFailed();
   navigator.geolocation.watchPosition(onFix, locationFailed, { enableHighAccuracy: true, maximumAge: 1000, timeout: 30000 });
 }
@@ -1379,6 +1381,8 @@ function startDrive() {
   computeOnRoute();
   loadReports(true);
   requestWakeLock();
+  // In the Android app, keep GPS (and so directions) going when the screen turns off or another app is on top.
+  if (nativeLocation) watchLocation(onFix, locationFailed, { background: true }).catch(() => {});
 
   const useSim = state.simulate || (!state.pos && state.tester);
   if (useSim) {
@@ -1720,6 +1724,8 @@ async function endDrive(arrived) {
   renderStopMenu();
   wakeLock?.release?.().catch(() => {});
   wakeLock = null;
+  keepAwake?.allowSleep().catch(() => {});
+  if (nativeLocation) watchLocation(onFix, locationFailed).catch(() => {});
   $('alert').classList.add('hidden');
   $('offroute').classList.add('hidden');
   $('limit').classList.add('hidden');
@@ -1737,6 +1743,7 @@ async function endDrive(arrived) {
 }
 
 async function requestWakeLock() {
+  if (keepAwake) return keepAwake.keepAwake().catch(() => {});
   try {
     wakeLock = await navigator.wakeLock?.request('screen');
   } catch {}

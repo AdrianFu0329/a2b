@@ -6,10 +6,11 @@
 // Also hides the launch splash once the map is ready.
 
 import { $, local } from './core.js';
+import { inApp } from './native.js';
 
 const SHARE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M8 10H6v10h12V10h-2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-export const installed = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+export const installed = () => inApp || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 // done(): called once the driver is through (straight away for people who've seen it before).

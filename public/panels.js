@@ -5,6 +5,7 @@
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
 import { pickVoice } from './voice.js';
+import { nativeVoice } from './native.js';
 import { appVersion } from './update.js';
 import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
 import { onlineLine } from './presence.js';
@@ -186,7 +187,7 @@ function openPanel(title, html) {
 // The voice directions are read in (see voice.js), with a sample to hear it.
 function renderVoiceList() {
   const box = $('voice-list');
-  const v = pickVoice();
+  const v = nativeVoice ? { name: "Your phone's voice" } : pickVoice();
   const name = !v ? 'No voice on this phone' : /\bdaniel\b/i.test(v.name) ? 'Daniel' : v.name;
   box.innerHTML = `<button class="set-row" id="voice-sample"><span>${esc(name)}<small>${v ? 'Tap to hear a sample' : 'Spoken directions need a text-to-speech voice'}</small></span></button>`;
   $('voice-sample').onclick = () => speak(state.settings.units === 'imperial' ? 'In a quarter mile, turn right. Then keep left.' : 'In 300 metres, turn right. Then keep left.', { force: true });
