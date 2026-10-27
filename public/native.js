@@ -14,6 +14,17 @@ export const keepAwake = plugin('KeepAwake');
 export const nativeVoice = plugin('TextToSpeech');
 const geo = plugin('BackgroundGeolocation');
 export const nativeLocation = Boolean(geo);
+const notifications = plugin('NotificationPermission');
+
+// Android 13+ hides the "giving directions" notification without permission to show notifications. Ask once the
+// location question is out of the way (at the first fix or error), not at the start of a drive, when a dialog
+// could pop up in a moving car. Android itself stops asking after the second no.
+let askedNotifications = false;
+function askNotifications() {
+  if (askedNotifications || !notifications) return;
+  askedNotifications = true;
+  notifications.request().catch(() => {});
+}
 
 let watcher = null; // { id, background } of the current location watcher
 
@@ -38,6 +49,7 @@ export async function watchLocation(onFix, onError, { background = false } = {})
   const options = { requestPermissions: true, stale: false, distanceFilter: 0 };
   if (background) Object.assign(options, { backgroundTitle: 'A2B is giving directions', backgroundMessage: 'Tap to go back to your drive.' });
   const id = await geo.addWatcher(options, (loc, err) => {
+    askNotifications();
     if (err) {
       // The watcher is dead after an error (no permission, location off, service not up yet), so the next
       // watchLocation adds a fresh one.

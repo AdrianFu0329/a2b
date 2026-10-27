@@ -16,6 +16,7 @@ const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.
 // done(): called once the driver is through (straight away for people who've seen it before).
 export function welcome(done) {
   if (local.get('welcomed', false)) return done();
+  if (inApp) $('welcome-ask').lastChild.textContent = 'Next, your phone asks to share your location so A2B can show where you are, and to show a notification while it gives directions';
   $('welcome-install').innerHTML = installed()
     ? ''
     : isIos()

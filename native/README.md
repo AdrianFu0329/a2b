@@ -39,9 +39,15 @@ A2B_URL=http://localhost:8787 npm run sync    # in native/, then build and insta
 
 Debug builds can be inspected from `chrome://inspect` on your computer.
 
+On first launch the app asks for location, then (Android 13+) to show notifications, so the "A2B is giving
+directions" notification is visible while driving with the screen off. `NotificationPermission.java` is the small
+plugin that asks.
+
+The launcher, themed and notification icons are vector drawables drawn from `public/icon.svg`
+(`res/drawable/ic_launcher_*.xml`, `ic_notification.xml`), with PNG copies of `public/icon-512.png` for Android 7.
+
 ## Not done yet
 
-- Ask for notification permission (Android 13+), so the "giving directions" notification is visible.
-- An A2B launcher icon and splash screen (it still has Capacitor's).
+- The splash screen on Android 11 and older is still Capacitor's (Android 12+ shows the A2B icon).
 - A signed release build, the Play Store listing, and its background location declaration.
 - iOS.
