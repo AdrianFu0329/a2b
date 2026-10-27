@@ -348,7 +348,7 @@ async function route(request, env, url) {
     return json({ ok: true });
   }
 
-  // ---------- A2B's own places (src/lib/locations.js) ----------
+  // ---------- A2B's own place search (src/lib/locations.js) ----------
   if (path === '/api/locations' && method === 'GET') {
     await needSpot();
     const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
@@ -357,19 +357,6 @@ async function route(request, env, url) {
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 10, 1), 50);
     return json({ places: q.length < 2 ? [] : await locations.search(q, near, limit) });
   }
-  if (path === '/api/locations' && method === 'POST') {
-    const u = needUser();
-    return json({ place: await locations.add(u, await readJson(request)) }, 201);
-  }
-  if (path === '/api/locations/mine' && method === 'GET') {
-    return json({ places: await locations.mine(needUser()) });
-  }
-  if (parts[1] === 'locations' && /^\d+$/.test(parts[2] ?? '') && method === 'DELETE') {
-    const u = needUser();
-    await locations.remove(u, Number(parts[2]), { tester: isTester(env, u) });
-    return json({ ok: true });
-  }
-
   // ---------- Search and routing ----------
   if (path === '/api/search' && method === 'GET') {
     await needSpot();

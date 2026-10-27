@@ -942,28 +942,3 @@ test('own places: searched by name, nearest first, and ahead of the public geoco
   assert.equal(rev.body.place.name, 'Jalan Ampang', 'what is here comes from our own streets');
 });
 
-test('drivers can add places, see and remove their own; testers can remove any', async () => {
-  const guest = await client()('POST', '/api/locations', { name: 'Warung Pak Abu', lat: 3.1, lng: 101.6 });
-  assert.equal(guest.status, 401);
-  assert.equal((await alice('POST', '/api/locations', { name: 'x', lat: 3.1, lng: 101.6 })).status, 400);
-  const added = await alice('POST', '/api/locations', { name: 'Warung Pak Abu', category: 'Restaurant', address: 'Jalan Tepi, Shah Alam', lat: 3.07, lng: 101.52 });
-  assert.equal(added.status, 201);
-  assert.equal(added.body.place.source, 'driver');
-  let found = await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52');
-  assert.equal(found.body.places[0].name, 'Warung Pak Abu', 'searchable straight away');
-  assert.equal((await alice('GET', '/api/locations/mine')).body.places.length, 1);
-  const erin = client();
-  await erin('POST', '/api/auth/signup', { email: 'erin.places@test.com', password: 'password5', name: 'Erin' });
-  assert.equal((await erin('DELETE', `/api/locations/${added.body.place.id}`)).status, 404, "not someone else's");
-  assert.equal((await alice('DELETE', `/api/locations/${added.body.place.id}`)).status, 200);
-  found = await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52');
-  assert.equal(found.body.places.length, 0);
-  const loaded = (await client()('GET', '/api/locations?q=jalan%20ampang')).body.places[0];
-  assert.equal((await alice('DELETE', `/api/locations/${loaded.id}`)).status, 404, 'loaded places only by testers');
-  env.TESTER_EMAILS = 'alice@test.com';
-  try {
-    assert.equal((await alice('DELETE', `/api/locations/${loaded.id}`)).status, 200);
-  } finally {
-    delete env.TESTER_EMAILS;
-  }
-});
