@@ -538,6 +538,7 @@ function routeColours(route, driven) {
     const colour = colourAt((at + (cuts[i + 1] ?? 1)) / 2);
     if (at > 0 && colour !== expr.at(-1)) expr.push(at, colour);
   });
+  if (expr.length === 3) expr.push(1, expr[2]); // one colour all along: a step needs at least one stop
   return expr;
 }
 
