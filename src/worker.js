@@ -4,8 +4,9 @@
 import { ensureSchema } from './lib/schema.js';
 import {
   hashPassword, verifyPassword, normalizeEmail, validatePassword, cleanName, createSession, currentUser, destroySession,
-  sessionCookie, publicUser,
+  sessionCookie, publicUser, sha256,
 } from './lib/auth.js';
+import { probesRepo, annotateWithProbes, PROBE_RETENTION_MS } from './lib/probes.js';
 import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, bbox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
 import { constructionTwins } from './lib/construction.js';
 import { liveTraffic, applyTraffic } from './lib/traffic.js';
@@ -21,7 +22,7 @@ const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_FAILURES = 8;
 const RECENTS_KEPT = 20;
 const FULL_MESSAGE = 'A2B is full right now. You will be let in when a spot opens.';
-const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean' };
+const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean', traffic_probe: 'boolean' };
 
 export default {
   async fetch(request, env) {
@@ -50,6 +51,8 @@ export default {
       env.DB.prepare('DELETE FROM presence WHERE last_seen < ?').bind(now - 86400_000),
       env.DB.prepare('DELETE FROM usage_devices WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
       env.DB.prepare('DELETE FROM usage_daily WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
+      env.DB.prepare('DELETE FROM probe_segments WHERE updated_at < ?').bind(now - PROBE_RETENTION_MS),
+      env.DB.prepare('DELETE FROM probe_limits WHERE last_at < ?').bind(now - PROBE_RETENTION_MS),
     ]);
   },
 };
@@ -366,8 +369,11 @@ async function route(request, env, url) {
     routes.forEach((r, i) => {
       if (twins[i]?.length) r.warning = 'construction';
     });
-    const [live] = await Promise.all([
-      reports.inBox(bbox(routes.flatMap((r) => [r.coords[0], r.coords.at(-1)]).concat([from, to]), 0.2), user?.id),
+    const routeArea = bbox(routes.flatMap((r) => [r.coords[0], r.coords.at(-1)]).concat([from, to]), 0.2);
+    const [live, probeSegs] = await Promise.all([
+      reports.inBox(routeArea, user?.id),
+      // Congested blocks from opted-in drivers; a slow lookup never holds up the route.
+      probesRepo(db).congested(routeArea).catch(() => []),
       // Speed limits and toll plazas are nice-to-haves: a slow or failing lookup never holds up the route.
       ...routes.map(async (r) => {
         const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
@@ -390,6 +396,7 @@ async function route(request, env, url) {
     const details = await plazaDetails(db, plazas.map(([, p]) => p)).catch(() => []);
     plazas.forEach(([t], i) => Object.assign(t, details[i] ?? {}));
     annotateWithReports(routes, live);
+    annotateWithProbes(routes, probeSegs, routeArea);
     routes.sort((a, b) => a.duration - b.duration);
     await count('routes');
     return json({ routes, closures_avoided: closuresIgnored ? 0 : exclude.length, closures_ignored: closuresIgnored, construction_avoided: constructionAvoided });
@@ -415,6 +422,18 @@ async function route(request, env, url) {
     const u = needUser();
     const body = await readJson(request);
     return json(await reports.vote(u, Number(parts[2]), body.vote));
+  }
+
+  // ---------- Opt-in probe traffic ----------
+  // Small batches of recent speed fixes from drivers who switched it on. Each batch must repeat the
+  // consent flag; the fixes are folded into anonymous block totals and never stored. Guests may
+  // contribute too: only the device id (hashed, for rate limiting) is needed, never an account.
+  if (path === '/api/probe' && method === 'POST') {
+    if (!validDevice(device)) throw httpError('Missing device id.', 400);
+    const body = await readJson(request);
+    if (body.consent !== true) throw httpError('Probe sharing needs consent: switch it on in Settings first.', 403);
+    const { stored } = await probesRepo(db).contribute(await sha256(device), body.points);
+    return json({ ok: true, stored }, 202);
   }
 
   // ---------- Shared drives (live ETA link) ----------

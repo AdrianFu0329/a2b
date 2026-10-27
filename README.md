@@ -56,12 +56,18 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 ## What's different
 
 - **Routes listen to drivers.** Roads reported closed are avoided, and reported jams add to the ETA of the routes
-  they're on, so you can see why one route is slower.
+  they're on, so you can see why one route is slower. Drivers who share speeds add slow stretches the same way,
+  marked as driver speeds rather than reports.
 - **Reports fade as they age.** Fresh or confirmed reports are solid, old unconfirmed ones turn see-through, and a
   second report of the same thing confirms the first instead of adding another pin.
-- **No ads, and your drives aren't tracked.** The server keeps what you save, your reports, a shared drive's latest
+- **No ads, and your drives aren't tracked by default.** The server keeps what you save, your reports, a shared drive's latest
   position while you're sharing it, and an anonymous device ID to count how many people are on (for the 50-driver
   limit). It doesn't record where you drive.
+- **Optional traffic sharing (off by default).** Switch it on in Settings › Traffic and the app sends a small batch of
+  recent fixes every 10 seconds: your position rounded to about 100 m, speed, direction and time. The server folds
+  them straight into anonymous per-street totals (street block, direction, average speed, how many fixes) and never
+  stores your raw trail; totals older than a day are deleted every night. Streets where enough drivers crawl show as
+  slow for everyone. Turn it off any time to stop sharing.
 - **Open source.** Anyone can read the code, suggest changes, or run their own copy.
 
 ## Run it on your computer
