@@ -170,16 +170,11 @@ export async function prefetchRouteTiles(coords, getStyle, { zooms = PREFETCH_ZO
             const res = await fetch(tileUrl(template, t));
             if (!res.ok) continue;
             fetched++;
-            // Track data use so a long drive can't burn ~100 MB unasked: prefer the real size,
-            // fall back to a per-zoom estimate when the header is missing (e.g. compressed).
+            // Track data use so a long drive can't burn ~100 MB unasked: prefer the real size
+            // when the header is there, else a per-zoom estimate (cheap; tiles already cached
+            // cost nothing but still count, which is fine).
             let size = Number(res.headers?.get?.('content-length'));
-            if (!Number.isFinite(size) || size <= 0) {
-              try {
-                size = (await res.clone().arrayBuffer()).byteLength || estimateTileBytes(t.z);
-              } catch {
-                size = estimateTileBytes(t.z);
-              }
-            }
+            if (!Number.isFinite(size) || size <= 0) size = estimateTileBytes(t.z);
             bytes += size;
             if (bytes >= byteCap) stopped = true;
           } catch {} // went offline mid-prefetch: the tiles so far still count
@@ -194,7 +189,8 @@ export async function prefetchRouteTiles(coords, getStyle, { zooms = PREFETCH_ZO
   }
 }
 
-// The Cache API lists keys in insertion order, so trimming from the front drops the oldest drives.
+// The tile cache lists keys in insertion order, so trimming from the front drops the oldest tiles.
+// (The worker trims at most every 100 writes or 30 s; this post-prefetch trim is the backstop.)
 async function trimTileCache() {
   try {
     const cache = await caches.open(TILE_CACHE);
