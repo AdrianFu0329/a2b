@@ -1,0 +1,47 @@
+# A2B for Android
+
+A [Capacitor](https://capacitorjs.com) shell around the web app, so A2B can be installed as an Android app and keep
+giving directions with the screen off or another app on top. Status: a spike, for testing; not on the Play Store.
+
+The app loads the live web app (`https://a2b-beta.pages.dev`) rather than a bundled copy, so sign-in, `/api` and shop
+search work unchanged and a web deploy updates the app too. Inside the app, `public/native.js` swaps three browser
+features for native plugins:
+
+| Browser | In the app | Why |
+| --- | --- | --- |
+| `speechSynthesis` | `@capacitor-community/text-to-speech` | Android's WebView has no speech voices at all. |
+| `watchPosition` | `@capacitor-community/background-geolocation` | GPS stops once the app is out of sight. While driving it runs as a foreground service, with a notification. |
+| Wake Lock | `@capacitor-community/keep-awake` | Keeps the screen on while driving. |
+
+`capacitor.config.js` sets `useLegacyBridge`, so plugin results reach the page through `evaluateJavascript`. With the
+default bridge (`postMessage`), the WebView stops delivering them about a minute after the screen goes off: the GPS
+keeps running but the page hears nothing, and directions stop until the app is opened again.
+
+## Build and run
+
+You need Node.js 22.13+, JDK 21 and the Android SDK (platform 36).
+
+```bash
+cd native
+npm install
+npm run sync                                  # copy the config and plugins into android/
+cd android && ./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+To try web changes before they're deployed, point the app at your computer:
+
+```bash
+npm run dev                                   # in the repo root
+adb reverse tcp:8787 tcp:8787
+A2B_URL=http://localhost:8787 npm run sync    # in native/, then build and install as above
+```
+
+Debug builds can be inspected from `chrome://inspect` on your computer.
+
+## Not done yet
+
+- Ask for notification permission (Android 13+), so the "giving directions" notification is visible.
+- An A2B launcher icon and splash screen (it still has Capacitor's).
+- A signed release build, the Play Store listing, and its background location declaration.
+- iOS.
