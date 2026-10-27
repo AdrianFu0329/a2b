@@ -263,9 +263,6 @@ textarea.field { height: auto; padding: 12px 14px; resize: vertical; font: inher
 .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg-2); border-radius: 12px; padding: 4px; margin-top: 12px; }
 .seg button { height: 40px; border-radius: 9px; font-weight: 600; color: var(--muted); }
 .seg button.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15); }
-.travel-seg { margin: 4px 0 10px; }
-/* Walking: no speedometer, speed limit, tolls or parking. */
-body.walking #speedo, body.walking #limit, body.walking #toll-chip, body.walking #btn-parking { display: none !important; }
 .later-result { margin-top: 14px; font-size: 17px; line-height: 1.4; }
 
 /* ---------- Driving ---------- */

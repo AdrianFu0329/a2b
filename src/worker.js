@@ -336,10 +336,8 @@ async function route(request, env, url) {
     const body = await readJson(request);
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('Route needs a start and a destination.', 400);
-    // On foot, the driving extras (closures, roadworks, speed limits, tolls, traffic, cameras) don't apply.
-    const walk = body.travel === 'walk';
     const area = bbox([from, to], 0.05);
-    const exclude = walk || body.avoid_closures === false ? [] : await reports.closuresNear(area);
+    const exclude = body.avoid_closures === false ? [] : await reports.closuresNear(area);
     const via = (Array.isArray(body.via) ? body.via : []).slice(0, 3).map(lngLat).filter(Boolean);
     const opts = {
       from, to, via, exclude,
@@ -347,19 +345,8 @@ async function route(request, env, url) {
       units: body.units === 'imperial' ? 'imperial' : 'metric',
       lang: typeof body.lang === 'string' && /^[a-z]{2}(-[A-Z]{2})?$/.test(body.lang) ? body.lang : 'en-US',
       heading: Number(body.heading),
-      travel: walk ? 'walk' : 'drive',
     };
     const first = await fetchRoutes(env, opts);
-    if (walk) {
-      const { routes } = first;
-      for (const r of routes) {
-        delete r.shapes;
-        Object.assign(r, { travel: 'walk', limits: null, tolls: [], cameras: [], reports: [], delay: 0 });
-      }
-      routes.sort((a, b) => a.duration - b.duration);
-      await count('routes');
-      return json({ routes, closures_avoided: 0, closures_ignored: false, construction_avoided: 0 });
-    }
     let { routes } = first;
     const closuresIgnored = first.dropped;
     // A route along a road that's probably still being built (see construction.js): ask again around it, and
