@@ -4,6 +4,7 @@
 import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
+import { canAutoStartRoute } from './route-preview.js';
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
@@ -1257,11 +1258,18 @@ const autoGo = (() => {
     go().classList.remove('counting');
     label();
   };
-  const blocked = () => mode !== 'preview' || !routes[selected] || go().disabled || document.hidden
-    || ['later', 'panel', 'search', 'auth'].some((id) => !$(id).classList.contains('hidden'));
+  const blocked = () => !canAutoStartRoute({
+    mode,
+    routeAvailable: Boolean(routes[selected]),
+    hasLocation: Boolean(state.pos),
+    buttonDisabled: go().disabled,
+    pageHidden: document.hidden,
+    blockingOverlayOpen: ['later', 'panel', 'search', 'auth'].some((id) => !$(id).classList.contains('hidden')),
+    closuresIgnored: routes.closuresIgnored,
+  });
   const restart = () => {
     stop();
-    if (!state.pos || blocked()) return; // without a real location the routes start from the map, not from you
+    if (blocked()) return; // warnings need an explicit Go now; without a location the route starts from the map
     left = AUTO_GO_S;
     void go().offsetWidth; // restart the fill animation
     go().classList.add('counting');
