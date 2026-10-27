@@ -182,6 +182,7 @@ small.hint { display: block; padding: 4px 0 0; }
 .error { color: var(--danger); font-size: 14px; }
 .field { width: 100%; height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg-2); padding: 0 14px; margin-top: 12px; }
 textarea.field { height: auto; padding: 12px 14px; resize: vertical; font: inherit; line-height: 1.4; color: var(--text); }
+select.field { font: inherit; color: var(--text); }
 .feedback { padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
 .feedback .btn { width: 100%; }
 .feedback .fb-who { font-size: 13px; }

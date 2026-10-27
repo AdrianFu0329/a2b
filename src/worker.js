@@ -15,6 +15,7 @@ import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
 import { locationsRepo } from './lib/locations.js';
+import { suggestionsRepo } from './lib/suggestions.js';
 import { distance } from '../public/geo.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
@@ -69,6 +70,7 @@ async function route(request, env, url) {
   const user = await currentUser(db, request);
   const reports = reportsRepo(db);
   const locations = locationsRepo(db);
+  const suggestions = suggestionsRepo(db);
   const needUser = () => {
     if (!user) throw httpError('Sign in first.', 401);
     return user;
@@ -357,6 +359,29 @@ async function route(request, env, url) {
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 10, 1), 50);
     return json({ places: q.length < 2 ? [] : await locations.search(q, near, limit) });
   }
+  // ---------- Place suggestions (src/lib/suggestions.js): drivers suggest, testers review ----------
+  if (path === '/api/suggestions' && method === 'POST') {
+    return json({ suggestion: await suggestions.create(needUser(), await readJson(request)) }, 201);
+  }
+  if (path === '/api/suggestions/mine' && method === 'GET') {
+    return json({ suggestions: await suggestions.mine(needUser()) });
+  }
+  if (path === '/api/suggestions' && method === 'GET') {
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
+    return json({ suggestions: await suggestions.pending() });
+  }
+  const reviewing = path.match(/^\/api\/suggestions\/(\d+)$/);
+  if (reviewing && method === 'POST') {
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
+    return json(await suggestions.review(user, Number(reviewing[1]), await readJson(request)));
+  }
+  const wrongPlace = path.match(/^\/api\/locations\/(\d+)$/);
+  if (wrongPlace && method === 'DELETE') {
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
+    if (!(await locations.remove(Number(wrongPlace[1])))) throw httpError('Place not found.', 404);
+    return json({ ok: true });
+  }
+
   // ---------- Search and routing ----------
   if (path === '/api/search' && method === 'GET') {
     await needSpot();

@@ -15,7 +15,7 @@ import {
   isSaved, setHomeWork, armBack,
 } from './core.js';
 import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
-import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe } from './panels.js';
+import { initPanels, openMenu, openAuth, openSettings, openSuggestPlace, renderAvatar, refreshMe } from './panels.js';
 import { startPresence, checkIn } from './presence.js';
 import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
@@ -710,9 +710,10 @@ async function showContextMenu(lngLat, point) {
     <button class="menu-row" data-act="go">Drive here</button>
     <button class="menu-row" data-act="save">Save place</button>
     <button class="menu-row" data-act="home">Set as Home</button>
-    <button class="menu-row" data-act="work">Set as Work</button>`;
+    <button class="menu-row" data-act="work">Set as Work</button>
+    <button class="menu-row" data-act="suggest">Suggest a missing place</button>`;
   box.style.left = `${Math.min(point.x, innerWidth - 220)}px`;
-  box.style.top = `${Math.min(point.y + 8, innerHeight - 220)}px`;
+  box.style.top = `${Math.min(point.y + 8, innerHeight - 270)}px`;
   box.classList.remove('hidden');
   if (navigator.vibrate) navigator.vibrate(15);
   const named = api(`/api/reverse?lat=${lngLat.lat}&lng=${lngLat.lng}`).then((r) => ({ ...r.place, lat: lngLat.lat, lng: lngLat.lng })).catch(() => p);
@@ -723,6 +724,7 @@ async function showContextMenu(lngLat, point) {
     const place = await named;
     if (act === 'go') openPreview(place);
     if (act === 'save') saveAsFavourite(place);
+    if (act === 'suggest') openSuggestPlace(lngLat, place.name === 'Dropped pin' ? {} : place);
     if (act === 'home' || act === 'work') {
       await setHomeWork(act, place);
       renderSearchHome();
