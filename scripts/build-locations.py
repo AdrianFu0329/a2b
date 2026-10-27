@@ -68,7 +68,7 @@ def main():
     # The country's outline: streets, and OpenStreetMap places, carry no country of their own.
     con.execute(f"""
         CREATE TABLE outline AS SELECT geometry FROM read_parquet('{base}/theme=divisions/type=division_area/*', hive_partitioning=1)
-        WHERE subtype = 'country' AND country = '{args.country}' AND {in_box}
+        WHERE subtype = 'country' AND country = '{args.country}'  -- no box: the sea border can reach past it
     """)
     inside = 'EXISTS (SELECT 1 FROM outline o WHERE ST_Contains(o.geometry, ST_Point({lng}, {lat})))'
     places = step('shops and landmarks', f"""
