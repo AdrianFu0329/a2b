@@ -26,6 +26,8 @@ export function initPanels(callbacks) {
   $('m-install').onclick = install;
   $('auth-switch').onclick = () => setAuthMode(authMode === 'signup' ? 'login' : 'signup');
   $('auth-form').onsubmit = submitAuth;
+  const forgot = $('auth-forgot');
+  if (forgot) forgot.onclick = recoverAccount;
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     installPrompt = e;
@@ -110,6 +112,8 @@ function setAuthMode(mode) {
   document.querySelector('#auth-form .name-row').classList.toggle('hidden', !signup);
   document.querySelector('#auth-form [name=password]').autocomplete = signup ? 'new-password' : 'current-password';
   $('auth-error').classList.add('hidden');
+  const forgot = $('auth-forgot');
+  if (forgot) forgot.classList.toggle('hidden', signup);
 }
 
 async function submitAuth(e) {
@@ -127,19 +131,26 @@ async function submitAuth(e) {
   busy(authMode === 'signup' ? 'Creating account…' : 'Logging in…');
   $('auth-error').classList.add('hidden');
   try {
-    await api(`/api/auth/${authMode}`, { method: 'POST', body });
+    const res = await api(`/api/auth/${authMode}`, { method: 'POST', body });
     await refreshMe();
+    let code = null;
     if (authMode === 'signup') {
       busy('Copying your places…');
       await bringGuestPlaces();
+      code = res.recovery_code ?? null;
     }
     $('auth').classList.add('hidden');
     $('auth-form').reset();
     await ctx.onUserChanged();
     ctx.applyTheme();
     ctx.refreshSound();
-    toast(authMode === 'signup' ? `Welcome, ${state.user.name}!` : `Welcome back, ${state.user.name}!`);
-    if (authReason === 'report') $('btn-report').click();
+    if (code) {
+      // The code panel stays until it is dismissed, so it can't be lost like a prompt could.
+      openRecoveryCode(code);
+    } else {
+      toast(authMode === 'signup' ? `Welcome, ${state.user.name}!` : `Welcome back, ${state.user.name}!`);
+      if (authReason === 'report') $('btn-report').click();
+    }
   } catch (err) {
     $('auth-error').textContent = err.message;
     $('auth-error').classList.remove('hidden');
@@ -173,6 +184,67 @@ async function logout() {
   state.stats = null;
   await ctx.onUserChanged();
   toast('Logged out');
+}
+
+// The recovery code is shown once and never again: a panel with a copy button keeps it on screen until it
+// is dismissed, so it can't be lost the way a prompt can.
+function openRecoveryCode(code) {
+  openPanel('Save your recovery code', `<div class="feedback">
+    <p class="hint">Write this down somewhere safe. It resets your password if you ever lose it — there is no other way to see it again.</p>
+    <input id="rc-code" class="field" readonly value="${esc(code)}" style="font-family:monospace;text-align:center;letter-spacing:1px">
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn primary" id="rc-copy" style="flex:1">Copy code</button>
+      <button class="btn ghost" id="rc-done" style="flex:1">I've saved it</button>
+    </div>
+  </div>`);
+  $('rc-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      toast('Copied — keep it somewhere safe');
+    } catch {
+      const input = $('rc-code');
+      input.focus();
+      input.select();
+      toast('Copy it manually — long-press the code');
+    }
+  };
+  $('rc-done').onclick = () => $('panel').classList.add('hidden');
+}
+
+// Locked out without a password: the recovery code shown once at sign-up sets a new one. A form panel, not
+// prompts, so every field stays visible; wrong answers read the same so the form can't list accounts.
+function recoverAccount() {
+  $('auth').classList.add('hidden'); // the reset form is a panel; the sign-in screen would sit on top of it
+  openPanel('Reset your password', `<div class="feedback">
+    <p class="hint">Enter the account email, the recovery code shown when you signed up, and a new password.</p>
+    <input id="rc-email" class="field" type="email" autocomplete="email" placeholder="Account email">
+    <input id="rc-code-in" class="field" placeholder="Recovery code">
+    <input id="rc-pass" class="field" type="password" autocomplete="new-password" placeholder="New password (at least 8 characters)">
+    <p id="rc-error" class="error hidden"></p>
+    <button class="btn primary wide" id="rc-go" style="margin-top:12px">Reset password</button>
+  </div>`);
+  $('rc-go').onclick = async () => {
+    const err = $('rc-error');
+    const email = $('rc-email').value.trim(), code = $('rc-code-in').value.trim(), password = $('rc-pass').value;
+    if (!email || !code || !password) {
+      err.textContent = 'Fill in all three fields first.';
+      err.classList.remove('hidden');
+      return;
+    }
+    err.classList.add('hidden');
+    try {
+      await api('/api/auth/recover', { method: 'POST', body: { email, code, password } });
+      await refreshMe();
+      $('panel').classList.add('hidden');
+      $('auth').classList.add('hidden');
+      $('auth-form').reset();
+      await ctx.onUserChanged();
+      toast(`Welcome back, ${state.user.name}!`);
+    } catch (e) {
+      err.textContent = e.message;
+      err.classList.remove('hidden');
+    }
+  };
 }
 
 // ================= Panels =================

@@ -932,9 +932,12 @@ async function runSearch(q, enter = false) {
   const near = state.pos?.lngLat ?? map.getCenter().toArray();
   try {
     const coord = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+    // Pasted coordinates are only a place when they're on the earth ("999,999" goes to text search instead).
+    const lat = Number(coord?.[1]), lng = Number(coord?.[2]);
+    const pasted = coord && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
     // Two searches at once: the server's (OpenStreetMap) and this phone's own (Overture shops and places).
-    const [server, local] = coord
-      ? [{ places: [{ name: 'Coordinates', address: q, lat: Number(coord[1]), lng: Number(coord[2]) }] }, []]
+    const [server, local] = pasted
+      ? [{ places: [{ name: 'Coordinates', address: q, lat, lng }] }, []]
       : await Promise.all([
           api(`/api/search?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}&lang=${(navigator.language || 'en').slice(0, 2)}`),
           searchNearby(q, near).catch(() => []),
