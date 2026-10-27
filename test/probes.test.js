@@ -7,7 +7,7 @@ import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/worker.js';
 import { createD1 } from './d1-shim.js';
-import { segmentKey, segmentCell, levelFor, validPoint, probesRepo, annotateWithProbes, PROBE_MIN_POINTS } from '../src/lib/probes.js';
+import { segmentKey, segmentCell, levelFor, validPoint, probesRepo, annotateWithProbes, PROBE_MIN_POINTS, PROBE_MIN_DEVICES } from '../src/lib/probes.js';
 import { encodePolyline as encode } from '../public/geo.js';
 
 // ---------- Fake upstream services (routing only; no TomTom key, like a fresh deploy) ----------
@@ -57,6 +57,15 @@ function client(device) {
   };
 }
 
+// Probe writes need a checked-in device (needSpot), like every other heavy endpoint: check in first.
+async function driver(device) {
+  const c = client(device);
+  const res = await c('POST', '/api/presence', {});
+  assert.equal(res.status, 200, 'test device checks in');
+  assert.ok(res.body.admitted, 'test device is admitted');
+  return c;
+}
+
 const slowFix = (lat, lng = 13.4, speed = 4, heading = 0) => ({ lat, lng, speed, heading, accuracy: 8, at: Date.now() });
 const cellFixes = (lat, n, opts = {}) => Array.from({ length: n }, (_, i) => slowFix(lat + i * 0.00002, opts.lng ?? 13.4, opts.speed ?? 4, opts.heading ?? 0));
 
@@ -67,6 +76,7 @@ before(async () => {
 // Each worker test starts with empty probe tables: blocks from one test never leak into another.
 beforeEach(async () => {
   await env.DB.prepare('DELETE FROM probe_segments').run().catch(() => {});
+  await env.DB.prepare('DELETE FROM probe_devices').run().catch(() => {});
   await env.DB.prepare('DELETE FROM probe_limits').run().catch(() => {});
 });
 
@@ -94,16 +104,18 @@ test('probe congestion levels and fix validation', () => {
 // ---------- Endpoint: consent and devices ----------
 test('probe batches need a device and per-batch consent', async () => {
   assert.equal((await client()('POST', '/api/probe', { consent: true, points: [slowFix(52.5)] })).status, 400, 'no device id');
-  assert.equal((await client('probe-dev-noconsent')('POST', '/api/probe', { points: [slowFix(52.5)] })).status, 403, 'consent flag missing');
-  assert.equal((await client('probe-dev-noconsent')('POST', '/api/probe', { consent: false, points: [slowFix(52.5)] })).status, 403, 'consent refused');
-  const empty = await client('probe-dev-empty')('POST', '/api/probe', { consent: true, points: 'not-a-list' });
+  const noConsent = await driver('probe-dev-noconsent');
+  assert.equal((await noConsent('POST', '/api/probe', { points: [slowFix(52.5)] })).status, 403, 'consent flag missing');
+  assert.equal((await noConsent('POST', '/api/probe', { consent: false, points: [slowFix(52.5)] })).status, 403, 'consent refused');
+  const empty = await (await driver('probe-dev-empty'))('POST', '/api/probe', { consent: true, points: 'not-a-list' });
   assert.equal(empty.status, 202);
   assert.equal(empty.body.stored, 0);
 });
 
 // ---------- Aggregation: anonymous, averaged, rate-capped ----------
 test('probe batches fold into anonymous block totals', async () => {
-  const r = await client('probe-dev-agg1')('POST', '/api/probe', { consent: true, points: cellFixes(52.502, 6) });
+  const d = await driver('probe-dev-agg1');
+  const r = await d('POST', '/api/probe', { consent: true, points: cellFixes(52.502, 6) });
   assert.equal(r.status, 202);
   assert.equal(r.body.stored, 6);
   const rows = (await env.DB.prepare('SELECT * FROM probe_segments').all()).results;
@@ -112,12 +124,20 @@ test('probe batches fold into anonymous block totals', async () => {
   assert.ok(Math.abs(row.avg_speed - 4) < 1e-9, 'running average of the fixes');
   assert.equal(row.probes, 6);
   assert.ok(Math.abs(row.lat - 52.5025) < 1e-9, 'block centre stored, never the raw fix');
+  const devs = (await env.DB.prepare('SELECT * FROM probe_devices').all()).results;
+  assert.equal(devs.length, 1, 'one device row for the one driver');
+  assert.ok(devs[0].device_hash && !devs[0].device_hash.includes('probe-dev'), 'driver stored as a hash, not the device');
   const raw = (await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()).results.map((t) => t.name);
   assert.ok(!raw.some((t) => /fix|trace|position|gps/i.test(t)), 'no table keeps raw fixes');
 });
 
+test('probe writes need a checked-in device', async () => {
+  const r = await client('probe-dev-stranger')('POST', '/api/probe', { consent: true, points: [slowFix(52.5)] });
+  assert.equal(r.status, 503, 'a device that never checked in takes no spot');
+});
+
 test('probe devices are rate-capped but not traced', async () => {
-  const c = client('probe-dev-cap');
+  const c = await driver('probe-dev-cap');
   assert.equal((await c('POST', '/api/probe', { consent: true, points: [slowFix(52.503)] })).status, 202);
   assert.equal((await c('POST', '/api/probe', { consent: true, points: [slowFix(52.503)] })).status, 429, 'a second instant batch is too fast');
   const lim = (await env.DB.prepare('SELECT * FROM probe_limits').all()).results;
@@ -126,13 +146,35 @@ test('probe devices are rate-capped but not traced', async () => {
 
 // ---------- Quality: sparse data, anomalies, parked cars ----------
 test('sparse blocks never count as congested', async () => {
-  await client('probe-dev-sparse')('POST', '/api/probe', { consent: true, points: cellFixes(52.62, PROBE_MIN_POINTS - 1, { lng: 13.5 }) });
+  const d = await driver('probe-dev-sparse');
+  await d('POST', '/api/probe', { consent: true, points: cellFixes(52.62, PROBE_MIN_POINTS - 1, { lng: 13.5 }) });
   const segs = await probesRepo(env.DB).congested([13.4, 52.61, 13.6, 52.63]);
   assert.equal(segs.length, 0, `${PROBE_MIN_POINTS - 1} fixes stay silent`);
 });
 
+test('one driver flooding fixes cannot fake a jam', async () => {
+  const d = await driver('probe-dev-spam');
+  const r = await d('POST', '/api/probe', { consent: true, points: cellFixes(52.621, 12, { lng: 13.5 }) });
+  assert.equal(r.status, 202, 'a full batch is accepted');
+  const segs = await probesRepo(env.DB).congested([13.4, 52.61, 13.6, 52.63]);
+  assert.equal(segs.length, 0, 'a dozen fixes from one driver stay silent');
+});
+
+test('a driver counts once per block, however often they pass it', async () => {
+  const repo = probesRepo(env.DB);
+  const t0 = Date.now();
+  await repo.contribute('hash-same-driver', cellFixes(52.622, 6, { lng: 13.5 }), t0);
+  await repo.contribute('hash-same-driver', cellFixes(52.622, 6, { lng: 13.5 }), t0 + 60_000);
+  await repo.contribute('hash-second-driver', cellFixes(52.622, 6, { lng: 13.5 }), t0 + 60_000);
+  const segs = await repo.congested([13.4, 52.61, 13.6, 52.63], t0 + 60_000);
+  assert.equal(segs.length, 0, `two batches from one driver plus one more is only two drivers, below ${PROBE_MIN_DEVICES}`);
+  await repo.contribute('hash-third-driver', cellFixes(52.622, 6, { lng: 13.5 }), t0 + 120_000);
+  const now = await repo.congested([13.4, 52.61, 13.6, 52.63], t0 + 120_000);
+  assert.equal(now.length, 1, 'three distinct drivers mark the block');
+});
+
 test('glitches and parked cars are ignored', async () => {
-  const c = client('probe-dev-glitch');
+  const c = await driver('probe-dev-glitch');
   const now = Date.now();
   const r = await c('POST', '/api/probe', {
     consent: true,
@@ -148,8 +190,9 @@ test('glitches and parked cars are ignored', async () => {
 
 // ---------- Opposite carriageway ----------
 test('the other side of the road does not slow your route', async () => {
-  await client('probe-dev-south1')('POST', '/api/probe', { consent: true, points: cellFixes(52.507, 6, { heading: 180 }) });
-  await client('probe-dev-south2')('POST', '/api/probe', { consent: true, points: cellFixes(52.507, 6, { heading: 180 }) });
+  await (await driver('probe-dev-south1'))('POST', '/api/probe', { consent: true, points: cellFixes(52.507, 6, { heading: 180 }) });
+  await (await driver('probe-dev-south2'))('POST', '/api/probe', { consent: true, points: cellFixes(52.507, 6, { heading: 180 }) });
+  await (await driver('probe-dev-south3'))('POST', '/api/probe', { consent: true, points: cellFixes(52.507, 6, { heading: 180 }) });
   const anon = client();
   const r = await anon('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], heading: 0 });
   assert.equal(r.status, 200);
@@ -158,11 +201,10 @@ test('the other side of the road does not slow your route', async () => {
 
 // ---------- Route integration: ETA, colouring data, why-slow ----------
 test('crawling blocks slow the route and say why', async () => {
-  // Two cells along the test street, each with enough slow fixes from two drivers.
-  await client('probe-dev-n1')('POST', '/api/probe', { consent: true, points: cellFixes(52.503, 6) });
-  await client('probe-dev-n2')('POST', '/api/probe', { consent: true, points: cellFixes(52.503, 6) });
-  await client('probe-dev-n3')('POST', '/api/probe', { consent: true, points: cellFixes(52.505, 6) });
-  await client('probe-dev-n4')('POST', '/api/probe', { consent: true, points: cellFixes(52.505, 6) });
+  // Two cells along the test street, each with enough slow fixes from three drivers.
+  for (const [dev, lat] of [['probe-dev-n1', 52.503], ['probe-dev-n2', 52.503], ['probe-dev-n3', 52.503], ['probe-dev-n4', 52.505], ['probe-dev-n5', 52.505], ['probe-dev-n6', 52.505]]) {
+    await (await driver(dev))('POST', '/api/probe', { consent: true, points: cellFixes(lat, 6) });
+  }
   const r = await client()('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], heading: 0 });
   assert.equal(r.status, 200);
   const route = r.body.routes[0];
@@ -177,12 +219,25 @@ test('crawling blocks slow the route and say why', async () => {
 });
 
 test('fast blocks and old blocks do not slow the route', async () => {
-  await client('probe-dev-fast')('POST', '/api/probe', { consent: true, points: cellFixes(52.7, 6, { lng: 13.6, speed: 15 }) });
+  await (await driver('probe-dev-fast'))('POST', '/api/probe', { consent: true, points: cellFixes(52.7, 6, { lng: 13.6, speed: 15 }) });
   await env.DB.prepare(
     'INSERT INTO probe_segments (segment, lat, lng, dir, avg_speed, probes, window_start, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   ).bind('old,block,0', 52.701, 13.601, 0, 2, 50, Date.now() - 3600_000, Date.now() - 3600_000).run();
   const segs = await probesRepo(env.DB).congested([13.5, 52.69, 13.7, 52.71]);
   assert.equal(segs.length, 0, 'flowing traffic and stale totals are invisible');
+});
+
+test('annotateWithProbes spreads the delay over steps so the drive countdown agrees', () => {
+  const routes = [{ coords: [[0, 0], [0.01, 0]], duration: 100, steps: [{ begin: 0, end: 1, time: 100 }], traffic: null }];
+  annotateWithProbes(routes, [
+    { lng: 0.005, lat: 0, dir: 4, avg_speed: 3, probes: 9, level: 2 },
+  ]);
+  const [r] = routes;
+  assert.ok(r.probe_delay > 0, 'the crawl adds seconds');
+  assert.equal(r.duration, 100 + r.probe_delay);
+  const stepsTotal = r.steps.reduce((x, s) => x + s.time, 0);
+  assert.ok(Math.abs(stepsTotal - r.duration) < 0.01, 'steps carry the probe delay, the way TomTom timing does');
+  assert.ok(!('_mid' in r.probe_jams[0]) && !('_len' in r.probe_jams[0]) && !('_exact' in r.probe_jams[0]), 'no working fields leak into probe_jams');
 });
 
 test('annotateWithProbes merges nearby blocks into one jam', () => {
@@ -206,9 +261,16 @@ test('the nightly job deletes old probe data', async () => {
   ).bind(seg, lat, 13.4, 0, 3, 9, at, at).run();
   await insert('fresh-seg-0', 52.51, now);
   await insert('old-seg-0', 52.52, now - 25 * 3600_000);
+  const insertDev = (seg, hash, at) => env.DB.prepare(
+    'INSERT INTO probe_devices (segment, device_hash, updated_at) VALUES (?, ?, ?)',
+  ).bind(seg, hash, at).run();
+  await insertDev('fresh-seg-0', 'hash-fresh', now);
+  await insertDev('old-seg-0', 'hash-old', now - 25 * 3600_000);
   await worker.scheduled({}, env);
   const left = (await env.DB.prepare('SELECT segment FROM probe_segments').all()).results.map((r) => r.segment);
   assert.deepEqual(left, ['fresh-seg-0'], 'old blocks are gone, fresh ones stay');
+  const leftDevs = (await env.DB.prepare('SELECT device_hash FROM probe_devices').all()).results.map((r) => r.device_hash);
+  assert.deepEqual(leftDevs, ['hash-fresh'], 'old driver rows are gone, fresh ones stay');
 });
 
 test('traffic_probe is a synced account setting, off by default', async () => {

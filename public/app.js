@@ -17,7 +17,7 @@ import {
 import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
 import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe } from './panels.js';
 import { startPresence, checkIn } from './presence.js';
-import { noteProbeFix, startProbeSender } from './probe.js';
+import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 
@@ -600,7 +600,8 @@ function estSpeed(prev, lngLat, t) {
 
 function handleFix(fix, first = false) {
   state.pos = fix;
-  noteProbeFix(fix); // demo drives return before here, so fake GPS never becomes traffic
+  // Traffic sharing only buffers real drives: walking, browsing the map, and demo drives never become traffic.
+  if (mode === 'drive' && !sim) noteProbeFix(fix);
   local.set('lastPos', fix.lngLat.map((v) => Math.round(v * 1e4) / 1e4));
   if (mode === 'watch') return; // the viewer's own position isn't part of someone else's drive
   if (!carMarker._map) carMarker.setLngLat(fix.lngLat).addTo(map);
@@ -1706,6 +1707,7 @@ async function arrive() {
 
 async function endDrive(arrived) {
   stopSimulation();
+  discardProbeBuffer(); // fixes buffered on this drive must not leak into a later batch
   parkingFor = null;
   $('parking-label').textContent = 'Parking nearby';
   $('parking').classList.add('hidden');

@@ -208,8 +208,9 @@ export function openProbeConsent() {
   const body = openPanel('Share speeds for live traffic', `
     <div class="set-group"><h3>How it works</h3>
       <p class="hint" style="padding:4px 18px">While you drive, the app sends a small batch of recent fixes about
-      every 10 seconds: your position rounded to about 100&nbsp;m, speed, direction and time. The server folds
-      them straight into anonymous per-street totals (street block, direction, average speed, how many fixes)
+      every 30 seconds: your position rounded to about 100&nbsp;m on this phone, speed, direction and time. The server folds
+      them straight into anonymous per-street totals (street block, direction, average speed, how many fixes from
+      how many drivers)
       and never stores your raw trail. Totals older than a day are deleted every night.</p>
       <p class="hint" style="padding:4px 18px">Streets where enough drivers crawl show as slow for everyone, and
       add to route times next to jams drivers report by hand. Turn the switch off any time to stop sharing.</p>

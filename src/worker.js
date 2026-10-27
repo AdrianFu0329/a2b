@@ -52,6 +52,7 @@ export default {
       env.DB.prepare('DELETE FROM usage_devices WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
       env.DB.prepare('DELETE FROM usage_daily WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
       env.DB.prepare('DELETE FROM probe_segments WHERE updated_at < ?').bind(now - PROBE_RETENTION_MS),
+      env.DB.prepare('DELETE FROM probe_devices WHERE updated_at < ?').bind(now - PROBE_RETENTION_MS),
       env.DB.prepare('DELETE FROM probe_limits WHERE last_at < ?').bind(now - PROBE_RETENTION_MS),
     ]);
   },
@@ -430,6 +431,7 @@ async function route(request, env, url) {
   // contribute too: only the device id (hashed, for rate limiting) is needed, never an account.
   if (path === '/api/probe' && method === 'POST') {
     if (!validDevice(device)) throw httpError('Missing device id.', 400);
+    await needSpot(); // writes only come from checked-in devices, like every other upstream- or DB-heavy endpoint
     const body = await readJson(request);
     if (body.consent !== true) throw httpError('Probe sharing needs consent: switch it on in Settings first.', 403);
     const { stored } = await probesRepo(db).contribute(await sha256(device), body.points);

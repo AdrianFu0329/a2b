@@ -16,11 +16,12 @@ export const PROBE_UNKNOWN_DIR = 4; // a fix with no usable heading
 export const PROBE_WINDOW_MS = 10 * 60_000; // only this-fresh totals slow a route down
 export const PROBE_RETENTION_MS = 24 * 3600_000; // the nightly job deletes anything older than this
 export const PROBE_MIN_POINTS = 5; // sparse-data guard: fewer fixes than this never counts as congested
+export const PROBE_MIN_DEVICES = 3; // anti-gaming guard: one driver (or script) alone can never mark a block congested
 export const PROBE_MAX_SPEED_MS = 55.6; // ~200 km/h: faster is a glitch, not a car
 export const PROBE_STILL_MS = 1; // slower than a walk carries no signal: a jam and a parked car look the same
 export const PROBE_MAX_POINTS = 12; // per batch: a phone sends a sip, not the whole drive
-export const PROBE_MIN_INTERVAL_MS = 5_000; // per device: at most a batch every few seconds
-export const PROBE_MAX_PER_DAY = 3000; // per device: about 8 hours of driving at a batch every 10 seconds
+export const PROBE_MIN_INTERVAL_MS = 20_000; // per device: at most a batch every so often (phones send every 30 s)
+export const PROBE_MAX_PER_DAY = 1200; // per device: about 10 hours of driving at a batch every 30 seconds
 export const PROBE_MATCH_M = 75; // a block centre sits at most ~80 m from the road it describes
 export const PROBE_MERGE_GAP_M = 150; // congested blocks this close along a route are one jam
 export const PROBE_REF_KMH = 40; // delays are measured against this: what a clear urban street flows at
@@ -108,11 +109,12 @@ export function probesRepo(db) {
       bySeg.set(key, g);
     }
     if (!bySeg.size) return { stored: 0 };
-    await db.batch(
-      [...bySeg].map(([key, g]) => {
-        const avg = g.sum / g.n;
-        const cell = segmentCell(key); // stored position is the block centre, never the raw fix
-        return db.prepare(
+    const stmts = [];
+    for (const [key, g] of bySeg) {
+      const avg = g.sum / g.n;
+      const cell = segmentCell(key); // stored position is the block centre, never the raw fix
+      stmts.push(
+        db.prepare(
           `INSERT INTO probe_segments (segment, lat, lng, dir, avg_speed, probes, window_start, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(segment) DO UPDATE SET
@@ -122,22 +124,33 @@ export function probesRepo(db) {
              probes = CASE WHEN window_start < ? THEN excluded.probes ELSE min(probes + excluded.probes, ${COUNT_CAP}) END,
              window_start = CASE WHEN window_start < ? THEN excluded.window_start ELSE window_start END,
              updated_at = excluded.updated_at`,
-        ).bind(key, cell.lat, cell.lng, Number(key.split(',')[2]), avg, g.n, now, now, now - PROBE_WINDOW_MS, now - PROBE_WINDOW_MS, now - PROBE_WINDOW_MS);
-      }),
-    );
+        ).bind(key, cell.lat, cell.lng, Number(key.split(',')[2]), avg, g.n, now, now, now - PROBE_WINDOW_MS, now - PROBE_WINDOW_MS, now - PROBE_WINDOW_MS),
+        // One row per device per block: the same driver re-driving a block still counts once towards its
+        // distinct-driver guard, so a script minting fixes (but not drivers) can't fake a jam alone.
+        db.prepare(
+          `INSERT INTO probe_devices (segment, device_hash, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(segment, device_hash) DO UPDATE SET updated_at = excluded.updated_at`,
+        ).bind(key, deviceHash, now),
+      );
+    }
+    await db.batch(stmts);
     return { stored: kept.length };
   }
 
-  // Blocks in a box that are congested right now: fresh, enough fixes, crawling on average.
+  // Blocks in a box that are congested right now: fresh, enough fixes, crawling on average, and seen by
+  // enough distinct drivers that one phone (or script) alone can't mark a block.
   async function congested([w, s, e, n], now = Date.now()) {
+    const cutoff = now - PROBE_WINDOW_MS;
     const rows = (
       await db
         .prepare(
-          `SELECT segment, lat, lng, dir, avg_speed, probes FROM probe_segments
-           WHERE updated_at > ? AND probes >= ${PROBE_MIN_POINTS} AND avg_speed < ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
-           ORDER BY updated_at DESC LIMIT 500`,
+          `SELECT s.segment, s.lat, s.lng, s.dir, s.avg_speed, s.probes, COUNT(d.device_hash) AS devices
+           FROM probe_segments s JOIN probe_devices d ON d.segment = s.segment AND d.updated_at > ?
+           WHERE s.updated_at > ? AND s.probes >= ${PROBE_MIN_POINTS} AND s.avg_speed < ? AND s.lat BETWEEN ? AND ? AND s.lng BETWEEN ? AND ?
+           GROUP BY s.segment HAVING devices >= ${PROBE_MIN_DEVICES}
+           ORDER BY s.updated_at DESC LIMIT 500`,
         )
-        .bind(now - PROBE_WINDOW_MS, 30 / 3.6, s, n, w, e)
+        .bind(cutoff, cutoff, 30 / 3.6, s, n, w, e)
         .all()
     ).results;
     return rows.map((r) => ({ ...r, level: levelFor(r.avg_speed) })).filter((r) => r.level > 0);
@@ -179,18 +192,33 @@ export function annotateWithProbes(routes, segments, box = null) {
       }
     }
     const refMs = PROBE_REF_KMH / 3.6;
-    let delay = 0;
+    let exact = 0;
     const out = jams.map((j) => {
       const len = Math.max(0, j.endM - j.startM) || PROBE_CELL_DEG * 111_000;
       const d = Math.max(0, len * (1 / Math.max(j.avg, 0.5) - 1 / refMs));
       const level = levelFor(j.avg);
-      delay += d;
-      return { from: round(j.startM / total), to: round(j.endM / total), level, delay: Math.round(d), probes: j.probes };
+      exact += d;
+      return { from: round(j.startM / total), to: round(j.endM / total), level, delay: Math.round(d), probes: j.probes, _mid: (j.startM + j.endM) / 2, _len: len, _exact: d }; /* _len: point hits count a block's width */
     });
-    delay = Math.min(Math.round(delay), PROBE_MAX_DELAY_S);
-    r.probe_jams = out;
+    const delay = Math.min(Math.round(exact), PROBE_MAX_DELAY_S);
+    r.probe_jams = out.map(({ _mid, _len, _exact, ...j }) => j);
     r.probe_delay = r.traffic ? 0 : delay;
-    if (!r.traffic) r.duration += delay;
+    if (!r.traffic && delay) {
+      r.duration += delay;
+      if (Array.isArray(r.steps) && r.steps.length) {
+        // The drive screen counts down the steps plus route.delay, so the probe delay is spread over the
+        // steps each jam covers (like applyTraffic does for TomTom), instead of living only in the list total.
+        const scale = exact > 0 ? delay / exact : 0;
+        for (const j of out) {
+          const a = j._mid - j._len / 2, b = j._mid + j._len / 2, span = Math.max(j._len, 1);
+          const share = j._exact * scale;
+          r.steps.forEach((s) => {
+            const overlap = Math.min(b, cum[s.end]) - Math.max(a, cum[s.begin]);
+            if (overlap > 0) s.time += (share * overlap) / span;
+          });
+        }
+      } // no steps (tests): the duration above carries the ETA on its own
+    }
     r.slow = [
       ...(r.traffic?.delay ? [{ kind: 'live', delay: r.traffic.delay }] : []),
       ...(r.delay ? [{ kind: 'report', delay: r.delay }] : []),
