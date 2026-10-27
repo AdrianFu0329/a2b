@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Drawn from public/icon.svg (the dotted route is laid out as dots, which vector drawables can't dash). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="360" android:viewportHeight="360">
+    <group android:translateX="-97" android:translateY="-72">
+        <path android:fillColor="#FFFFFF" android:pathData="M133.00,369.50a17,17 0 1,0 34,0a17,17 0 1,0 -34,0ZM167.33,320.58a17,17 0 1,0 34,0a17,17 0 1,0 -34,0ZM226.24,298.63a17,17 0 1,0 34,0a17,17 0 1,0 -34,0ZM286.48,280.24a17,17 0 1,0 34,0a17,17 0 1,0 -34,0ZM337.85,245.69a17,17 0 1,0 34,0a17,17 0 1,0 -34,0ZM337.20,185.22a17,17 0 1,0 34,0a17,17 0 1,0 -34,0ZM289.22,147.13a17,17 0 1,0 34,0a17,17 0 1,0 -34,0Z" />
+        <path android:fillColor="#FFFFFF" android:fillType="evenOdd" android:pathData="M104.00,370.00a46,46 0 1,0 92,0a46,46 0 1,0 -92,0ZM130.00,370.00a20,20 0 1,0 40,0a20,20 0 1,0 -40,0Z" />
+        <path android:fillColor="#FFFFFF" android:fillType="evenOdd" android:pathData="M362,96c-44,0 -80,34 -80,77 0,58 80,129 80,129s80,-71 80,-129c0,-43 -36,-77 -80,-77ZM336.00,172.00a26,26 0 1,0 52,0a26,26 0 1,0 -52,0Z" />
+    </group>
+</vector>

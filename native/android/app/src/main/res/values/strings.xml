@@ -4,4 +4,8 @@
     <string name="title_activity_main">A2B</string>
     <string name="package_name">my.a2b.app</string>
     <string name="custom_url_scheme">my.a2b.app</string>
+    <!-- The notification shown while A2B gives directions with the screen off (background geolocation plugin). -->
+    <string name="capacitor_background_geolocation_notification_channel_name">Driving directions</string>
+    <string name="capacitor_background_geolocation_notification_icon">drawable/ic_notification</string>
+    <string name="capacitor_background_geolocation_notification_color">#751B4F</string>
 </resources>
