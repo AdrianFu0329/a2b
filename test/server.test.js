@@ -935,6 +935,12 @@ test('own places: searched by name, nearest first, and ahead of the public geoco
   assert.equal(r.status, 200);
   assert.deepEqual(r.body.places.map((p) => p.address), ['Kampung Baru, Kuala Lumpur', 'Johor Bahru'], 'nearest first');
   assert.ok(r.body.places[0].km < 1);
+  await loadLocations([
+    ['Mid Valley Starbucks', 'Mid Valley City', 'cafe', 'place', 3.118, 101.677, 'overture'],
+    ['Mid Valley Megamall', 'Mid Valley City', 'shopping_mall', 'landmark', 3.1181, 101.6771, 'overture'],
+  ]);
+  const mall = await client()('GET', '/api/locations?q=mid%20valley&lat=3.16&lng=101.70');
+  assert.equal(mall.body.places[0].name, 'Mid Valley Megamall', 'a landmark ahead of a shop named after it');
   const s = await client()('GET', '/api/search?q=nasi%20lemak&lat=3.16&lng=101.70');
   assert.equal(s.body.places[0].name, 'Nasi Lemak Antarabangsa', 'own places come first');
   assert.ok(s.body.places.some((p) => p.name === 'Alexanderplatz'), 'topped up from the public geocoder');

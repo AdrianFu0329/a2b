@@ -61,9 +61,11 @@ export function locationsRepo(db) {
       const words = fts.split(' ').length;
       const score = (r) => {
         const km = near ? distance(near, [r.lng, r.lat]) / 1000 : 0;
-        // bm25 is negative, more so for better matches; a name that starts with the query does better still.
+        // bm25 is negative, more so for better matches; a name that starts with the query does better still, and
+        // a landmark (a mall, a station, a hospital) over a shop that only carries its name.
         const starts = r.name.toLowerCase().startsWith(String(q).trim().toLowerCase()) ? -2 : 0;
-        return r.rank + starts + Math.log1p(km) * (words > 1 ? 0.6 : 1);
+        const landmark = r.kind === 'landmark' ? -2 : 0;
+        return r.rank + starts + landmark + Math.log1p(km) * (words > 1 ? 0.6 : 1);
       };
       return rows
         .map((r) => ({ r, s: score(r) }))
