@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { cumulative } from '../public/geo.js';
 import { isSchoolDay, isSchoolTime, schoolAhead, schoolLimit } from '../public/school-zones.js';
-import { schoolsAlong } from '../src/lib/schools.js';
+import { pointAlong } from '../public/nav.js';
+import { schoolsAlong, schoolGrid } from '../src/lib/schools.js';
 import { schoolRows } from '../scripts/build-schools.mjs';
 
 const KL = [101.69, 3.14];
@@ -61,14 +62,38 @@ test('schools beside a route, one zone for schools side by side', () => {
     [101.69, 3.1535, 'SK Dua'],
     [101.695, 3.15, 'Too far'], // ~550 m off
   ];
-  const grid = new Map();
-  for (const r of rows) {
-    const k = `${Math.floor(r[0] / 0.05)}:${Math.floor(r[1] / 0.05)}`;
-    grid.set(k, [...(grid.get(k) ?? []), r]);
-  }
+  const grid = schoolGrid(rows);
   assert.deepEqual(schoolsAlong(coords, { grid }).map((s) => s.name), ['SK Satu', 'SK Dua']);
   assert.deepEqual(schoolsAlong(coords, { grid })[0].pos, [101.6905, 3.1445], 'where the school itself is, for its pin');
   assert.deepEqual(schoolsAlong(coords, { grid: new Map() }), []);
+});
+
+test('schools beside a route: only the road near each school is measured, with the same answer as the whole route', () => {
+  // A winding 60 km drive (a point every ~100 m, and a 6 km straight with no points in between), and schools
+  // scattered around it, some near the road.
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const coords = [];
+  for (let i = 0; i < 600; i++) coords.push([101.5 + i * 0.0009, 3.0 + Math.sin(i / 40) * 0.02]);
+  const last = coords.at(-1);
+  coords.push([last[0] + 0.054, last[1]]); // the long straight
+  const rows = Array.from({ length: 3000 }, (_, i) => {
+    const c = coords[Math.floor(rand() * coords.length)];
+    return [c[0] + (rand() - 0.5) * 0.006, c[1] + (rand() - 0.5) * 0.006, `S${i}`];
+  });
+  rows.push([last[0] + 0.03, last[1] + 0.0008, 'Mid-straight']); // ~90 m off the middle of the straight
+  // What the whole-route scan (pointAlong over every segment) finds, zones merged the same way.
+  const cum = cumulative(coords);
+  const hits = rows
+    .map(([lng, lat, name]) => ({ name, hit: pointAlong(coords, cum, [lng, lat]) }))
+    .filter((s) => s.hit.dist <= 150)
+    .sort((a, b) => a.hit.along - b.hit.along)
+    .filter((s, i, all) => i === 0 || s.hit.along - all[i - 1].hit.along > 150)
+    .map((s) => [s.name, s.hit.seg]);
+  const got = schoolsAlong(coords, { grid: schoolGrid(rows) }).map((s) => [s.name, s.at]);
+  assert.ok(hits.length > 20, `${hits.length}`);
+  assert.deepEqual(got, hits);
+  assert.ok(got.some(([name]) => name === 'Mid-straight'), 'a school beside a long straight with no points near it');
 });
 
 test('the build keeps schools and leaves out kindergartens, tuition centres and colleges', () => {
