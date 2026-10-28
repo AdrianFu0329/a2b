@@ -60,3 +60,10 @@ export function schoolAhead(along, schools, cum) {
   const ahead = cum[pick.at] - along;
   return ahead <= WARN_M ? { school: pick, ahead } : null;
 }
+
+// School zones in Malaysia are signed 30 km/h. What the chip and the voice say about it, in the units chosen in
+// Settings (20 mph is the nearest round figure).
+export const SCHOOL_LIMIT_KMH = 30;
+export function schoolLimit(units) {
+  return units === 'imperial' ? { chip: '20 mph zone', spoken: 'Slow down to 20.' } : { chip: `${SCHOOL_LIMIT_KMH} km/h zone`, spoken: `Slow down to ${SCHOOL_LIMIT_KMH}.` };
+}

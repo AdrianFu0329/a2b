@@ -35,7 +35,7 @@ export async function loadSchools(assets) {
   return got ?? { rows: [], grid: new Map() };
 }
 
-// The schools beside a route, in order: { at: index into its coords, name }.
+// The schools beside a route, in order: { at: index into its coords, name, pos: the school's own [lng, lat] }.
 export function schoolsAlong(coords, { grid }) {
   if (!grid?.size || coords.length < 2) return [];
   const cells = new Set();
@@ -48,10 +48,10 @@ export function schoolsAlong(coords, { grid }) {
     for (const [lng, lat, name] of grid.get(k) ?? []) {
       const hit = pointAlong(coords, cum, [lng, lat]);
       if (hit.dist > NEAR_M) continue;
-      out.push({ at: hit.seg, along: hit.along, name: name || null });
+      out.push({ at: hit.seg, along: hit.along, name: name || null, pos: [lng, lat] });
     }
   }
   out.sort((a, b) => a.along - b.along);
   // Schools side by side (a primary and a secondary sharing a road) are one zone.
-  return out.filter((s, i) => i === 0 || s.along - out[i - 1].along > 150).map(({ at, name }) => ({ at, name }));
+  return out.filter((s, i) => i === 0 || s.along - out[i - 1].along > 150).map(({ at, name, pos }) => ({ at, name, pos }));
 }

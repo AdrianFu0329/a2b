@@ -22,7 +22,7 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
-import { isSchoolTime, schoolAhead } from './school-zones.js';
+import { isSchoolTime, schoolAhead, schoolLimit } from './school-zones.js';
 import { matchesWordStarts } from './text.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
@@ -294,6 +294,10 @@ function addMapLayers() {
     map.addLayer({ id: 'routes-casing', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 16] } }, before);
     map.addLayer({ id: 'routes-main', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 11] } }, before);
     // Toll plazas on the route, as small amber "TOLL" tags.
+    // The school a school-zone warning is about, pinned while the warning shows (see checkSchools).
+    map.addSource('school-pin', { type: 'geojson', data: emptyFc() });
+    if (!map.hasImage('school-pin')) map.addImage('school-pin', schoolPinImage(), { pixelRatio: 2 });
+    map.addLayer({ id: 'school-pin', type: 'symbol', source: 'school-pin', layout: { 'icon-image': 'school-pin', 'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
     map.addSource('tolls', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('toll-tag')) map.addImage('toll-tag', tollTagImage(), { pixelRatio: 2 });
     map.addLayer({ id: 'tolls', type: 'symbol', source: 'tolls', layout: { 'icon-image': 'toll-tag', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 1] } });
@@ -606,16 +610,54 @@ function checkCameras() {
 function checkSchools() {
   const chip = $('school-chip');
   const next = state.settings.alerts && isSchoolTime(Date.now(), live.snapped) && schoolAhead(live.along, nav.route.schools, nav.cum);
-  if (!next) return chip.classList.add('hidden');
+  if (!next) {
+    if (!chip.classList.contains('hidden')) map.getSource('school-pin')?.setData(emptyFc());
+    return chip.classList.add('hidden');
+  }
   const { school, ahead } = next;
   const units = state.settings.units;
-  chip.innerHTML = `<b>SCHOOL</b><span>${ahead > 0 ? formatDistance(ahead, units) : 'Now'} · Slow down${school.name ? `<small>${esc(school.name)}</small>` : ''}</span>`;
+  const limit = schoolLimit(units);
+  chip.innerHTML = `<b>SCHOOL</b><span>${ahead > 0 ? formatDistance(ahead, units) : 'Now'} · ${limit.chip}${school.name ? `<small>${esc(school.name)}</small>` : ''}</span>`;
   chip.classList.remove('hidden');
   const key = `${nav.total}:${school.at}`;
+  if (pinnedSchool !== key) {
+    pinnedSchool = key;
+    map.getSource('school-pin')?.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: school.pos ?? nav.coords[school.at] } }] });
+  }
   if (ahead > 0 && !schoolsWarned.has(key)) {
     schoolsWarned.add(key);
-    speak('School zone ahead. Slow down.');
+    speak(`School zone ahead. ${limit.spoken}`);
   }
+}
+let pinnedSchool = null;
+
+// A yellow pin with a little school (a roof over a door), for the school a warning is about.
+function schoolPinImage() {
+  const w = 48, h = 60, c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d');
+  g.beginPath();
+  g.moveTo(w / 2, h - 3);
+  g.bezierCurveTo(w / 2 - 6, h - 16, 4, h - 26, 4, 22);
+  g.arc(w / 2, 22, w / 2 - 4, Math.PI, 0);
+  g.bezierCurveTo(w - 4, h - 26, w / 2 + 6, h - 16, w / 2, h - 3);
+  g.fillStyle = '#f5c400';
+  g.fill();
+  g.lineWidth = 3;
+  g.strokeStyle = '#1b1b1f';
+  g.stroke();
+  g.fillStyle = '#1b1b1f';
+  g.beginPath(); // the roof
+  g.moveTo(w / 2, 9);
+  g.lineTo(w / 2 + 13, 19);
+  g.lineTo(w / 2 - 13, 19);
+  g.closePath();
+  g.fill();
+  g.fillRect(w / 2 - 10, 19, 20, 14); // the walls
+  g.fillStyle = '#f5c400';
+  g.fillRect(w / 2 - 3, 25, 6, 8); // the door
+  return g.getImageData(0, 0, w, h);
 }
 
 // Turn arrow on the map for the next maneuver: from just before the turn to just after it
@@ -1698,6 +1740,8 @@ function startDrive() {
   schoolsWarned.clear();
   $('toll-chip').classList.add('hidden');
   $('school-chip').classList.add('hidden');
+  map.getSource('school-pin')?.setData(emptyFc());
+  pinnedSchool = null;
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
   live = null;
@@ -2086,6 +2130,8 @@ async function endDrive(arrived) {
   drawTrail();
   $('toll-chip').classList.add('hidden');
   $('school-chip').classList.add('hidden');
+  map.getSource('school-pin')?.setData(emptyFc());
+  pinnedSchool = null;
   onRoute = [];
   stops = [];
   renderStopMenu();

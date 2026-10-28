@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { cumulative } from '../public/geo.js';
-import { isSchoolDay, isSchoolTime, schoolAhead } from '../public/school-zones.js';
+import { isSchoolDay, isSchoolTime, schoolAhead, schoolLimit } from '../public/school-zones.js';
 import { schoolsAlong } from '../src/lib/schools.js';
 import { schoolRows } from '../scripts/build-schools.mjs';
 
@@ -67,6 +67,7 @@ test('schools beside a route, one zone for schools side by side', () => {
     grid.set(k, [...(grid.get(k) ?? []), r]);
   }
   assert.deepEqual(schoolsAlong(coords, { grid }).map((s) => s.name), ['SK Satu', 'SK Dua']);
+  assert.deepEqual(schoolsAlong(coords, { grid })[0].pos, [101.6905, 3.1445], 'where the school itself is, for its pin');
   assert.deepEqual(schoolsAlong(coords, { grid: new Map() }), []);
 });
 
@@ -78,4 +79,9 @@ test('the build keeps schools and leaves out kindergartens, tuition centres and 
   );
   const built = JSON.parse(readFileSync(new URL('../public/schools.json', import.meta.url), 'utf8'));
   assert.ok(built.schools.length > 5000 && built.schools.every((s) => s.length === 3));
+});
+
+test('school zones are signed 30 km/h: the chip and the voice say so', () => {
+  assert.deepEqual(schoolLimit('metric'), { chip: '30 km/h zone', spoken: 'Slow down to 30.' });
+  assert.deepEqual(schoolLimit('imperial'), { chip: '20 mph zone', spoken: 'Slow down to 20.' });
 });
