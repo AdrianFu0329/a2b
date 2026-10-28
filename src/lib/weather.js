@@ -32,7 +32,7 @@ export const SOURCES = {
 // ---------- What the weather means for a driver ----------
 
 // One shape for both sources. sky: clear | cloudy | haze | windy | rain | heavy-rain | storm.
-// chance: how likely rain is (0-1), temp/feels in °C (WeatherKit), low/high for the day (MET Malaysia).
+// chance: how likely rain is (0-1), temp/feels in °C and humidity 0-1 (WeatherKit), low/high for the day (MET Malaysia).
 const WET = new Set(['rain', 'heavy-rain', 'storm']);
 export const isWet = (f) => Boolean(f && WET.has(f.sky) && (f.chance ?? 1) >= 0.3);
 
@@ -148,7 +148,8 @@ async function weatherKitToken(env, now) {
 
 export const cellOf = ([lng, lat]) => [Math.round(lat / CELL_DEG) * CELL_DEG, Math.round(lng / CELL_DEG) * CELL_DEG].map((v) => +v.toFixed(2));
 
-// The next two days, hour by hour, for one square, kept small: [start ms, condition, °C, feels °C, chance, mm/h].
+// The next two days, hour by hour, for one square, kept small: [start ms, condition, °C, feels °C, chance, mm/h,
+// humidity 0-1].
 async function weatherKitHours(env, cell, now, cache) {
   const [lat, lng] = cell;
   const key = new Request(`https://cache.a2b/weather/wk/${lat}/${lng}`);
@@ -161,7 +162,7 @@ async function weatherKitHours(env, cell, now, cache) {
   const res = await fetch(u, { headers: { authorization: `Bearer ${await weatherKitToken(env, now)}`, 'user-agent': UA }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`WeatherKit ${res.status}`);
   const hours = ((await res.json()).forecastHourly?.hours ?? []).map((h) => [
-    Date.parse(h.forecastStart), h.conditionCode, h.temperature, h.temperatureApparent, h.precipitationChance, h.precipitationIntensity,
+    Date.parse(h.forecastStart), h.conditionCode, h.temperature, h.temperatureApparent, h.precipitationChance, h.precipitationIntensity, h.humidity,
   ]);
   if (cache) await cache.put(key, new Response(JSON.stringify(hours), { headers: { 'cache-control': `public, max-age=${FORECAST_TTL}` } }));
   return hours;
@@ -170,9 +171,9 @@ async function weatherKitHours(env, cell, now, cache) {
 export function weatherKitAt(hours, at) {
   const h = hours.filter((x) => x[0] <= at + 1800_000).at(-1);
   if (!h || at - h[0] > 2 * 3600_000) return null;
-  const [, code, temp, feels, chance, mm] = h;
+  const [, code, temp, feels, chance, mm, humidity] = h;
   const sky = skyFromCondition(code, mm ?? 0);
-  return { sky, chance: chance ?? null, temp: temp ?? null, feels: feels ?? null, text: conditionText(code), source: 'weatherkit' };
+  return { sky, chance: chance ?? null, temp: temp ?? null, feels: feels ?? null, humidity: humidity ?? null, text: conditionText(code), source: 'weatherkit' };
 }
 
 // "MostlyCloudy" -> "Mostly cloudy".

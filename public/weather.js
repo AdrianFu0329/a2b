@@ -35,17 +35,22 @@ const WORSE = ['rain', 'heavy-rain', 'storm'];
 const wet = (f) => Boolean(f && WORSE.includes(f.sky) && (f.chance ?? 1) >= 0.3);
 const severity = (f) => (wet(f) ? WORSE.indexOf(f.sky) + 1 : 0);
 const temps = (f) => (f.temp != null ? `${Math.round(f.temp)}°C` : f.low != null && f.high != null ? `${f.low}–${f.high}°C` : '');
-const chance = (f) => (f.chance != null && f.source === 'weatherkit' && wet(f) ? `${Math.round(f.chance * 100)}% chance of rain` : '');
-const SKY_WORDS = { rain: 'Rain', 'heavy-rain': 'Heavy rain', storm: 'Thunderstorms' };
+// Forecasts are often wrong about exactly where and when it rains, so A2B only ever says what's possible.
+const WET_WORDS = { rain: 'rain', 'heavy-rain': 'heavy rain', storm: 'thunderstorms' };
+const DRY_WORDS = { clear: 'probably dry', cloudy: 'probably dry and cloudy', haze: 'possibly hazy', windy: 'possibly windy' };
+const NOW_MS = 20 * 60_000; // a point this close in time is "now"
+// Sticky: warm and damp enough that sweat doesn't dry. Only WeatherKit gives humidity; MET Malaysia doesn't.
+const humid = (f) => Boolean(f && (f.humidity ?? 0) >= 0.7 && (f.temp ?? 0) >= 27);
+const RAIN_TIP = 'Bring an umbrella or a raincoat, and maybe avoid light-coloured clothes.';
 
 // What to say about a drive. answer: /api/weather's reply; points: what was asked; clock(ms) -> "5:40 PM".
 // Returns null when there's nothing to say, else { sky, arrival, ahead, warnings, tips, sources }.
-export function describeTrip(answer, points, clock) {
+export function describeTrip(answer, points, clock, now = Date.now()) {
   const fs = answer?.points ?? [];
   const destF = fs.at(-1);
   const destP = points.at(-1);
   const arrival = destF
-    ? `On arrival at ${clock(destP.at)}: ${[destF.text, chance(destF), temps(destF)].filter(Boolean).join(', ')}`
+    ? `${wet(destF) ? `Possible ${WET_WORDS[destF.sky]} when you arrive` : `When you arrive: ${DRY_WORDS[destF.sky] ?? 'probably dry'}`}, around ${clock(destP.at)}${temps(destF) ? ` (${temps(destF)})` : ''}`
     : '';
 
   // The worst weather on the way there (not counting the destination), where it's first met.
@@ -53,17 +58,23 @@ export function describeTrip(answer, points, clock) {
   fs.slice(0, -1).forEach((f, i) => {
     if (severity(f) > (ahead ? severity(ahead.f) : 0)) ahead = { f, p: points[i] };
   });
-  const aheadText = ahead
-    ? `${SKY_WORDS[ahead.f.sky]} on the way${ahead.f.place ? ` near ${ahead.f.place}` : ''}, around ${clock(ahead.p.at)}`
-    : '';
+  let aheadText = '';
+  if (ahead) {
+    const near = ahead.f.place ? ` near ${ahead.f.place}` : '';
+    const what = ahead.f.sky === 'storm' ? 'There may be thunderstorms' : `It may ${ahead.f.sky === 'heavy-rain' ? 'rain heavily' : 'rain'}`;
+    aheadText = ahead.p.at - now <= NOW_MS
+      ? `${ahead.f.sky === 'storm' ? 'There may be thunderstorms' : 'It may be raining'}${near} right now`
+      : `${what} on the way${near}, around ${clock(ahead.p.at)}`;
+  }
 
   const tips = [];
-  if (wet(destF)) tips.push('Bring an umbrella.');
+  if (wet(destF) || ahead) tips.push(RAIN_TIP);
   const hot = destF && ((destF.feels ?? destF.temp ?? -99) >= 36 || (destF.high ?? -99) >= 35);
   const cool = destF && ((destF.feels ?? destF.temp ?? 99) <= 20 || (destF.high ?? 99) <= 22);
-  if (hot) tips.push('Hot there: wear something light and bring water.');
-  if (cool) tips.push('Cool there: bring a jacket.');
-  if (ahead && severity(ahead.f) >= 2) tips.push('Slow down and turn your headlights on in heavy rain.');
+  if (hot) tips.push('It may be hot there: wear something light and bring water.');
+  if (cool) tips.push('It may be cool there: bring a jacket.');
+  else if (humid(destF)) tips.push("It may be humid there: skip long sleeves and jackets, and wear something that won't show sweat marks.");
+  if (ahead && severity(ahead.f) >= 2) tips.push('If it pours, slow down and turn your headlights on.');
 
   const warnings = (answer?.warnings ?? []).map((w) => `${w.title}: ${w.text}`);
   if (!arrival && !aheadText && !warnings.length) return null;
@@ -82,5 +93,6 @@ export function wetAhead(answer, points, along, withinM = 8000) {
 }
 
 export function spokenWeather({ sky, place }) {
-  return `${SKY_WORDS[sky]} expected ahead${place ? ` near ${place}` : ''}. Drive carefully.`;
+  const near = place ? ` near ${place}` : '';
+  return `${sky === 'storm' ? 'There may be thunderstorms' : sky === 'heavy-rain' ? 'It may rain heavily' : 'It may rain'} ahead${near}. Drive carefully.`;
 }

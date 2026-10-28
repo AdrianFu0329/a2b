@@ -117,7 +117,7 @@ test('with a WeatherKit key, each square is fetched once with a signed token; ME
     if (url.includes('weatherkit.apple.com')) {
       if (kitDown) return new Response('nope', { status: 500 });
       const start = Date.parse('2026-10-28T06:00:00Z');
-      return Response.json({ forecastHourly: { hours: [0, 1, 2].map((h) => ({ forecastStart: new Date(start + h * 3600_000).toISOString(), conditionCode: h === 1 ? 'HeavyRain' : 'Cloudy', temperature: 30, temperatureApparent: 36, precipitationChance: h === 1 ? 0.8 : 0.1, precipitationIntensity: h === 1 ? 9 : 0 })) } });
+      return Response.json({ forecastHourly: { hours: [0, 1, 2].map((h) => ({ forecastStart: new Date(start + h * 3600_000).toISOString(), conditionCode: h === 1 ? 'HeavyRain' : 'Cloudy', temperature: 30, temperatureApparent: 36, humidity: 0.82, precipitationChance: h === 1 ? 0.8 : 0.1, precipitationIntensity: h === 1 ? 9 : 0 })) } });
     }
     if (url.includes('/weather/forecast')) return Response.json(metRows('Hujan di beberapa tempat'));
     if (url.includes('/weather/warning')) return Response.json([]);
@@ -131,6 +131,7 @@ test('with a WeatherKit key, each square is fetched once with a signed token; ME
     assert.match(kit[0].url, /\/en\/3\.1\/101\.7\?dataSets=forecastHourly/);
     assert.deepEqual([a.points[0].sky, a.points[1].sky], ['cloudy', 'heavy-rain']);
     assert.equal(a.points[1].feels, 36);
+    assert.equal(a.points[1].humidity, 0.82);
     assert.deepEqual(a.sources.map((s) => s.name), [' Weather']);
 
     const [head, body, sig] = kit[0].init.headers.authorization.replace('Bearer ', '').split('.');
@@ -164,23 +165,38 @@ test('a route is asked about every ~15 km at the time the driver passes, ending 
   assert.deepEqual(weatherPoints({ coords: [line[0], line[0]], duration: 0 }), [], 'nowhere to go');
 });
 
-test('the route sheet says what it is like on arrival, the worst on the way, and what to bring', () => {
+test('the route sheet says what may happen on arrival and on the way, never for certain, and what to bring', () => {
   const pts = weatherPoints(route, NOW);
   const dry = { sky: 'clear', chance: 0.1, text: 'No rain', low: 24, high: 33, source: 'met' };
   const points = pts.map(() => dry);
-  points[1] = { sky: 'storm', chance: 0.4, text: 'Thunderstorms in places', place: 'Kajang', source: 'met' };
+  points[3] = { sky: 'storm', chance: 0.4, text: 'Thunderstorms in places', place: 'Kajang', source: 'met' };
   points[points.length - 1] = { sky: 'rain', chance: 0.7, text: 'Rain in most places', low: 24, high: 32, place: 'Seremban', source: 'met' };
-  const trip = describeTrip({ points, warnings: [], sources: [{ name: 'MET Malaysia' }] }, pts, clock);
-  assert.equal(trip.arrival, `On arrival at ${clock(pts.at(-1).at)}: Rain in most places, 24–32°C`);
-  assert.equal(trip.ahead, `Thunderstorms on the way near Kajang, around ${clock(pts[1].at)}`);
-  assert.deepEqual(trip.tips, ['Bring an umbrella.', 'Slow down and turn your headlights on in heavy rain.']);
+  const trip = describeTrip({ points, warnings: [], sources: [{ name: 'MET Malaysia' }] }, pts, clock, NOW);
+  assert.equal(trip.arrival, `Possible rain when you arrive, around ${clock(pts.at(-1).at)} (24–32°C)`);
+  assert.equal(trip.ahead, `There may be thunderstorms on the way near Kajang, around ${clock(pts[3].at)}`);
+  assert.deepEqual(trip.tips, [
+    'Bring an umbrella or a raincoat, and maybe avoid light-coloured clothes.',
+    'If it pours, slow down and turn your headlights on.',
+  ]);
   assert.equal(trip.sky, 'storm');
 
-  const sunny = describeTrip({ points: pts.map(() => ({ sky: 'clear', chance: 0.05, text: 'Clear', temp: 34, feels: 39, source: 'weatherkit' })), warnings: [] }, pts, clock);
+  // Rain forecast for a spot the driver reaches in a few minutes: it may be raining there already.
+  points[1] = { sky: 'rain', chance: 0.7, text: 'Rain', place: 'Ampang', source: 'met' };
+  points[3] = dry;
+  const soon = describeTrip({ points, warnings: [] }, pts, clock, pts[1].at - 10 * 60_000);
+  assert.equal(soon.ahead, 'It may be raining near Ampang right now');
+
+  const sunny = describeTrip({ points: pts.map(() => ({ sky: 'clear', chance: 0.05, text: 'Clear', temp: 34, feels: 39, source: 'weatherkit' })), warnings: [] }, pts, clock, NOW);
+  assert.equal(sunny.arrival, `When you arrive: probably dry, around ${clock(pts.at(-1).at)} (34°C)`);
   assert.equal(sunny.ahead, '');
-  assert.deepEqual(sunny.tips, ['Hot there: wear something light and bring water.']);
-  const highlands = describeTrip({ points: [{ sky: 'cloudy', text: 'Cloudy', low: 14, high: 21, source: 'met' }], warnings: [] }, pts.slice(-1), clock);
-  assert.deepEqual(highlands.tips, ['Cool there: bring a jacket.']);
+  assert.deepEqual(sunny.tips, ['It may be hot there: wear something light and bring water.']);
+  const highlands = describeTrip({ points: [{ sky: 'cloudy', text: 'Cloudy', low: 14, high: 21, source: 'met' }], warnings: [] }, pts.slice(-1), clock, NOW);
+  assert.deepEqual(highlands.tips, ['It may be cool there: bring a jacket.']);
+  const sticky = describeTrip({ points: [{ sky: 'cloudy', text: 'Mostly cloudy', temp: 31, feels: 35, humidity: 0.78, source: 'weatherkit' }], warnings: [] }, pts.slice(-1), clock, NOW);
+  assert.deepEqual(sticky.tips, ["It may be humid there: skip long sleeves and jackets, and wear something that won't show sweat marks."]);
+  const dryHeat = describeTrip({ points: [{ sky: 'clear', text: 'Clear', temp: 31, feels: 33, humidity: 0.5, source: 'weatherkit' }], warnings: [] }, pts.slice(-1), clock, NOW);
+  assert.deepEqual(dryHeat.tips, [], 'not humid enough');
+  for (const t of [trip, soon, sunny, highlands]) assert.doesNotMatch(`${t.arrival} ${t.ahead}`, /will|expected/i, 'never certain');
   assert.equal(describeTrip({ points: [null], warnings: [] }, pts.slice(-1), clock), null, 'nothing known, nothing shown');
 });
 
@@ -192,7 +208,8 @@ test('while driving, a likely wet stretch a few km ahead is announced', () => {
   assert.equal(wetAhead(answer, pts, 0), null, 'still far off');
   const near = wetAhead(answer, pts, pts[2].along - 5000);
   assert.equal(near.i, 2);
-  assert.equal(spokenWeather(near), 'Heavy rain expected ahead near Kajang. Drive carefully.');
+  assert.equal(spokenWeather(near), 'It may rain heavily ahead near Kajang. Drive carefully.');
+  assert.equal(spokenWeather({ sky: 'storm' }), 'There may be thunderstorms ahead. Drive carefully.');
   assert.equal(wetAhead(answer, pts, pts[2].along + 100), null, 'already passed');
   points[2] = { sky: 'storm', chance: 0.4 };
   assert.equal(wetAhead(answer, pts, pts[2].along - 5000), null, 'too unsure to say out loud');
