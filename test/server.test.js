@@ -156,7 +156,7 @@ function client(device) {
 function needsSpot(method, path) {
   if (path === '/api/presence') return false;
   if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/reverse') || path.startsWith('/api/parking'))) return true;
-  return method === 'POST' && path === '/api/route';
+  return method === 'POST' && (path === '/api/route' || path === '/api/transit');
 }
 
 let alice, bob;
@@ -191,6 +191,13 @@ test('route requests carry avoid options, heading and closures', () => {
   assert.equal(body.locations[0].heading, 92);
   assert.deepEqual(body.exclude_locations, [{ lat: 6, lon: 5 }]);
   assert.equal(body.units, 'miles');
+});
+
+test('walking routes ask Valhalla for a pedestrian route', () => {
+  const body = buildRouteRequest({ from: [1, 2], to: [3, 4], travel: 'walk', avoid: { tolls: true } });
+  assert.equal(body.costing, 'pedestrian');
+  assert.equal(body.costing_options.auto, undefined, 'no car options on foot');
+  assert.equal(buildRouteRequest({ from: [1, 2], to: [3, 4] }).costing, 'auto', 'driving stays the default');
 });
 
 test('turn lanes keep only junctions with a lane to follow', () => {
@@ -322,6 +329,20 @@ test('routes avoid reported closures and account for reported traffic', async ()
   assert.equal(full.steps[0].street, 'Test Street');
   assert.deepEqual(full.limits, [[0, 50], [10, 30], [15, null]]);
   assert.equal(full.shapes, undefined, 'encoded shapes stay on the server');
+});
+
+test('walking routes skip closures, reported traffic and the driving extras', async () => {
+  const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], travel: 'walk' });
+  assert.equal(r.status, 200);
+  assert.equal(lastRouteBody.costing, 'pedestrian');
+  assert.equal(lastRouteBody.exclude_locations.length, 0, 'road closures are for cars');
+  assert.equal(r.body.closures_avoided, 0);
+  for (const route of r.body.routes) {
+    assert.equal(route.travel, 'walk');
+    assert.equal(route.delay, 0, 'traffic reports add no time on foot');
+    assert.deepEqual([route.tolls, route.cameras, route.reports, route.limits], [[], [], [], null]);
+    assert.equal(route.shapes, undefined);
+  }
 });
 
 test('live traffic from TomTom times each route and marks its jams, and is skipped when TomTom fails', async () => {
@@ -931,4 +952,15 @@ test('an exit’s sign comes with its step, and the cues name it', async () => {
   } finally {
     signedTrip = null;
   }
+});
+
+test('trips by train need a spot, a start and a destination', async () => {
+  assert.equal((await client('transit-no-spot')('POST', '/api/transit', { from: [101.6865, 3.134], to: [101.7116, 3.1579] })).status, 503);
+  const c = client();
+  assert.equal((await c('POST', '/api/transit', { from: [101.6865, 3.134] })).status, 400);
+  const res = await c('POST', '/api/transit', { from: [101.6865, 3.134], to: [101.7116, 3.1579] });
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray(res.body.trips));
+  assert.equal(typeof res.body.walk, 'number');
+  for (const trip of res.body.trips) assert.ok(trip.legs.some((l) => l.mode === 'train') && trip.arrive > trip.depart);
 });
