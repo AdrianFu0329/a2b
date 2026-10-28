@@ -179,6 +179,7 @@ src/
   lib/construction.js   spotting roads that are probably still being built
   lib/traffic.js        live traffic for a route (TomTom)
   lib/weather.js        the weather along a route (WeatherKit, MET Malaysia, MET Norway)
+  lib/shared-cache.js   outside services' answers shared by every driver (memory and D1)
   lib/cameras.js        fixed speed cameras along a route
   lib/tolls.js          toll plazas and their prices
   lib/parking.js        car parks near a destination

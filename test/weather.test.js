@@ -7,20 +7,21 @@ import { weatherAlong, readMetText, metPeriod, warningsFor, nearestTown, skyFrom
 import { weatherPoints, weatherQuery, describeTrip, wetAhead, spokenWeather, restTip, restReminder, drivesAtNight } from '../public/weather.js';
 import { formatDuration } from '../public/geo.js';
 import { cumulative } from '../public/geo.js';
+import { sharedCache } from '../src/lib/shared-cache.js';
+import { createD1 } from './d1-shim.js';
 
 const KL = [101.6953, 3.1478];
 const SEREMBAN = [101.94, 2.7258];
 const MYT = (s) => Date.parse(`${s}+08:00`);
 const NOW = MYT('2026-10-28T14:00:00');
 
-// A stand-in for Cloudflare's edge cache.
-function fakeCache() {
-  const m = new Map();
-  return {
-    match: async (req) => m.get(req.url)?.clone(),
-    put: async (req, res) => void m.set(req.url, res),
-  };
+// A shared cache as the Worker has it: a D1 table, plus one Worker instance's memory.
+async function sharedDb() {
+  const db = createD1();
+  await db.prepare('CREATE TABLE shared_cache (key TEXT PRIMARY KEY, body TEXT NOT NULL, expires_at INTEGER NOT NULL)').run();
+  return db;
 }
+const fakeCache = async (db) => sharedCache(db ?? (await sharedDb()), { memory: new Map() });
 
 function withFetch(handler) {
   const calls = [];
@@ -105,9 +106,10 @@ test('without a WeatherKit key, the forecast comes from MET Malaysia, fetched on
     throw new Error(`unexpected ${url}`);
   });
   try {
-    const cache = fakeCache();
+    const db = await sharedDb();
+    const store = await fakeCache(db);
     const pts = [{ lng: KL[0], lat: KL[1], at: NOW + 1800_000 }, { lng: KL[0], lat: KL[1], at: NOW + 3600_000 }];
-    const a = await weatherAlong({}, pts, { now: NOW, cache });
+    const a = await weatherAlong({}, pts, { now: NOW, store });
     assert.equal(a.points[0].sky, 'storm');
     assert.equal(a.points[1].source, 'met');
     assert.equal(a.points[1].high, 33);
@@ -117,9 +119,12 @@ test('without a WeatherKit key, the forecast comes from MET Malaysia, fetched on
     assert.match(f.calls.find((c) => c.url.includes('api.met.no')).init.headers['user-agent'], /^a2b-navigation\/.+\(\+https:/, 'says who is asking');
     assert.equal(a.warnings.length, 1);
     assert.deepEqual(a.sources.map((s) => s.name), ['MET Malaysia', 'MET Norway']);
-    await weatherAlong({}, pts, { now: NOW, cache });
+    await weatherAlong({}, pts, { now: NOW, store });
     assert.equal(f.calls.length, 3, 'forecast, warnings and humidity once each, then from the cache');
-    const far = await weatherAlong({}, [{ lng: 110, lat: 20, at: NOW }], { now: NOW, cache });
+    const other = await weatherAlong({}, pts, { now: NOW, store: await fakeCache(db) });
+    assert.equal(f.calls.length, 3, 'another Worker instance reads them from D1');
+    assert.deepEqual(other.points, a.points);
+    const far = await weatherAlong({}, [{ lng: 110, lat: 20, at: NOW }], { now: NOW, store });
     assert.deepEqual(far.points, [null], 'no forecast far from any MET place');
   } finally {
     f.restore();
@@ -144,7 +149,7 @@ test('with a WeatherKit key, each square is fetched once with a signed token; ME
   });
   try {
     const pts = [{ lng: KL[0], lat: KL[1], at: NOW }, { lng: KL[0] - 0.01, lat: KL[1] - 0.01, at: NOW + 3600_000 }];
-    const a = await weatherAlong(env, pts, { now: NOW, cache: fakeCache() });
+    const a = await weatherAlong(env, pts, { now: NOW, store: await fakeCache() });
     const kit = f.calls.filter((c) => c.url.includes('weatherkit'));
     assert.equal(kit.length, 1, 'both points are in one square');
     assert.match(kit[0].url, /\/en\/3\.1\/101\.7\?dataSets=forecastHourly/);
@@ -163,7 +168,7 @@ test('with a WeatherKit key, each square is fetched once with a signed token; ME
     assert.ok(ok, 'the token is signed with the key');
 
     kitDown = true;
-    const b = await weatherAlong(env, [{ lng: SEREMBAN[0], lat: SEREMBAN[1], at: NOW }], { now: NOW, cache: fakeCache() });
+    const b = await weatherAlong(env, [{ lng: SEREMBAN[0], lat: SEREMBAN[1], at: NOW }], { now: NOW, store: await fakeCache() });
     assert.equal(b.points[0]?.source ?? 'met', 'met', 'MET Malaysia, not an error');
   } finally {
     f.restore();
@@ -261,4 +266,24 @@ test('while driving, a likely wet stretch a few km ahead is announced', () => {
   assert.equal(wetAhead(answer, pts, pts[2].along + 100), null, 'already passed');
   points[2] = { sky: 'storm', chance: 0.4 };
   assert.equal(wetAhead(answer, pts, pts[2].along - 5000), null, 'too unsure to say out loud');
+});
+
+test('the shared cache fetches once for drivers asking together, keeps answers until they expire, and never keeps a failure', async () => {
+  const db = await sharedDb();
+  let t = 1_000_000, loads = 0;
+  const now = () => t;
+  const a = sharedCache(db, { memory: new Map(), now });
+  const b = sharedCache(db, { memory: new Map(), now });
+  const load = async () => (loads++, { n: loads });
+  const together = await Promise.all([a.get('k', 60, load), a.get('k', 60, load), a.get('k', 60, load)]);
+  assert.deepEqual(together, [{ n: 1 }, { n: 1 }, { n: 1 }]);
+  assert.deepEqual(await b.get('k', 60, load), { n: 1 }, 'from D1 in another instance');
+  assert.equal(loads, 1);
+  t += 61_000;
+  assert.deepEqual(await b.get('k', 60, load), { n: 2 }, 'expired, so fetched again');
+  assert.deepEqual(await a.get('k', 60, load), { n: 2 }, 'and shared again');
+
+  await assert.rejects(a.get('bad', 60, async () => { throw new Error('down'); }));
+  assert.deepEqual(await a.get('bad', 60, async () => 'up'), 'up', 'the failure was not kept');
+  assert.deepEqual(await sharedCache(null, { memory: new Map(), now }).get('k', 60, async () => 'no db'), 'no db', 'works without D1');
 });

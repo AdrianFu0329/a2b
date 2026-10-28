@@ -56,6 +56,7 @@ export default {
       env.DB.prepare('DELETE FROM probe_segments WHERE updated_at < ?').bind(now - PROBE_RETENTION_MS),
       env.DB.prepare('DELETE FROM probe_devices WHERE updated_at < ?').bind(now - PROBE_RETENTION_MS),
       env.DB.prepare('DELETE FROM probe_limits WHERE last_at < ?').bind(now - PROBE_RETENTION_MS),
+      env.DB.prepare('DELETE FROM shared_cache WHERE expires_at < ?').bind(now),
     ]);
   },
 };

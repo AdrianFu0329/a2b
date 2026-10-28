@@ -6,7 +6,7 @@
 //
 // Forecasts come from Apple's WeatherKit when the app has a WeatherKit key (WEATHERKIT_* secrets, see README):
 // hourly, for the exact spot. Each ~11 km square is fetched at most once an hour and shared by everyone driving
-// through it. Without a key, or when WeatherKit fails, MET Malaysia's free open forecast (api.data.gov.my) is used
+// through it (see shared-cache.js). Without a key, or when WeatherKit fails, MET Malaysia's free open forecast (api.data.gov.my) is used
 // instead: morning, afternoon and night for the nearest of its ~420 towns and districts, fetched once an hour for
 // the whole country. MET Malaysia has no humidity, so for the destination it's added from MET Norway's free
 // Locationforecast (api.met.no), one fetch per square per hour. The weather is a nice-to-have: anything that fails
@@ -14,6 +14,7 @@
 
 import { distance } from '../../public/geo.js';
 import TOWNS from './met-towns.json' with { type: 'json' };
+import { sharedCache } from './shared-cache.js';
 
 const MET_FORECAST = 'https://api.data.gov.my/weather/forecast/?limit=10000';
 const MET_WARNINGS = 'https://api.data.gov.my/weather/warning/?limit=50';
@@ -154,22 +155,19 @@ export const cellOf = ([lng, lat]) => [Math.round(lat / CELL_DEG) * CELL_DEG, Ma
 
 // The next two days, hour by hour, for one square, kept small: [start ms, condition, °C, feels °C, chance, mm/h,
 // humidity 0-1].
-async function weatherKitHours(env, cell, now, cache) {
+function weatherKitHours(env, cell, now, store) {
   const [lat, lng] = cell;
-  const key = new Request(`https://cache.a2b/weather/wk/${lat}/${lng}`);
-  const hit = cache && (await cache.match(key));
-  if (hit) return hit.json();
-  const u = new URL(`${WEATHERKIT}/${lat}/${lng}`);
-  u.searchParams.set('dataSets', 'forecastHourly');
-  u.searchParams.set('timezone', 'Asia/Kuala_Lumpur');
-  u.searchParams.set('hourlyEnd', new Date(now + 48 * 3600_000).toISOString());
-  const res = await fetch(u, { headers: { authorization: `Bearer ${await weatherKitToken(env, now)}`, 'user-agent': UA }, signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`WeatherKit ${res.status}`);
-  const hours = ((await res.json()).forecastHourly?.hours ?? []).map((h) => [
-    Date.parse(h.forecastStart), h.conditionCode, h.temperature, h.temperatureApparent, h.precipitationChance, h.precipitationIntensity, h.humidity,
-  ]);
-  if (cache) await cache.put(key, new Response(JSON.stringify(hours), { headers: { 'cache-control': `public, max-age=${FORECAST_TTL}` } }));
-  return hours;
+  return store.get(`weather:wk:${lat},${lng}`, FORECAST_TTL, async () => {
+    const u = new URL(`${WEATHERKIT}/${lat}/${lng}`);
+    u.searchParams.set('dataSets', 'forecastHourly');
+    u.searchParams.set('timezone', 'Asia/Kuala_Lumpur');
+    u.searchParams.set('hourlyEnd', new Date(now + 48 * 3600_000).toISOString());
+    const res = await fetch(u, { headers: { authorization: `Bearer ${await weatherKitToken(env, now)}`, 'user-agent': UA }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`WeatherKit ${res.status}`);
+    return ((await res.json()).forecastHourly?.hours ?? []).map((h) => [
+      Date.parse(h.forecastStart), h.conditionCode, h.temperature, h.temperatureApparent, h.precipitationChance, h.precipitationIntensity, h.humidity,
+    ]);
+  });
 }
 
 export function weatherKitAt(hours, at) {
@@ -187,18 +185,15 @@ const conditionText = (code) => String(code ?? '').replace(/([a-z])([A-Z])/g, '$
 
 // The hourly temperature and humidity for one square: [start ms, °C, humidity 0-1]. MET Norway asks every app to
 // say who it is in the User-Agent and not to ask for the same place more than its Expires header allows (~30 min).
-async function metNorwayHours(cell, cache) {
+function metNorwayHours(cell, store) {
   const [lat, lng] = cell;
-  const key = new Request(`https://cache.a2b/weather/metno/${lat}/${lng}`);
-  const hit = cache && (await cache.match(key));
-  if (hit) return hit.json();
-  const res = await fetch(`${MET_NORWAY}?lat=${lat}&lon=${lng}`, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`MET Norway ${res.status}`);
-  const hours = ((await res.json()).properties?.timeseries ?? []).map((t) => [
-    Date.parse(t.time), t.data?.instant?.details?.air_temperature ?? null, (t.data?.instant?.details?.relative_humidity ?? NaN) / 100,
-  ]);
-  if (cache) await cache.put(key, new Response(JSON.stringify(hours), { headers: { 'cache-control': `public, max-age=${FORECAST_TTL}` } }));
-  return hours;
+  return store.get(`weather:metno:${lat},${lng}`, FORECAST_TTL, async () => {
+    const res = await fetch(`${MET_NORWAY}?lat=${lat}&lon=${lng}`, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`MET Norway ${res.status}`);
+    return ((await res.json()).properties?.timeseries ?? []).map((t) => [
+      Date.parse(t.time), t.data?.instant?.details?.air_temperature ?? null, (t.data?.instant?.details?.relative_humidity ?? NaN) / 100,
+    ]);
+  });
 }
 
 export function metNorwayAt(hours, at) {
@@ -209,29 +204,38 @@ export function metNorwayAt(hours, at) {
 
 // ---------- Both together ----------
 
-async function cachedJson(url, ttl, cache, cacheKey) {
-  const key = new Request(cacheKey);
-  const hit = cache && (await cache.match(key));
-  if (hit) return hit.json();
+async function getJson(url) {
   const res = await fetch(url, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
   if (!res.ok) throw new Error(`${new URL(url).host} ${res.status}`);
-  const data = await res.json();
-  if (cache) await cache.put(key, new Response(JSON.stringify(data), { headers: { 'cache-control': `public, max-age=${ttl}` } }));
-  return data;
+  return res.json();
 }
 
+// MET Malaysia's whole-country forecast, kept as small rows ([id, date, morning, afternoon, night, min °C, max °C],
+// about a quarter of its size) and turned back into its own shape when read.
+const metForecastRows = async (store) =>
+  (
+    await store.get('weather:met:forecast', FORECAST_TTL, async () =>
+      (await getJson(MET_FORECAST)).map((r) => [
+        r.location?.location_id, r.date, r.morning_forecast, r.afternoon_forecast, r.night_forecast, r.min_temp, r.max_temp,
+      ]),
+    )
+  ).map(([id, date, morning, afternoon, night, min, max]) => ({
+    location: { location_id: id }, date, morning_forecast: morning, afternoon_forecast: afternoon, night_forecast: night, min_temp: min, max_temp: max,
+  }));
+
 // points: [{ lng, lat, at }] with `at` the time (ms) the driver will be there.
-export async function weatherAlong(env, points, { now = Date.now(), cache = globalThis.caches?.default } = {}) {
+// store: where answers are shared between drivers (shared-cache.js; the Worker passes one backed by D1).
+export async function weatherAlong(env, points, { now = Date.now(), store = sharedCache(env.DB) } = {}) {
   const towns = points.map((p) => nearestTown([p.lng, p.lat]));
   let metRows = null;
-  const met = async () => (metRows ??= cachedJson(MET_FORECAST, FORECAST_TTL, cache, 'https://cache.a2b/weather/met/forecast').catch(() => []));
+  const met = async () => (metRows ??= metForecastRows(store).catch(() => []));
 
   const cells = new Map(); // one WeatherKit request per square, however many points fall in it
   const kit = weatherKitReady(env)
     ? (p) => {
         const cell = cellOf([p.lng, p.lat]);
         const k = cell.join(',');
-        if (!cells.has(k)) cells.set(k, weatherKitHours(env, cell, now, cache).catch((e) => (console.warn('weather', e.message), null)));
+        if (!cells.has(k)) cells.set(k, weatherKitHours(env, cell, now, store).catch((e) => (console.warn('weather', e.message), null)));
         return cells.get(k);
       }
     : null;
@@ -248,7 +252,7 @@ export async function weatherAlong(env, points, { now = Date.now(), cache = glob
   // Humidity for the destination, for what-to-wear tips, when the forecast came without it.
   const last = points.length - 1, dest = forecasts[last];
   if (dest && dest.humidity == null) {
-    const extra = await metNorwayHours(cellOf([points[last].lng, points[last].lat]), cache)
+    const extra = await metNorwayHours(cellOf([points[last].lng, points[last].lat]), store)
       .then((hours) => metNorwayAt(hours, points[last].at))
       .catch((e) => (console.warn('weather', e.message), null));
     if (extra) forecasts[last] = { ...dest, temp: dest.temp ?? extra.temp, humidity: extra.humidity, extra: 'metno' };
@@ -256,7 +260,8 @@ export async function weatherAlong(env, points, { now = Date.now(), cache = glob
 
   const states = [...new Set(towns.filter(Boolean).map((t) => t.state))];
   const end = Math.max(now, ...points.map((p) => p.at));
-  const warnings = await cachedJson(MET_WARNINGS, WARNINGS_TTL, cache, 'https://cache.a2b/weather/met/warnings')
+  const warnings = await store
+    .get('weather:met:warnings', WARNINGS_TTL, () => getJson(MET_WARNINGS))
     .then((w) => warningsFor(Array.isArray(w) ? w : [], states, now, end))
     .catch(() => []);
 
