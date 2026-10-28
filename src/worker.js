@@ -17,6 +17,7 @@ import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
+import { planTransit, withRealWalks } from './lib/transit.js';
 
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
@@ -388,22 +389,47 @@ async function route(request, env, url) {
     return json({ place: await reverseGeocode(env, { lat, lng }) });
   }
 
+  // Trips by train (LRT, MRT, Monorail, BRT, KTM Komuter): see src/lib/transit.js.
+  if (path === '/api/transit' && method === 'POST') {
+    await needSpot();
+    const body = await readJson(request);
+    const from = lngLat(body.from), to = lngLat(body.to);
+    if (!from || !to) throw httpError('A trip needs a start and a destination.', 400);
+    const at = Number.isFinite(body.at) && Math.abs(body.at - Date.now()) < 7 * 86400_000 ? body.at : Date.now();
+    const plan = await withRealWalks(env, planTransit(from, to, at));
+    await count('routes'); // with driving and walking routes
+    return json(plan);
+  }
+
   if (path === '/api/route' && method === 'POST') {
     await needSpot();
     const body = await readJson(request);
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('Route needs a start and a destination.', 400);
+    // On foot, the driving extras (closures, roadworks, speed limits, tolls, traffic, cameras) don't apply.
+    const walk = body.travel === 'walk';
     const via = (Array.isArray(body.via) ? body.via : []).slice(0, 3).map(lngLat).filter(Boolean);
     const area = corridorBox([from, ...via, to]);
-    const exclude = body.avoid_closures === false ? [] : await reports.closuresNear(area);
+    const exclude = walk || body.avoid_closures === false ? [] : await reports.closuresNear(area);
     const opts = {
       from, to, via, exclude,
       avoid: body.avoid ?? {},
       units: body.units === 'imperial' ? 'imperial' : 'metric',
       lang: typeof body.lang === 'string' && /^[a-z]{2}(-[A-Z]{2})?$/.test(body.lang) ? body.lang : 'en-US',
       heading: Number(body.heading),
+      travel: walk ? 'walk' : 'drive',
     };
     const first = await fetchRoutes(env, opts);
+    if (walk) {
+      const { routes } = first;
+      for (const r of routes) {
+        delete r.shapes;
+        Object.assign(r, { travel: 'walk', limits: null, tolls: [], cameras: [], reports: [], delay: 0 });
+      }
+      routes.sort((a, b) => a.duration - b.duration);
+      await count('routes');
+      return json({ routes, closures_avoided: 0, closures_ignored: false, construction_avoided: 0 });
+    }
     let { routes } = first;
     const closuresIgnored = first.dropped;
     // A route along a road that's probably still being built (see construction.js): ask again around it, and
