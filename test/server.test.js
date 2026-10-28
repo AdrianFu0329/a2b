@@ -29,6 +29,7 @@ let osmLookups = 0;
 let tomtomDown = false;
 let cameras = null; // the built speed camera list, as in public/cameras.json
 let tomtomCalls = 0;
+let matrixCalls = 0; // sources_to_targets requests (timing the drive to each car park entrance)
 let entranceNodes = []; // car park entrances the fake Overpass knows of at the destination
 let entranceLookups = 0;
 
@@ -61,6 +62,7 @@ globalThis.fetch = async (url, init = {}) => {
   }
 
   if (u.endsWith('/sources_to_targets')) {
+    matrixCalls++;
     // The entrance on the far side (east) is quicker to drive to.
     const { targets } = JSON.parse(init.body);
     return Response.json({ sources_to_targets: [targets.map((t, i) => ({ to_index: i, time: t.lon > 13.4 ? 60 : 300 }))] });
@@ -942,7 +944,7 @@ test('presence check-ins admit new devices without a per-network throttle', asyn
   }
 });
 
-test('routes to a big place end at its car park entrance, unless the app asks for the place itself', async () => {
+test('routes to a big place end at its car park entrance when the app asks for one', async () => {
   const { forgetEntrances } = await import('../src/lib/entrances.js');
   forgetEntrances();
   entranceNodes = [
@@ -952,21 +954,26 @@ test('routes to a big place end at its car park entrance, unless the app asks fo
   ];
   try {
     const before = entranceLookups;
-    const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], entrances: true });
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.entrance, { name: 'Entrance B', street: 'Test Street', lat: 52.5088, lng: 13.4012 }, 'the quicker one to reach');
     assert.deepEqual([lastRouteBody.locations.at(-1).lat, lastRouteBody.locations.at(-1).lon], [52.5088, 13.4012], 'the route ends there');
-    await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], entrances: true });
     assert.equal(entranceLookups, before + 1, 'the file read once');
 
-    const exact = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], entrances: false });
-    assert.equal(exact.body.entrance, null);
-    assert.deepEqual([lastRouteBody.locations.at(-1).lat, lastRouteBody.locations.at(-1).lon], [52.509, 13.4], 'the place itself');
+    // Not asked (a reroute, the place itself, an older app): no entrance, and no routing request to pick one.
+    const matrix = matrixCalls;
+    for (const entrances of [undefined, false]) {
+      const exact = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], entrances });
+      assert.equal(exact.body.entrance, null);
+      assert.deepEqual([lastRouteBody.locations.at(-1).lat, lastRouteBody.locations.at(-1).lon], [52.509, 13.4], 'the place itself');
+    }
+    assert.equal(matrixCalls, matrix);
     assert.equal(entranceLookups, before + 1, 'not read again');
 
     forgetEntrances();
     entranceNodes = [];
-    const none = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    const none = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], entrances: true });
     assert.equal(none.body.entrance, null, 'no entrances there: as before');
     assert.deepEqual([lastRouteBody.locations.at(-1).lat, lastRouteBody.locations.at(-1).lon], [52.509, 13.4]);
   } finally {

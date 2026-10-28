@@ -410,11 +410,12 @@ async function route(request, env, url) {
     const walk = body.travel === 'walk';
     const via = (Array.isArray(body.via) ? body.via : []).slice(0, 3).map(lngLat).filter(Boolean);
     const area = corridorBox([from, ...via, to]);
-    // A car park entrance at the destination (src/lib/entrances.js), unless the app asks for the place itself or
-    // it's a walk. A failing lookup just routes to the place.
+    // A car park entrance at the destination (src/lib/entrances.js), only when the app asks for one: it does for a
+    // drive to a big place, not for reroutes (they keep the entrance already picked) or anything else, as the pick
+    // costs a routing request. A failing lookup just routes to the place.
     const [exclude, entrance] = await Promise.all([
       walk || body.avoid_closures === false ? [] : reports.closuresNear(area),
-      walk || body.entrances === false ? null : entrancesNear(env, to).then((list) => pickEntrance(env, from, list)).catch(() => null),
+      walk || body.entrances !== true ? null : entrancesNear(env, to).then((list) => pickEntrance(env, from, list)).catch(() => null),
     ]);
     const opts = {
       from, to: entrance ? [entrance.lng, entrance.lat] : to, via, exclude,
