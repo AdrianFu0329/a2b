@@ -369,6 +369,7 @@ body.junction-view .lane svg { width: 50px; height: 50px; }
 .report-pin .pin-ic svg { width: 19px; height: 19px; }
 .report-pin.mine .pin-ic { outline: 3px solid var(--primary); }
 .cam-pin { cursor: default; }
+body.junction-view .cam-pin { display: none; } /* standing up beside the band instead (junction-cams) */
 .cam-pin .pin-ic { width: 28px; height: 28px; }
 .cam-pin .pin-ic svg { width: 16px; height: 16px; }
 .rc-head { display: flex; gap: 12px; align-items: center; padding: 10px 0; }

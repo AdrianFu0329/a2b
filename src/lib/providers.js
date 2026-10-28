@@ -11,6 +11,7 @@ export { normalizeText, matches };
 import { pointAlong } from '../../public/nav.js';
 import { tollIndexes } from './tolls.js';
 import { findJunctions } from '../../public/junction-view.js';
+import { bridgeRuns } from '../../public/junction-3d.js';
 
 const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
 
@@ -306,12 +307,14 @@ export function lanes(list) {
   return out.some((l) => l.use) ? out : null;
 }
 
-// Posted speed limits and toll booths along a route, from OpenStreetMap via Valhalla's trace_attributes.
-// limits: runs [[first shape index, km/h or null], ...], one entry per change; tolls: shape indexes of toll plazas.
+// Posted speed limits, toll booths and flyovers along a route, from OpenStreetMap via Valhalla's trace_attributes.
+// limits: runs [[first shape index, km/h or null], ...], one entry per change; tolls: shape indexes of toll plazas;
+// bridges: [[first, last shape index], ...] (the junction view lifts these, see junction-3d.js).
 export async function fetchRouteAttributes(env, shapes, coords) {
   const perLeg = await Promise.all(shapes.map(({ shape }) => fetchLegEdges(env, shape)));
-  const runs = [], tolls = [];
+  const runs = [], tolls = [], bridges = [];
   perLeg.forEach((edges, i) => {
+    bridges.push(...bridgeRuns(edges ?? [], shapes[i].offset));
     for (const [at, v] of (edges && speedLimitRuns(edges)) ?? [[0, null]]) {
       if (!runs.length || runs.at(-1)[1] !== v) runs.push([at + shapes[i].offset, v]);
     }
@@ -319,7 +322,7 @@ export async function fetchRouteAttributes(env, shapes, coords) {
       if (!tolls.length || distance(coords[tolls.at(-1)], coords[at]) > 300) tolls.push(at);
     }
   });
-  return { limits: runs.some((r) => r[1] != null) ? runs : null, tolls };
+  return { limits: runs.some((r) => r[1] != null) ? runs : null, tolls, bridges };
 }
 
 async function fetchLegEdges(env, shape) {
@@ -331,7 +334,7 @@ async function fetchLegEdges(env, shape) {
       encoded_polyline: shape,
       shape_match: 'edge_walk',
       costing: 'auto',
-      filters: { attributes: ['edge.speed_limit', 'edge.begin_shape_index', 'edge.end_shape_index', 'node.type'], action: 'include' },
+      filters: { attributes: ['edge.speed_limit', 'edge.bridge', 'edge.begin_shape_index', 'edge.end_shape_index', 'node.type'], action: 'include' },
     }),
     signal: AbortSignal.timeout(4000),
   });
