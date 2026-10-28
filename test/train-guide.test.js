@@ -121,6 +121,8 @@ test('which marker shows where you are', () => {
   assert.equal(markerFor({ mode: 'ride', legMode: 'walk', vehicle: 'car' }), 'walker');
   assert.equal(markerFor({ mode: 'drive', legMode: null, vehicle: 'car' }), 'car');
   assert.equal(markerFor({ mode: 'browse', legMode: null, vehicle: 'chevron' }), 'chevron');
+  assert.equal(markerFor({ mode: 'drive', legMode: null, vehicle: undefined }), 'chevron', 'the chevron by default, as on main');
+  assert.equal(markerFor({ mode: 'drive', legMode: null, vehicle: 'something old' }), 'chevron');
 });
 
 test('train legs from the planner carry their stations with times', () => {

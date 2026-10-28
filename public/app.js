@@ -10,7 +10,7 @@ import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
 import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES } from './places.js';
-import { start as startVehicle, DEFAULT_COLOR, DEFAULT_VEHICLE } from './vehicle3d.js';
+import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
@@ -352,9 +352,17 @@ function addMapLayers() {
 
 // The car as a 3D model (Settings › Vehicle). The flat arrow marker keeps the position either way and shows
 // instead when 3D can't start (no WebGL, three.js didn't load).
+// The 3D model: the vehicle from Settings, or while on the train part of a trip a train in the line's colour (see
+// renderRide). Run again after a style change, which drops custom layers.
+let trainPose = null; // { pos, heading, color } while on a train
+let vehicleShown = null; // which model the layer has now, e.g. 'car:#e23d9b' or 'train:#e4002b'
 async function setupVehicle() {
-  const kind = local.get('vehicle', DEFAULT_VEHICLE);
-  vehicle3d = await startVehicle(map, kind, local.get('vehicleColor', DEFAULT_COLOR), () => (mode === 'watch' || mode === 'ride' || !carMarker._map ? null : shown)); // riding: the train marker instead
+  const onTrain = mode === 'ride' && trainPose;
+  const kind = onTrain ? 'train' : markerFor({ mode: 'drive', vehicle: local.get('vehicle', 'chevron') });
+  const color = onTrain ? trainPose.color : local.get('vehicleColor', DEFAULT_COLOR);
+  vehicleShown = `${kind}:${color}`;
+  const pose = onTrain ? () => (mode === 'ride' ? trainPose : null) : () => (mode === 'watch' || mode === 'ride' || !carMarker._map ? null : shown);
+  vehicle3d = await startVehicle(map, kind, color, pose);
   carMarker.getElement().classList.toggle('as-3d', vehicle3d);
   map.triggerRepaint();
 }
@@ -1474,14 +1482,23 @@ function renderRide(view) {
   const kind = markerFor({ mode, legMode: view.kind === 'ride' ? 'train' : 'walk' });
   const at = view.kind === 'walk' ? view.pos ?? state.pos?.lngLat : view.pos;
   const node = riderMarker.getElement();
-  node.classList.toggle('train', kind === 'train'); // classList, not className: MapLibre keeps its own classes on it
+  // On a train, the 3D train (vehicle3d.js) in the line's colour; the flat badge only if 3D isn't available.
+  trainPose = kind === 'train' && at ? { pos: at, heading: view.heading ?? 0, color: leg.line.color } : null;
+  const want = trainPose ? `train:${trainPose.color}` : null;
+  if (want ? vehicleShown !== want : vehicleShown?.startsWith('train:')) setupVehicle();
+  const flatTrain = kind === 'train' && !vehicle3d;
+  node.classList.toggle('train', flatTrain); // classList, not className: MapLibre keeps its own classes on it
   node.classList.toggle('walker', kind === 'walker');
   node.style.setProperty('--rider', leg.line?.color ?? '#1c7ed6');
   node.style.color = leg.line?.text ?? '#fff';
-  node.innerHTML = kind === 'train' ? TRAIN_ICON : '';
+  node.innerHTML = flatTrain ? TRAIN_ICON : '';
+  if (vehicle3d) map.triggerRepaint();
   if (!at) return;
-  riderMarker.setLngLat(at).setRotation(kind === 'train' ? view.heading ?? 0 : 0);
-  if (!riderMarker._map) riderMarker.addTo(map);
+  if (kind === 'train' && vehicle3d) riderMarker.remove();
+  else {
+    riderMarker.setLngLat(at).setRotation(kind === 'train' ? view.heading ?? 0 : 0);
+    if (!riderMarker._map) riderMarker.addTo(map);
+  }
   if (follow && !userMoving && !touching) {
     const riding = view.kind === 'ride';
     map.easeTo({
@@ -1500,13 +1517,15 @@ function endRide(arrived) {
   rideGpsBlocked = false;
   rideTimeShift = 0;
   riderMarker?.remove();
+  trainPose = null;
   $('ride-ui').classList.add('hidden');
   $('btn-recenter-ride').classList.add('hidden');
   document.body.classList.remove('riding');
   wakeLock?.release?.().catch(() => {});
   wakeLock = null;
   mode = 'browse';
-  // Back to the vehicle from Settings (the car, unless Chevron was picked).
+  if (vehicleShown?.startsWith('train:')) setupVehicle();
+  // Back to the vehicle from Settings (the chevron, unless the car was picked).
   if (state.pos) carMarker.setLngLat(state.pos.lngLat).setRotation(state.pos.heading ?? 0).addTo(map);
   if (vehicle3d) map.triggerRepaint();
   if (!arrived) return backToBrowse();

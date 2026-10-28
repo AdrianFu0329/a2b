@@ -124,10 +124,11 @@ export const alertText = (leg) => `Next stop: ${leg.to.name}. Get off here.`;
 export const changeText = (leg) => `Change to the ${leg.line.name}, towards ${leg.towards}.`;
 export const walkText = (leg) => `Walk to ${stationName(leg.to)}.`;
 
-// Which marker shows where you are: a train on a ride, a walking dot on foot, otherwise the vehicle from Settings.
+// Which marker shows where you are: a 3D train on a ride, a walking dot on foot, otherwise the vehicle from Settings
+// (the chevron unless the car was picked).
 export function markerFor({ mode, legMode, vehicle }) {
   if (mode === 'ride') return legMode === 'train' ? 'train' : 'walker';
-  return vehicle;
+  return vehicle === 'car' ? 'car' : 'chevron';
 }
 
 // ---------- Following a whole trip ----------
