@@ -355,8 +355,16 @@ function addMapLayers() {
 
 // The car as a 3D model (Settings › Vehicle). The flat arrow marker keeps the position either way and shows
 // instead when 3D can't start (no WebGL, three.js didn't load).
+// On foot the marker is always the chevron: it shows which way you're facing, which a car doesn't. Otherwise the
+// vehicle chosen in Settings.
+let vehicleKind = null;
+const wantedVehicle = () => (travel === 'walk' ? 'chevron' : local.get('vehicle', 'chevron'));
+function syncVehicle() {
+  if (vehicleKind !== wantedVehicle()) setupVehicle();
+}
 async function setupVehicle() {
-  const kind = local.get('vehicle', 'chevron');
+  const kind = wantedVehicle();
+  vehicleKind = kind;
   vehicle3d = await startVehicle(map, kind, local.get('vehicleColor', DEFAULT_COLOR), () => (mode === 'watch' || !carMarker._map ? null : shown));
   carMarker.getElement().classList.toggle('as-3d', vehicle3d);
   map.triggerRepaint();
@@ -942,6 +950,7 @@ function wireUi() {
     b.onclick = () => {
       if (b.dataset.travel === travel || !dest) return;
       travel = b.dataset.travel;
+      syncVehicle();
       openPreview(dest);
     };
   }
@@ -1597,6 +1606,7 @@ function selectRoute(i) {
 // Back to Drive when the preview closes or the trip ends (see travel).
 function resetTravel() {
   travel = 'drive';
+  syncVehicle(); // back to your usual vehicle after a walk
 }
 
 function backToBrowse() {
