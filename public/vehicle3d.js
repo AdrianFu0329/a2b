@@ -8,6 +8,7 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
 const SIZE_PX = { chevron: 44, car: 48 }; // on-screen length, whatever the zoom
 export const VEHICLES = [['chevron', 'Chevron'], ['car', 'Car']];
+export const DEFAULT_VEHICLE = 'car'; // the car, unless Chevron was picked in Settings (kept on this phone)
 // Paint colours to choose from in Settings; the first, a brighter take on the app's plum, is the default.
 export const COLORS = [
   ['#e23d9b', 'Plum'], ['#1f7aff', 'Blue'], ['#12c4a6', 'Teal'], ['#ff7a1a', 'Orange'],

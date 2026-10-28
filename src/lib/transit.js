@@ -143,6 +143,19 @@ function search(from, to, t0, day, forbidden) {
   return { steps, end: best, t0 };
 }
 
+// The stations of a ride from stop index i to j of pattern p, boarding at `dep` (seconds into the service day), for
+// the phone to follow the ride (public/train-guide.js): [name, lat, lng, seconds after boarding], in order.
+export function rideStations(p, i, j, dep) {
+  const b = board(p, i, dep);
+  const times = b ? (x) => b.arrive(x) - b.dep : (x) => (p.offsets ? p.offsets[x] - p.offsets[i] : 0);
+  const out = [];
+  for (let x = i; x <= j; x++) {
+    const s = stops[p.stops[x]];
+    out.push([s.name, Math.round(s.lat * 1e5) / 1e5, Math.round(s.lng * 1e5) / 1e5, Math.max(0, Math.round(times(x)))]);
+  }
+  return out;
+}
+
 function stationOf(i) {
   const s = stops[i];
   return { name: s.name, code: s.code, lat: s.lat, lng: s.lng };
@@ -188,6 +201,7 @@ function toTrip(found, from, to, dayStart) {
         arrive: ms(st.t),
         duration: st.t - st.dep,
         coords: rideLine(p, st.i, st.j),
+        stations: rideStations(p, st.i, st.j, st.dep),
       };
       rides.set(leg, { p, i: st.i, j: st.j, dayStart });
       legs.push(leg);
@@ -304,6 +318,7 @@ export async function withRealWalks(env, plan, { now = Date.now() } = {}) {
       if (b) {
         l.depart = ride.dayStart + b.dep * 1000;
         l.arrive = ride.dayStart + b.arrive(ride.j) * 1000;
+        l.stations = rideStations(ride.p, ride.i, ride.j, b.dep); // a later KTM train can run to other times
       } else {
         const shift = t + l.wait * 1000 - l.depart; // no train after all: keep the old wait rather than drop the trip
         l.depart += shift;

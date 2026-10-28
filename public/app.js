@@ -5,11 +5,12 @@ import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { canAutoStartRoute } from './route-preview.js';
+import { TrainGuide, markerFor, walkText, boardText } from './train-guide.js';
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
 import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES } from './places.js';
-import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
+import { start as startVehicle, DEFAULT_COLOR, DEFAULT_VEHICLE } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
@@ -52,7 +53,7 @@ const routeLabels = [];
 const reports = new Map(); // id -> report
 const reportMarkers = new Map(); // id -> maplibregl.Marker
 let follow = true;
-let mode = 'browse'; // browse | preview | drive | watch
+let mode = 'browse'; // browse | preview | drive | ride (a train trip, train-guide.js) | watch
 let transit = null; // { place, trips, selected } while showing trips by train
 let themeNow = null;
 
@@ -178,7 +179,7 @@ async function boot() {
     stopFollowing();
     if (mode === 'preview') autoGo.stop(); // looking around the routes: wait for Go
   });
-  map.on('zoomstart', (e) => e.originalEvent && mode === 'drive' && stopFollowing());
+  map.on('zoomstart', (e) => e.originalEvent && (mode === 'drive' || mode === 'ride') && stopFollowing());
   map.on('rotate', () => $('btn-compass').classList.toggle('hidden', Math.abs(map.getBearing()) < 3 || mode === 'drive'));
   map.on('moveend', scheduleReportLoad);
   map.on('moveend', schedulePois);
@@ -352,8 +353,8 @@ function addMapLayers() {
 // The car as a 3D model (Settings › Vehicle). The flat arrow marker keeps the position either way and shows
 // instead when 3D can't start (no WebGL, three.js didn't load).
 async function setupVehicle() {
-  const kind = local.get('vehicle', 'chevron');
-  vehicle3d = await startVehicle(map, kind, local.get('vehicleColor', DEFAULT_COLOR), () => (mode === 'watch' || !carMarker._map ? null : shown));
+  const kind = local.get('vehicle', DEFAULT_VEHICLE);
+  vehicle3d = await startVehicle(map, kind, local.get('vehicleColor', DEFAULT_COLOR), () => (mode === 'watch' || mode === 'ride' || !carMarker._map ? null : shown)); // riding: the train marker instead
   carMarker.getElement().classList.toggle('as-3d', vehicle3d);
   map.triggerRepaint();
 }
@@ -755,6 +756,7 @@ function handleFix(fix, first = false) {
   if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix); // walking speeds would look like a jam
   local.set('lastPos', fix.lngLat.map((v) => Math.round(v * 1e4) / 1e4));
   if (mode === 'watch') return; // the viewer's own position isn't part of someone else's drive
+  if (mode === 'ride') return void (rideFixAt = Date.now()); // the train trip reads it each second (rideTick)
   if (!carMarker._map) carMarker.setLngLat(fix.lngLat).addTo(map);
   updateSpeedo(fix.speed);
   if (mode === 'drive') return driveTick(fix);
@@ -816,6 +818,7 @@ function updateSpeedo(speed) {
 function stopFollowing() {
   follow = false;
   $('btn-recenter').classList.remove('following');
+  if (mode === 'ride') $('btn-recenter-ride').classList.remove('hidden');
   if (mode === 'drive') {
     $('btn-recenter-drive').classList.remove('hidden');
     clearTimeout(recenterTimer);
@@ -828,7 +831,9 @@ function recenter() {
   clearTimeout(recenterTimer);
   $('btn-recenter').classList.add('following');
   $('btn-recenter-drive').classList.add('hidden');
+  $('btn-recenter-ride').classList.add('hidden');
   if (mode === 'drive' && live) return driveCamera();
+  if (mode === 'ride') return rideTick();
   if (state.pos) map.easeTo({ center: state.pos.lngLat, zoom: Math.max(map.getZoom(), 15), bearing: 0, pitch: 0, duration: 700 });
   else if (state.locationDenied) toast('Location is off. Allow location for this site in your browser settings.');
 }
@@ -838,14 +843,14 @@ function setupLongPress() {
   let timer = null, start = null;
   const cancel = () => clearTimeout(timer);
   map.on('touchstart', (e) => {
-    if (e.points?.length !== 1 || mode === 'drive' || mode === 'watch') return;
+    if (e.points?.length !== 1 || mode === 'drive' || mode === 'ride' || mode === 'watch') return;
     start = e.point;
     timer = setTimeout(() => showContextMenu(e.lngLat, e.point), 550);
   });
   map.on('touchmove', (e) => start && Math.hypot(e.point.x - start.x, e.point.y - start.y) > 10 && cancel());
   map.on('touchend', cancel);
   map.on('touchcancel', cancel);
-  map.on('contextmenu', (e) => mode !== 'drive' && mode !== 'watch' && showContextMenu(e.lngLat, e.point));
+  map.on('contextmenu', (e) => !['drive', 'ride', 'watch'].includes(mode) && showContextMenu(e.lngLat, e.point));
   map.on('click', hideContextMenu);
   map.on('click', routeAtTap);
   map.on('click', () => tripSheet.set(false)); // a tap on the map closes the trip menu
@@ -892,6 +897,9 @@ function wireUi() {
   $('btn-menu').onclick = openMenu;
   $('btn-recenter').onclick = recenter;
   $('btn-recenter-drive').onclick = recenter;
+  $('btn-recenter-ride').onclick = recenter;
+  $('btn-ride-start').onclick = startRide;
+  $('btn-ride-stop').onclick = () => endRide(false);
   $('btn-compass').onclick = () => map.easeTo({ bearing: 0, pitch: 0 });
   $('btn-loc-retry').onclick = () => {
     $('loc-banner').classList.add('hidden');
@@ -987,7 +995,7 @@ function wireUi() {
     if (e.key === 'Escape') closeTop();
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && mode === 'drive') requestWakeLock();
+    if (document.visibilityState === 'visible' && (mode === 'drive' || mode === 'ride')) requestWakeLock();
   });
 }
 
@@ -1031,7 +1039,7 @@ function onBack() {
   // Back while driving opens the trip options rather than dropping out of the app.
   if (!closed && mode === 'drive') tripSheet.set(true);
   const open = OVERLAYS.some((id) => !$(id).classList.contains('hidden')) || !$('menu').classList.contains('hidden');
-  if (open || mode === 'drive') armBack();
+  if (open || mode === 'drive' || mode === 'ride') armBack(); // back never drops out of a trip; Stop does
 }
 
 // ================= Search =================
@@ -1376,6 +1384,151 @@ function drawTransit() {
     if (l.mode === 'train') for (const s of [l.from, l.to]) features.push({ type: 'Feature', properties: { mode: 'stop', color: l.line.color, name: s.name }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } });
   }
   src.setData({ type: 'FeatureCollection', features });
+}
+
+// ---------- Riding a train trip ----------
+// "Start" on a train trip follows it (train-guide.js): the walk to the station, which train, the next station as the
+// train goes (estimated underground from the timetable), "get off at the next stop", any change, and the walk at the
+// end. A train marker in the line's colour shows where you are on a ride, a walking dot on foot. The trip line stays
+// drawn. Nothing from a train trip is shared as traffic or as a live trip. Works while A2B is open on screen.
+const TRAIN_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="15" rx="3.5" fill="currentColor"/><rect x="8" y="5.5" width="8" height="4.5" rx="1" fill="#000" fill-opacity=".35"/><circle cx="9.2" cy="14" r="1.3" fill="#000" fill-opacity=".45"/><circle cx="14.8" cy="14" r="1.3" fill="#000" fill-opacity=".45"/><path d="m8.5 21.5 2-3.5m5 3.5-2-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+let guide = null, rideTimer = null, riderMarker = null, rideFixAt = 0, rideGpsBlocked = false, rideTimeShift = 0, rideStarted = 0;
+const rideNow = () => Date.now() + rideTimeShift;
+
+function startRide() {
+  const trip = transit?.trips[transit.selected];
+  if (!trip || mode !== 'preview') return;
+  autoGo.stop();
+  mode = 'ride';
+  drawPois(); // off the map while riding
+  guide = new TrainGuide(trip, { now: rideNow() });
+  rideStarted = rideNow();
+  carMarker.remove(); // the train or walking marker instead (and the 3D vehicle hides itself in this mode)
+  if (vehicle3d) map.triggerRepaint();
+  riderMarker ??= new maplibregl.Marker({ element: el('div', 'rider'), rotationAlignment: 'map', pitchAlignment: 'map' });
+  for (const id of ['preview', 'later']) $(id).classList.add('hidden');
+  $('ride-ui').classList.remove('hidden');
+  document.body.classList.add('riding');
+  armBack();
+  follow = true;
+  requestWakeLock();
+  const first = trip.legs[0];
+  speak(first.mode === 'walk' ? walkText(first) : boardText(first));
+  rideTick();
+  clearInterval(rideTimer);
+  rideTimer = setInterval(rideTick, 1000);
+}
+
+function rideTick() {
+  if (mode !== 'ride' || !guide) return;
+  const fresh = state.pos && !rideGpsBlocked && Date.now() - rideFixAt < 4000;
+  const { view, events } = guide.update({ now: rideNow(), fix: fresh ? state.pos : null });
+  for (const e of events) {
+    if (e.type === 'arrived') return endRide(true);
+    speak(e.text);
+    if (e.type === 'alert' || e.type === 'alight' || e.type === 'change') navigator.vibrate?.([300, 150, 300]);
+  }
+  renderRide(view);
+}
+
+const sentence = (t) => t.replace(/\.$/, '');
+
+function renderRide(view) {
+  const leg = view.leg;
+  const units = state.settings.units;
+  $('ride-banner').classList.toggle('alert', Boolean(view.alerted));
+  const icon = $('ride-icon');
+  if (leg.mode === 'train') {
+    icon.style.setProperty('--line', leg.line.color);
+    icon.style.setProperty('--line-text', leg.line.text);
+    icon.textContent = leg.line.short;
+  } else {
+    icon.style.removeProperty('--line');
+    icon.innerHTML = WALK_ICON;
+  }
+  if (view.kind === 'walk') {
+    $('ride-title').textContent = formatDistance(view.left, units);
+    $('ride-sub').textContent = sentence(walkText(leg));
+  } else if (view.kind === 'wait') {
+    $('ride-title').textContent = leg.every ? `Every ${leg.every} min` : `Train at ${formatClock(new Date(leg.depart))}`;
+    $('ride-sub').textContent = `${leg.line.name} towards ${leg.towards}`;
+  } else {
+    $('ride-title').textContent = view.alerted ? `Get off at ${leg.to.name}` : `Next: ${view.next}`;
+    $('ride-sub').textContent = view.alerted ? 'It’s the next stop' : `${view.stopsToGo} stop${view.stopsToGo > 1 ? 's' : ''} to ${leg.to.name}`;
+  }
+  $('ride-est').classList.toggle('hidden', !view.estimating);
+  // The list: this ride's stations, or on foot what's left of the trip.
+  const list = $('ride-stops');
+  if (leg.mode === 'train') {
+    const last = leg.stations.length - 1;
+    const states = view.stations ?? leg.stations.map(([name], k) => ({ name, state: k === last ? 'alight' : k === 0 ? 'next' : 'later' }));
+    list.style.setProperty('--dot', leg.line.color);
+    list.innerHTML = states.map((x) => `<li class="${x.state}">${esc(x.name)}${x.state === 'alight' ? ' · get off' : ''}</li>`).join('');
+  } else {
+    list.style.removeProperty('--dot');
+    list.innerHTML = guide.trip.legs.slice(guide.i).map((l) => (l.mode === 'walk'
+      ? `<li class="walk">${esc(sentence(walkText(l)))}</li>`
+      : `<li style="--dot:${esc(l.line.color)}">${esc(l.line.name)} to ${esc(l.to.name)}</li>`)).join('');
+  }
+  // Where you are: a train on the track, or a walking dot.
+  const kind = markerFor({ mode, legMode: view.kind === 'ride' ? 'train' : 'walk' });
+  const at = view.kind === 'walk' ? view.pos ?? state.pos?.lngLat : view.pos;
+  const node = riderMarker.getElement();
+  node.classList.toggle('train', kind === 'train'); // classList, not className: MapLibre keeps its own classes on it
+  node.classList.toggle('walker', kind === 'walker');
+  node.style.setProperty('--rider', leg.line?.color ?? '#1c7ed6');
+  node.style.color = leg.line?.text ?? '#fff';
+  node.innerHTML = kind === 'train' ? TRAIN_ICON : '';
+  if (!at) return;
+  riderMarker.setLngLat(at).setRotation(kind === 'train' ? view.heading ?? 0 : 0);
+  if (!riderMarker._map) riderMarker.addTo(map);
+  if (follow && !userMoving && !touching) {
+    const riding = view.kind === 'ride';
+    map.easeTo({
+      center: at, zoom: riding ? 15.5 : 17, bearing: riding ? view.heading ?? map.getBearing() : map.getBearing(), pitch: riding ? 45 : 30,
+      padding: { top: Math.round(innerHeight * 0.25), bottom: Math.round(innerHeight * 0.38), left: 0, right: 0 }, duration: 900,
+    });
+  }
+}
+
+function endRide(arrived) {
+  clearInterval(rideTimer);
+  rideTimer = null;
+  const name = dest?.name ?? '';
+  const took = rideNow() - rideStarted;
+  guide = null;
+  rideGpsBlocked = false;
+  rideTimeShift = 0;
+  riderMarker?.remove();
+  $('ride-ui').classList.add('hidden');
+  $('btn-recenter-ride').classList.add('hidden');
+  document.body.classList.remove('riding');
+  wakeLock?.release?.().catch(() => {});
+  wakeLock = null;
+  mode = 'browse';
+  // Back to the vehicle from Settings (the car, unless Chevron was picked).
+  if (state.pos) carMarker.setLngLat(state.pos.lngLat).setRotation(state.pos.heading ?? 0).addTo(map);
+  if (vehicle3d) map.triggerRepaint();
+  if (!arrived) return backToBrowse();
+  speak('You have arrived.');
+  $('arrived-name').textContent = name;
+  $('arrived-stats').textContent = `By train in ${formatDuration(took / 1000)}`;
+  $('arrived').classList.remove('hidden');
+  $('browse-ui').classList.add('hidden');
+  map.easeTo({ pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 600 });
+}
+
+// For testing on a phone against a local server: the trip's state, time moved on, and GPS cut and restored.
+if (typeof location !== 'undefined' && ['localhost', '127.0.0.1'].includes(location.hostname)) {
+  window.__trainTest = {
+    state: () => guide && { leg: guide.i, phase: guide.phase, along: Math.round(guide.along), alerted: guide.alerted, done: guide.done, shift: rideTimeShift / 1000 },
+    advance: (seconds) => {
+      rideTimeShift += seconds * 1000;
+      rideTick();
+    },
+    loseGps: () => (rideGpsBlocked = true),
+    restore: () => (rideGpsBlocked = false),
+  };
 }
 
 // What the server did about closures, worth a line under the route options.

@@ -7,7 +7,7 @@ import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, 
 import { stopSharing } from './probe.js';
 import { pickVoice } from './voice.js';
 import { appVersion } from './update.js';
-import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
+import { VEHICLES, COLORS, DEFAULT_COLOR, DEFAULT_VEHICLE } from './vehicle3d.js';
 import { onlineLine } from './presence.js';
 import { tileCount, clearOfflineTiles, originUsage } from './offline.js';
 
@@ -334,7 +334,7 @@ export function openSettings() {
       ${choiceRow('units', 'Units', [['metric', 'km'], ['imperial', 'miles']])}
       ${choiceRow('theme', 'Map', [['auto', 'Auto'], ['day', 'Day'], ['night', 'Night']])}
       <div class="set-row"><span>Vehicle<small>How you appear on the map</small></span><div class="choice" id="s-vehicle">${VEHICLES
-        .map(([v, l]) => `<button data-v="${v}" class="${local.get('vehicle', 'chevron') === v ? 'on' : ''}">${l}</button>`)
+        .map(([v, l]) => `<button data-v="${v}" class="${local.get('vehicle', DEFAULT_VEHICLE) === v ? 'on' : ''}">${l}</button>`)
         .join('')}</div></div>
       <div class="set-row swatch-row"><span>Colour</span><div class="swatches" id="s-vehicle-color">${COLORS
         .map(([c, l]) => `<button data-c="${c}" aria-label="${l}" title="${l}" class="${local.get('vehicleColor', DEFAULT_COLOR) === c ? 'on' : ''}" style="--c:${c}"></button>`)
