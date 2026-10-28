@@ -7,7 +7,7 @@ import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundab
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
-import { searchNearby, mergeResults, attribution as placesAttribution } from './places.js';
+import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES } from './places.js';
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -21,6 +21,7 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
+import { matchesWordStarts } from './text.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -175,6 +176,9 @@ async function boot() {
   map.on('zoomstart', (e) => e.originalEvent && mode === 'drive' && stopFollowing());
   map.on('rotate', () => $('btn-compass').classList.toggle('hidden', Math.abs(map.getBearing()) < 3 || mode === 'drive'));
   map.on('moveend', scheduleReportLoad);
+  map.on('moveend', schedulePois);
+  map.on('click', tapPlaceOnMap);
+  map.on('mousemove', (e) => (map.getCanvas().style.cursor = mode !== 'drive' && placeAt(e.point) ? 'pointer' : ''));
   map.on('movestart', (e) => { if (e.originalEvent) userMoving = true; });
   map.on('move', (e) => { if (e.originalEvent) lastUserMove = Date.now(); });
   map.on('moveend', () => { userMoving = false; });
@@ -190,7 +194,7 @@ async function boot() {
 
   carMarker = new maplibregl.Marker({ element: el('div', 'car', CAR), rotationAlignment: 'map', pitchAlignment: 'map' });
 
-  initPanels({ onUserChanged, applyTheme, openSearchFor, openPreview, refreshSound, setupVehicle, setSimSpeed: (v) => sim && (sim.speedFactor = v) });
+  initPanels({ onUserChanged, applyTheme, openSearchFor, openPreview, refreshSound, setupVehicle, drawPois, setSimSpeed: (v) => sim && (sim.speedFactor = v) });
   wireUi();
   setupSheetDrag();
   refreshSound();
@@ -300,11 +304,32 @@ function addMapLayers() {
       },
     });
     map.addLayer({ id: 'watch-route', type: 'line', source: 'watch-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': 6, 'line-opacity': 0.85 } }, before);
+    // Petrol stations, hospitals, clinics and convenience stores around the map (see drawPois). Under the base map's
+    // own places, so a station or landmark keeps its spot and these fill the gaps around it.
+    map.addSource('pois', { type: 'geojson', data: emptyFc() });
+    const firstBasePlace = layers.find((l) => BASE_PLACE_LAYERS.has(l['source-layer']) && l.type === 'symbol')?.id;
+    for (const type of POI_TYPES) if (!map.hasImage(`poi-${type}`)) map.addImage(`poi-${type}`, poiImage(type), { pixelRatio: 2 });
+    const font = map.getStyle().layers.find((l) => l.layout?.['text-font'])?.layout['text-font'];
+    map.addLayer({
+      id: 'pois', type: 'symbol', source: 'pois', minzoom: POI_MIN_ZOOM,
+      layout: {
+        'icon-image': ['concat', 'poi-', ['get', 'type']],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], POI_MIN_ZOOM, 0.8, 16, 1],
+        'symbol-sort-key': ['match', ['get', 'type'], 'hospital', 0, 'fuel', 1, 'clinic', 2, 3], // hospitals win a crowded spot
+        ...(font ? {
+          'text-field': ['step', ['zoom'], '', 15, ['get', 'name']], 'text-font': font, 'text-size': 11, 'text-offset': [0, 1.3],
+          'text-anchor': 'top', 'text-optional': true, 'text-max-width': 9,
+        } : {}),
+      },
+      paint: { 'text-color': themeNow === 'night' ? '#e6edf3' : '#33404d', 'text-halo-color': themeNow === 'night' ? '#161b22' : '#ffffff', 'text-halo-width': 1.4 },
+    }, firstBasePlace);
     for (const id of ['routes-alt', 'routes-alt-casing']) {
       map.on('mouseenter', id, () => (map.getCanvas().style.cursor = 'pointer'));
       map.on('mouseleave', id, () => (map.getCanvas().style.cursor = ''));
     }
   }
+  basePlaceLayers = map.getStyle().layers.filter((l) => BASE_PLACE_LAYERS.has(l['source-layer']) && l.type === 'symbol').map((l) => l.id);
+  drawPois();
   setupVehicle(); // a new style drops custom layers too
   arrowFor = null; // a new style starts with an empty arrow source
   lineFor = null; // and an empty driving line
@@ -356,6 +381,109 @@ function arrowHeadImage() {
 }
 
 // A rounded amber tag reading TOLL, for toll plazas on the map.
+// ---------- Places on the map you can tap to go ----------
+// Petrol stations, hospitals, clinics and convenience stores come from this phone's Overture files
+// (public/places.js), drawn by A2B when the map is zoomed in far enough to be useful, while browsing or choosing a
+// route (not while driving). Stations (LRT, MRT, KTM, monorail, buses), landmarks and the airport are already on
+// the base map from OpenStreetMap; tapping those works too. Either way, a tap shows the routes there.
+const POI_TYPES = ['fuel', 'hospital', 'clinic', 'convenience'];
+const POI_MIN_ZOOM = 13;
+const POI_STYLE = { fuel: { color: '#e8590c' }, hospital: { color: '#e03131' }, clinic: { color: '#1c7ed6' }, convenience: { color: '#2f9e44' } };
+const BASE_PLACE_LAYERS = new Set(['poi', 'aerodrome_label']); // the base map's own labelled places
+const TAP_SLOP = 12; // px around a tap, for fingertips
+let basePlaceLayers = []; // this style's layers drawing those, found when it loads
+const KIND_NAMES = { rail: 'Train station', railway: 'Train station', bus: 'Bus stop', bus_station: 'Bus station', bus_stop: 'Bus stop', subway: 'Station', light_rail: 'LRT station', monorail: 'Monorail station', halt: 'Train station', aerodrome: 'Airport', airport: 'Airport' };
+
+// The place drawn under a point on the screen, A2B's own first, or null.
+function placeAt(point) {
+  if (!map?.isStyleLoaded() || !['browse', 'preview'].includes(mode)) return null;
+  const box = [[point.x - TAP_SLOP, point.y - TAP_SLOP], [point.x + TAP_SLOP, point.y + TAP_SLOP]];
+  const ours = map.getLayer('pois') && map.queryRenderedFeatures(box, { layers: ['pois'] })[0];
+  if (ours) return { name: ours.properties.name, address: ours.properties.address, lng: ours.geometry.coordinates[0], lat: ours.geometry.coordinates[1] };
+  const f = basePlaceLayers.length && map.queryRenderedFeatures(box, { layers: basePlaceLayers }).find((x) => x.geometry.type === 'Point' && (x.properties['name:latin'] || x.properties.name));
+  if (!f) return null;
+  const p = f.properties;
+  const kind = KIND_NAMES[p.subclass] ?? KIND_NAMES[p.class] ?? String(p.subclass || p.class || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  return { name: p['name:latin'] || p.name, address: kind, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] };
+}
+
+function tapPlaceOnMap(e) {
+  const place = placeAt(e.point);
+  if (!place) return;
+  stopFollowing();
+  openPreview(place);
+}
+let poiTimer = null, poiSeq = 0;
+
+function schedulePois() {
+  clearTimeout(poiTimer);
+  poiTimer = setTimeout(drawPois, 250);
+}
+
+async function drawPois() {
+  const src = map?.getSource('pois');
+  if (!src) return;
+  const show = state.settings.map_pois !== false && ['browse', 'preview'].includes(mode) && map.getZoom() >= POI_MIN_ZOOM;
+  const seq = ++poiSeq;
+  if (!show) return src.setData(emptyFc());
+  const b = map.getBounds();
+  const found = await placesOfTypesIn(POI_TYPES, [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]).catch(() => []);
+  if (seq !== poiSeq) return;
+  src.setData({
+    type: 'FeatureCollection',
+    features: found.map((p) => ({ type: 'Feature', properties: { name: p.name, address: p.address || '', type: p.type }, geometry: { type: 'Point', coordinates: [p.lng, p.lat] } })),
+  });
+}
+
+// A round badge: a petrol pump, an H for a hospital, a cross for a clinic.
+function poiImage(type) {
+  const size = 52, c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.beginPath();
+  g.arc(size / 2, size / 2, size / 2 - 3, 0, Math.PI * 2);
+  g.fillStyle = POI_STYLE[type].color;
+  g.fill();
+  g.lineWidth = 4;
+  g.strokeStyle = '#ffffff';
+  g.stroke();
+  g.fillStyle = g.strokeStyle = '#ffffff';
+  if (type === 'hospital') {
+    g.font = '800 26px system-ui, -apple-system, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('H', size / 2, size / 2 + 1);
+  } else if (type === 'convenience') {
+    // A shopping bag.
+    g.fillRect(16, 21, 20, 16);
+    g.lineWidth = 3;
+    g.beginPath();
+    g.arc(26, 21, 5.5, Math.PI, 0);
+    g.stroke();
+  } else if (type === 'clinic') {
+    g.fillRect(size / 2 - 3.5, size / 2 - 12, 7, 24);
+    g.fillRect(size / 2 - 12, size / 2 - 3.5, 24, 7);
+  } else {
+    // A pump: the body with its window, and the hose.
+    g.fillRect(15, 14, 15, 24);
+    g.fillStyle = POI_STYLE.fuel.color;
+    g.fillRect(18, 17, 9, 7);
+    g.lineWidth = 3;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.beginPath();
+    g.moveTo(30, 20);
+    g.lineTo(35, 24);
+    g.lineTo(35, 33);
+    g.quadraticCurveTo(35, 36, 37.5, 36);
+    g.quadraticCurveTo(40, 36, 40, 33);
+    g.lineTo(40, 22);
+    g.lineTo(36, 17);
+    g.stroke();
+  }
+  return g.getImageData(0, 0, size, size);
+}
+
 function tollTagImage() {
   const w = 84, h = 44, c = document.createElement('canvas');
   c.width = w;
@@ -945,6 +1073,12 @@ async function runSearch(q, enter = false) {
     // Pasted coordinates are only a place when they're on the earth ("999,999" goes to text search instead).
     const lat = Number(coord?.[1]), lng = Number(coord?.[2]);
     const pasted = coord && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    // "petrol", "klinik near bangsar": the nearest places of that kind (see searchByType), when there are any.
+    const typed = !pasted && (await searchByType(q, near).catch(() => null));
+    if (typed) {
+      if (seq !== searchSeq) return;
+      return showResults(q, near, typed.places, typed.note, true, enter);
+    }
     // Two searches at once: the server's (OpenStreetMap) and this phone's own (Overture shops and places).
     const [server, local] = pasted
       ? [{ places: [{ name: 'Coordinates', address: q, lat, lng }] }, []]
@@ -959,27 +1093,62 @@ async function runSearch(q, enter = false) {
       ? places.length ? `Car parks near ${from ?? 'you'}` : `No car parks mapped near ${from ?? 'you'}.`
       : local.length ? null : server.note; // "not in the map data" is moot once Overture found it
     if (seq !== searchSeq) return;
-    $('search-home').classList.add('hidden');
-    const ul = $('results');
-    ul.classList.remove('hidden');
-    ul.innerHTML = '';
-    $('search-status').classList.toggle('hidden', places.length > 0);
-    $('search-status').textContent = places.length ? '' : note || `No results for "${q}".`;
-    // e.g. "No "nandos" found near Eco Grandeur in the map data." above the nearest other matches
-    if (note && places.length) ul.append(el('li', 'search-note', esc(note)));
-    for (const p of places) {
-      const li = el('li');
-      const d = formatDistance(distance(near, [p.lng, p.lat]), state.settings.units);
-      li.innerHTML = `<button class="place-row"><span class="p-ic">${PLACE_ICONS[p.category === 'parking' ? 'parking' : 'pin']}</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address)}</small></span><span class="p-dist">${d}</span></button>`;
-      li.firstElementChild.onclick = () => pickPlace(p);
-      ul.append(li);
-    }
-    if (places.some((p) => !server.places.includes(p))) ul.append(el('li', 'search-note', esc(placesAttribution)));
-    if (enter && places.length === 1) pickPlace(places[0]);
+    showResults(q, near, places, note, places.some((p) => !server.places.includes(p)), enter);
   } catch (e) {
     if (seq !== searchSeq) return;
     $('search-status').textContent = e.message;
   }
+}
+
+function showResults(q, near, places, note, overture, enter) {
+  $('search-home').classList.add('hidden');
+  const ul = $('results');
+  ul.classList.remove('hidden');
+  ul.innerHTML = '';
+  $('search-status').classList.toggle('hidden', places.length > 0);
+  $('search-status').textContent = places.length ? '' : note || `No results for "${q}".`;
+  // e.g. "No "nandos" found near Eco Grandeur in the map data." above the nearest other matches
+  if (note && places.length) ul.append(el('li', 'search-note', esc(note)));
+  for (const p of places) {
+    const li = el('li');
+    const d = formatDistance(distance(near, [p.lng, p.lat]), state.settings.units);
+    li.innerHTML = `<button class="place-row"><span class="p-ic">${PLACE_ICONS[p.category === 'parking' ? 'parking' : 'pin']}</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address)}</small></span><span class="p-dist">${d}</span></button>`;
+    li.firstElementChild.onclick = () => pickPlace(p);
+    ul.append(li);
+  }
+  if (overture) ul.append(el('li', 'search-note', esc(placesAttribution)));
+  if (enter && places.length === 1) pickPlace(places[0]);
+}
+
+// A search naming a kind of place ("petrol", "hospital", "balai polis", "convenience store"): its nearest
+// places, from this phone's Overture files. With more words, they're either a name ("shell petrol station",
+// "kpj hospital": those places near you) or an area ("petrol near klcc": those places around KLCC, which the
+// server finds). A place actually called what was typed ("Police Museum") still comes first. Returns null to
+// fall back to the usual search (no data for that kind here, or the area isn't found).
+async function searchByType(q, near) {
+  const t = typeQuery(q);
+  if (!t) return null;
+  const label = TYPES[t.type].label;
+  if (!t.area) {
+    const places = await placesOfType(t.type, near);
+    return places.length ? { places, note: `${label} near you` } : null;
+  }
+  const mine = (await placesOfType(t.type, near)).filter((p) => matchesWordStarts(`${p.name} ${p.address}`, t.area));
+  if (mine.length) return { places: mine, note: `${label} near you matching "${t.area}"` };
+
+  const lang = (navigator.language || 'en').slice(0, 2);
+  const search = (text) => api(`/api/search?q=${encodeURIComponent(text)}&lat=${near[1]}&lng=${near[0]}&lang=${lang}`);
+  const [whole, local, where] = await Promise.all([search(q).catch(() => ({ places: [] })), searchNearby(q, near).catch(() => []), search(t.area)]);
+  const named = mergeResults(whole.places ?? [], local, q, near).filter((p) => matchesWordStarts(p.name, q)).slice(0, 3);
+  // A mall or venue before a station of the same name, as the usual search ranks them.
+  const anchor = ['place', 'area'].map((k) => where.places?.find((p) => p.landmark === k)).find(Boolean) ?? where.places?.[0];
+  if (!anchor) return null;
+  const at = [anchor.lng, anchor.lat];
+  const around = (await placesOfType(t.type, at))
+    .filter((p) => !named.some((n) => distance([n.lng, n.lat], [p.lng, p.lat]) < 80))
+    .map((p) => ({ ...p, address: [`${formatDistance(distance(at, [p.lng, p.lat]), state.settings.units)} from ${anchor.name}`, p.address].filter(Boolean).join(' · ') }));
+  if (!around.length && !named.length) return null;
+  return { places: [...named, ...around], note: `${label} near ${anchor.name}` };
 }
 
 // The car parks the server found (OpenStreetMap) plus the parking in this phone's Overture listings, often a
@@ -1288,6 +1457,7 @@ function selectRoute(i) {
 function backToBrowse() {
   autoGo.stop();
   mode = 'browse';
+  schedulePois();
   routes = [];
   dest = null;
   destMarker?.remove();
@@ -1371,6 +1541,7 @@ function startDrive() {
   const route = routes[selected];
   if (!route) return;
   mode = 'drive';
+  drawPois(); // off the map while driving
   trail = [];
   offTrail = [];
   drawTrail();
