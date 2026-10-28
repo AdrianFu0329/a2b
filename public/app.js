@@ -23,6 +23,7 @@ import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
 import { matchesWordStarts } from './text.js';
+import { shouldCheck as shouldCheckFaster, pickFaster, offerText, OFFER_FOR_MS, KEEP_FOR_MS } from './faster-route.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -931,6 +932,8 @@ function wireUi() {
   $('btn-parking').onclick = openParking;
   tripSheet.init();
   $('btn-stop').onclick = () => endDrive(false);
+  $('btn-faster-take').onclick = takeFaster;
+  $('btn-faster-keep').onclick = keepCurrent;
   $('btn-overview').onclick = overview;
   $('btn-trip-settings').onclick = () => {
     tripSheet.set(false);
@@ -1556,6 +1559,7 @@ function startDrive() {
   tollsSpoken.clear();
   camerasWarned.clear();
   $('toll-chip').classList.add('hidden');
+  resetFaster();
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
   live = null;
@@ -1634,6 +1638,7 @@ function driveTick(fix) {
   checkTolls();
   checkCameras();
   checkAlerts();
+  checkFaster();
   if (share) pushShare();
 
   const stopStep = nav.steps.findIndex((st) => st.type === 'stop');
@@ -1755,15 +1760,10 @@ async function reroute(fix, { force = false, note } = {}) {
   try {
     const rs = await requestRoutes(fix.lngLat, [dest.lng, dest.lat], fix.heading ?? undefined, stops);
     if (mode !== 'drive') return;
-    keepTrail(fix.lngLat);
-    nav = new Navigator(rs[0], { units: state.settings.units });
-    nav.spoken.add('depart');
-    computeOnRoute();
-    loadReports(true);
-    if (sim) startSimulation(rs[0]);
+    adoptRoute(rs[0], fix.lngLat);
+    faster.lastCheck = Date.now(); // a fresh route: no need to look for a better one straight away
     speak(note ?? 'Route recalculated.');
     if (rs.closuresIgnored) toast("Couldn't find a way around a reported closure.");
-    if (share) pushShare(true);
   } catch (e) {
     // The common mid-drive failure is a dead spot: say so, and keep guiding on the loaded route.
     if (!navigator.onLine || e.status === 0) toast("You're offline, so the route can't be recalculated. Stay on the highlighted route.", 4000);
@@ -1771,6 +1771,88 @@ async function reroute(fix, { force = false, note } = {}) {
   } finally {
     rerouting = false;
   }
+}
+
+// Drive on `route` from `at`: after a reroute, or taking a faster route.
+function adoptRoute(route, at) {
+  keepTrail(at);
+  hideFaster();
+  nav = new Navigator(route, { units: state.settings.units });
+  nav.spoken.add('depart');
+  computeOnRoute();
+  loadReports(true);
+  if (sim) startSimulation(route);
+  if (share) pushShare(true);
+}
+
+// ---------- Faster route found ----------
+// Now and then while driving, routes from here are asked for again; one clearly quicker and really another way is
+// offered on a card, said once, and gone after 20 s if not taken. See faster-route.js for when and what counts.
+const faster = { lastCheck: 0, checks: 0, busy: false, kept: [], offer: null, timer: null };
+
+function resetFaster() {
+  hideFaster();
+  Object.assign(faster, { lastCheck: 0, checks: 0, busy: false, kept: [] });
+}
+
+async function checkFaster({ force = false } = {}) {
+  if (mode !== 'drive' || !nav || !live || !dest || faster.offer || rerouting) return;
+  const now = Date.now();
+  const toStop = stops[0] && state.pos ? distance(state.pos.lngLat, [stops[0].lng, stops[0].lat]) : null;
+  const due = shouldCheckFaster({
+    now, startedAt: driveStarted, lastCheck: faster.lastCheck, checks: faster.checks, left: live.remaining, leftTime: live.remainingTime,
+    offRoute: live.offRoute, busy: faster.busy, toStop, demo: Boolean(sim),
+  });
+  if (!due && !force) return;
+  faster.busy = true;
+  faster.lastCheck = now;
+  faster.checks++;
+  const route = nav.route, from = live.snapped, heading = state.pos?.heading ?? undefined;
+  try {
+    const rs = await requestRoutes(from, [dest.lng, dest.lat], heading, stops);
+    if (mode !== 'drive' || nav?.route !== route || !live) return; // rerouted or ended meanwhile
+    const rest = nav.coords.slice(Math.max(0, nav.seg - 1));
+    const pick = pickFaster(rs, { leftTime: live.remainingTime, rest, now: Date.now(), kept: faster.kept });
+    if (pick) showFaster(pick);
+  } catch {
+    // A failed check is just no offer: the drive carries on as it is.
+  } finally {
+    faster.busy = false;
+  }
+}
+
+function showFaster(pick) {
+  const { line, spoken } = offerText(pick.saves, pick.route.via);
+  faster.offer = pick;
+  const card = $('faster-card');
+  card.querySelector('.faster-line').textContent = line;
+  card.classList.remove('hidden');
+  speak(spoken);
+  clearTimeout(faster.timer);
+  faster.timer = setTimeout(() => keepCurrent(), OFFER_FOR_MS); // no answer counts as Keep
+}
+
+function hideFaster() {
+  clearTimeout(faster.timer);
+  faster.offer = null;
+  $('faster-card')?.classList.add('hidden');
+}
+
+function keepCurrent() {
+  if (faster.offer) faster.kept.push({ coords: faster.offer.route.coords, until: Date.now() + KEEP_FOR_MS });
+  hideFaster();
+}
+
+function takeFaster() {
+  const pick = faster.offer;
+  if (!pick || mode !== 'drive') return hideFaster();
+  adoptRoute(pick.route, live?.snapped ?? state.pos?.lngLat);
+  speak(`Taking the faster route${pick.route.via ? ` via ${pick.route.via}` : ''}.`);
+}
+
+// For testing on a phone against a local server: check now, whatever the timers say.
+if (typeof location !== 'undefined' && ['localhost', '127.0.0.1'].includes(location.hostname)) {
+  window.__fasterRouteTest = { checkNow: () => checkFaster({ force: true }), state: () => ({ ...faster, offer: faster.offer && { saves: faster.offer.saves, via: faster.offer.route.via } }) };
 }
 
 async function addStop(place) {
@@ -1937,6 +2019,7 @@ async function endDrive(arrived) {
   trail = [];
   offTrail = [];
   drawTrail();
+  resetFaster();
   $('toll-chip').classList.add('hidden');
   onRoute = [];
   stops = [];
