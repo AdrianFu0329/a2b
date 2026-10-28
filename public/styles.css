@@ -306,7 +306,7 @@ body.walking #speedo, body.walking #limit, body.walking #toll-chip, body.walking
 
 /* ---------- Driving ---------- */
 /* Banner and the off-route pill stack, so the pill always sits just below the banner whatever its height. */
-#drive-ui .drive-top {
+#drive-ui .drive-top, #ride-ui .drive-top {
   position: absolute; top: calc(10px + var(--safe-top)); left: 10px; right: 10px; max-width: 560px;
   display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 10px; pointer-events: none;
 }
