@@ -18,6 +18,7 @@ import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 // ---------- Fake upstream services ----------
 const LINE = Array.from({ length: 21 }, (_, i) => [13.4, 52.5 + 0.00045 * i]); // ~1 km north
 let lastRouteBody = null;
+let lastTomtomMode = null;
 let routingDown = false;
 let construction = null; // a road under construction for the fake Overpass, as [[lng, lat], ...]
 let detourTime = 150;
@@ -46,6 +47,7 @@ globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   if (u.includes('api.tomtom.com')) {
     tomtomCalls++;
+    lastTomtomMode = new URL(u).searchParams.get('travelMode');
     if (tomtomDown) return Response.json({ error: 'over quota' }, { status: 403 });
     // Follows the route it's given; the full route has a jam over its third quarter.
     const points = JSON.parse(init.body).supportingPoints;
@@ -196,6 +198,13 @@ test('walking routes ask Valhalla for a pedestrian route', () => {
   assert.equal(body.costing, 'pedestrian');
   assert.equal(body.costing_options.auto, undefined, 'no car options on foot');
   assert.equal(buildRouteRequest({ from: [1, 2], to: [3, 4] }).costing, 'auto', 'driving stays the default');
+});
+
+test('motorcycle routes ask Valhalla for a motorcycle route, without avoiding tolls', () => {
+  const body = buildRouteRequest({ from: [1, 2], to: [3, 4], travel: 'motorcycle', avoid: { tolls: true, highways: true } });
+  assert.equal(body.costing, 'motorcycle');
+  assert.deepEqual(body.costing_options.motorcycle, { use_tolls: 1, use_highways: 0, use_ferry: 0.5 }, 'tolls are free for them');
+  assert.equal(body.costing_options.auto, undefined);
 });
 
 test('turn lanes keep only junctions with a lane to follow', () => {
@@ -938,4 +947,24 @@ test('trips by train need a spot, a start and a destination', async () => {
   assert.ok(Array.isArray(res.body.trips));
   assert.equal(typeof res.body.walk, 'number');
   for (const trip of res.body.trips) assert.ok(trip.legs.some((l) => l.mode === 'train') && trip.arrive > trip.depart);
+});
+
+test('motorcycle routes keep closures, limits and cameras, but have no tolls to pay, and are timed as motorcycles', async () => {
+  env.TOMTOM_KEY = 'test-key';
+  try {
+    const rider = client();
+    const car = await rider('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    assert.ok(car.body.routes.some((r) => r.tolls.length), 'the car route passes a plaza');
+    assert.equal(lastTomtomMode, 'car');
+    const r = await rider('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], travel: 'motorcycle' });
+    assert.equal(r.status, 200);
+    assert.equal(lastRouteBody.costing, 'motorcycle');
+    assert.equal(lastTomtomMode, 'motorcycle', 'live traffic for a motorcycle');
+    const full = r.body.routes.find((x) => x.coords.length === 21);
+    assert.deepEqual([full.travel, full.tolls, full.toll, full.toll_free_bike], ['motorcycle', [], false, true]);
+    assert.ok(full.limits, 'speed limits still apply');
+    assert.ok(Array.isArray(full.cameras), 'cameras still checked');
+  } finally {
+    delete env.TOMTOM_KEY;
+  }
 });

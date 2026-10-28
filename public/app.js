@@ -58,7 +58,7 @@ let themeNow = null;
 
 // Preview / drive state
 let dest = null;
-// How to get there: 'drive' | 'walk' | 'transit'. Not remembered: every trip starts on Drive, so someone who walked once
+// How to get there: 'drive' | 'motorcycle' | 'walk' | 'transit'. Not remembered: every trip starts on Drive, so someone who walked once
 // isn't given footpaths (no cameras, alerts or tolls) next time they're in the car. See resetTravel.
 let travel = 'drive';
 let stops = []; // places to visit on the way, in order, not yet reached
@@ -752,7 +752,8 @@ function estSpeed(prev, lngLat, t) {
 function handleFix(fix, first = false) {
   state.pos = fix;
   // Traffic sharing only buffers real drives: walking, browsing the map, and demo drives never become traffic.
-  if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix); // walking speeds would look like a jam
+  // Only cars' speeds are shared: walking speeds would look like a jam, and motorcycles filter past jams.
+  if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix);
   local.set('lastPos', fix.lngLat.map((v) => Math.round(v * 1e4) / 1e4));
   if (mode === 'watch') return; // the viewer's own position isn't part of someone else's drive
   if (!carMarker._map) carMarker.setLngLat(fix.lngLat).addTo(map);
@@ -1512,6 +1513,7 @@ function renderRouteOptions() {
     if (r.duration === fastest && routes.length > 1) badges.push('<span class="badge best">Fastest</span>');
     if (r.tolls?.length) badges.push(`<span class="badge warn">${esc(tollSummary(r.tolls))}</span>`);
     else if (r.toll) badges.push('<span class="badge warn">Toll</span>');
+    else if (r.toll_free_bike) badges.push('<span class="badge">No toll for motorcycles</span>');
     if (r.ferry) badges.push('<span class="badge warn">Ferry</span>');
     const reps = (r.reports ?? []).length;
     if (reps) badges.push(`<span class="badge">${reps} report${reps > 1 ? 's' : ''}</span>`);

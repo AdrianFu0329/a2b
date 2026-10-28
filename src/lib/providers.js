@@ -180,7 +180,9 @@ const MANEUVER = {
 
 export const MAX_EXCLUDE = 50; // the public Valhalla server's limit on avoided spots
 
-// travel: 'drive' (the default) or 'walk', which takes footpaths and pedestrian crossings and ignores one-way streets.
+// travel: 'drive' (the default), 'motorcycle' (Valhalla's motorcycle costing; tolls aren't avoided, since most
+// Malaysian plazas are free for motorcycles) or 'walk', which takes footpaths and pedestrian crossings and ignores
+// one-way streets.
 export function buildRouteRequest({ from, to, via = [], avoid = {}, units = 'metric', lang = 'en-US', heading, exclude = [], travel = 'drive' }) {
   const start = { lat: from[1], lon: from[0] };
   if (Number.isFinite(heading)) {
@@ -191,16 +193,21 @@ export function buildRouteRequest({ from, to, via = [], avoid = {}, units = 'met
     locations: [start, ...via.map(([lng, lat]) => ({ lat, lon: lng, type: 'break' })), { lat: to[1], lon: to[0] }],
     ...(travel === 'walk'
       ? { costing: 'pedestrian', costing_options: { pedestrian: { use_ferry: avoid.ferries ? 0 : 0.5 } } }
-      : {
-          costing: 'auto',
-          costing_options: {
-            auto: {
-              use_tolls: avoid.tolls ? 0 : 0.5,
-              use_highways: avoid.highways ? 0 : 1,
-              use_ferry: avoid.ferries ? 0 : 0.5,
+      : travel === 'motorcycle'
+        ? {
+            costing: 'motorcycle',
+            costing_options: { motorcycle: { use_tolls: 1, use_highways: avoid.highways ? 0 : 1, use_ferry: avoid.ferries ? 0 : 0.5 } },
+          }
+        : {
+            costing: 'auto',
+            costing_options: {
+              auto: {
+                use_tolls: avoid.tolls ? 0 : 0.5,
+                use_highways: avoid.highways ? 0 : 1,
+                use_ferry: avoid.ferries ? 0 : 0.5,
+              },
             },
-          },
-        }),
+          }),
     exclude_locations: exclude.slice(0, MAX_EXCLUDE).map(([lng, lat]) => ({ lat, lon: lng })),
     alternates: via.length ? 0 : 2, // Valhalla only offers alternatives between two points
     units: units === 'imperial' ? 'miles' : 'kilometers',

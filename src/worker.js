@@ -405,8 +405,10 @@ async function route(request, env, url) {
     const body = await readJson(request);
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('Route needs a start and a destination.', 400);
-    // On foot, the driving extras (closures, roadworks, speed limits, tolls, traffic, cameras) don't apply.
-    const walk = body.travel === 'walk';
+    // On foot, the driving extras (closures, roadworks, speed limits, tolls, traffic, cameras) don't apply. On a
+    // motorcycle they all do, except tolls: most Malaysian plazas are free for motorcycles.
+    const travel = ['walk', 'motorcycle'].includes(body.travel) ? body.travel : 'drive';
+    const walk = travel === 'walk';
     const via = (Array.isArray(body.via) ? body.via : []).slice(0, 3).map(lngLat).filter(Boolean);
     const area = corridorBox([from, ...via, to]);
     const exclude = walk || body.avoid_closures === false ? [] : await reports.closuresNear(area);
@@ -416,7 +418,7 @@ async function route(request, env, url) {
       units: body.units === 'imperial' ? 'imperial' : 'metric',
       lang: typeof body.lang === 'string' && /^[a-z]{2}(-[A-Z]{2})?$/.test(body.lang) ? body.lang : 'en-US',
       heading: Number(body.heading),
-      travel: walk ? 'walk' : 'drive',
+      travel,
     };
     const first = await fetchRoutes(env, opts);
     if (walk) {
@@ -458,11 +460,15 @@ async function route(request, env, url) {
         const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
         r.limits = a?.limits ?? null;
         r.tolls = (a?.tolls ?? []).map((at) => ({ at }));
+        if (travel === 'motorcycle') {
+          // The route passes plazas, but a motorcycle rides through free: say so instead of listing them.
+          Object.assign(r, { travel, toll_free_bike: Boolean(r.tolls.length || r.toll), tolls: [], toll: false });
+        }
       }),
       // Live traffic, when TomTom is set up: the route's time with today's traffic, and where the jams are.
       ...routes.map(async (r) => {
         if (!env.TOMTOM_KEY) return;
-        const [, traffic] = await Promise.all([count('tomtom'), liveTraffic(env, r).catch(() => null)]);
+        const [, traffic] = await Promise.all([count('tomtom'), liveTraffic(env, r, travel).catch(() => null)]);
         applyTraffic(r, traffic);
       }),
       // Fixed speed cameras on each route, from the built list.
