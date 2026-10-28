@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filesForWord, searchNearby, mergeResults, typeQuery, placesOfType } from '../public/places.js';
+import { filesForWord, searchNearby, mergeResults, typeQuery, placesOfType, placesOfTypesIn, addTypeSource } from '../public/places.js';
 import { matchesWordStarts, normalizeText } from '../public/text.js';
 
 const ECO = [101.468, 3.224]; // Eco Grandeur, Puncak Alam
@@ -11,7 +11,12 @@ const ECO = [101.468, 3.224]; // Eco Grandeur, Puncak Alam
 // A tiny fake /places/ tree: one area (0.5° grid, row 6, col 202) with an "nan" file and an "st" file.
 const FILES = {
   '/places/index.json': { release: 'test', area: 0.5, areas: ['6_202'] },
-  '/places/6_202/files.json?v=test': { n: 1, nan: 2, st: 1, _: 1, '@fuel': 4 },
+  '/places/6_202/files.json?v=test': { n: 1, nan: 2, st: 1, _: 1, '@fuel': 4, '@ev': 2 },
+  // Overture's EV chargers here: one the server also lists (30 m away), one only Overture has.
+  '/places/6_202/@ev.json?v=test': { p: [
+    ['Gentari EV Eco Grandeur', 101.4683, 3.2242, '', 'ev_charging_station'],
+    ['Tesla Puncak Alam', 101.475, 3.229, '', 'ev_charging_station'],
+  ] },
   '/places/6_202/nan.json?v=test': { p: [["Nando's", 101.45526, 3.2271, 'Lot 30, Ruang Niaga Eco Grandeur, Puncak Alam', 'restaurant'], ["Nando's", 101.518, 3.071, 'Aneka Walk, Shah Alam', 'restaurant']] },
   '/places/6_202/st.json?v=test': { p: [['Starbucks', 101.45806, 3.22737, 'Jalan Keramat', 'coffee_shop']] },
   '/places/6_202/n.json?v=test': { p: [] },
@@ -132,6 +137,11 @@ test('searches that name a kind of place are recognised, in English and Malay, w
   assert.deepEqual(t('nearest police station'), ['police', '']);
   assert.deepEqual(t('kedai serbaneka near me'), ['convenience', '']);
   assert.deepEqual(t('convenience store'), ['convenience', '']);
+  assert.deepEqual(t('ev charger'), ['ev', '']);
+  assert.deepEqual(t('EV charging station near klcc'), ['ev', 'klcc']);
+  assert.deepEqual(t('pengecas ev terdekat'), ['ev', '']);
+  assert.deepEqual(t('stesen cas'), ['ev', '']);
+  assert.deepEqual(t('charger'), ['ev', '']);
   assert.equal(typeQuery('petronas'), null, 'a brand is a name search');
   assert.equal(typeQuery('7-eleven'), null);
   assert.equal(typeQuery('nandos eco grandeur'), null);
@@ -143,4 +153,25 @@ test('places of a kind come nearest first, once each, and only nearby', async ()
   assert.ok(fuel[0].km < fuel[1].km);
   assert.equal(fuel[0].type, 'fuel');
   assert.deepEqual(await placesOfType('police', ECO), [], 'no file for that kind here');
+});
+
+test('EV chargers: the server’s list and the files’ together, a charger in both once', async () => {
+  let asked = 0;
+  addTypeSource('ev', async () => {
+    asked++;
+    if (asked === 1) throw new Error('offline');
+    return [
+      ['ChargEV Eco Grandeur', 101.468, 3.224, 'ChargEV · Type 2 · up to 22 kW', 'ev_charging_station'],
+      ['DC Handal Seremban', 101.94, 2.72, 'CHAdeMO · up to 50 kW', 'ev_charging_station'],
+    ];
+  });
+  assert.deepEqual((await placesOfType('ev', ECO)).map((p) => p.name), ['Gentari EV Eco Grandeur', 'Tesla Puncak Alam'], 'the server unreachable: the files’ still');
+  const ev = await placesOfType('ev', ECO);
+  assert.deepEqual(ev.map((p) => p.name), ['ChargEV Eco Grandeur', 'Tesla Puncak Alam'], 'asked again, nearest first, Seremban too far');
+  assert.equal(ev[0].address, 'ChargEV · Type 2 · up to 22 kW');
+  assert.equal(ev[0].type, 'ev');
+  await placesOfType('ev', ECO);
+  assert.equal(asked, 2, 'kept once it worked');
+  const shown = await placesOfTypesIn(['fuel', 'ev'], [101.46, 3.22, 101.48, 3.235]);
+  assert.deepEqual(shown.filter((p) => p.type === 'ev').map((p) => p.name).sort(), ['ChargEV Eco Grandeur', 'Tesla Puncak Alam'], 'on the map as well');
 });

@@ -13,9 +13,12 @@ import { liveTraffic, applyTraffic } from './lib/traffic.js';
 import { loadCameras, camerasAlong } from './lib/cameras.js';
 import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
+import { refreshChargers, allChargers } from './lib/chargers.js';
 import { reportsRepo } from './lib/reports.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
+
+let lastChargerFill = 0; // see /api/chargers
 
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
@@ -56,6 +59,7 @@ export default {
       env.DB.prepare('DELETE FROM probe_devices WHERE updated_at < ?').bind(now - PROBE_RETENTION_MS),
       env.DB.prepare('DELETE FROM probe_limits WHERE last_at < ?').bind(now - PROBE_RETENTION_MS),
     ]);
+    await refreshChargers(env, { now }).catch((e) => console.warn('chargers', e.message)); // weekly, per source
   },
 };
 
@@ -378,6 +382,19 @@ async function route(request, env, url) {
     const res = json({ parking: await parkingNear(env, [lng, lat]) }, 200, { 'cache-control': 'public, max-age=86400' });
     if (cache) await cache.put(key, res.clone());
     return res;
+  }
+
+  // EV chargers (src/lib/chargers.js): all of them, a few hundred small rows, for the phone to search and draw.
+  if (path === '/api/chargers' && method === 'GET') {
+    await needSpot();
+    let chargers = await allChargers(db);
+    if (!chargers.length && Date.now() - lastChargerFill > 600_000) {
+      // A fresh database, before the first nightly refresh: fill it now (at most every 10 minutes if that fails).
+      lastChargerFill = Date.now();
+      await refreshChargers(env);
+      chargers = await allChargers(db);
+    }
+    return json({ chargers }, 200, { 'cache-control': 'private, max-age=3600' });
   }
 
   if (path === '/api/reverse' && method === 'GET') {
