@@ -46,6 +46,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 | 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
 | 🅿️ **Parking** | Car parks near your destination, paid or free, with type and spaces. Pick one and the drive reroutes there. Or search "parking", "parking klcc" or "letak kereta pavilion". |
+| 🌦️ **Weather** | The weather when you arrive and rain or storms on the way, at the time you'll pass, with MET Malaysia's warnings and a tip on what to bring (an umbrella, a jacket for the highlands). A voice heads-up a few km before heavy rain. |
 | 🚧 **Roadworks** | Routes avoid roads that look to be still under construction, and roads drivers report as closed. |
 | 🚓 **Reports** | Traffic, police, crashes, hazards, blocked lanes, closures and cameras, with voice alerts ahead and "still there?" checks after. |
 | 🚗 **Your car** | A 3D chevron or car in the colour you like, a speedometer that turns red over the limit, and the road you've driven greyed out. |
@@ -98,6 +99,10 @@ The database tables are created on the first request (or run `npm run db:migrate
 `wrangler.toml`:
 
 - `MAX_ACTIVE` and `MAX_GUESTS`: how many devices can use the app at once, and how many of those can be guests.
+- WeatherKit (optional, secrets): `WEATHERKIT_TEAM_ID` (your Apple team id), `WEATHERKIT_SERVICE_ID` (a Services
+  ID with WeatherKit turned on), `WEATHERKIT_KEY_ID` and `WEATHERKIT_KEY` (the id and contents of a `.p8` key with
+  WeatherKit enabled, from Certificates, Identifiers & Profiles). Set each with `npx wrangler secret put`. Without
+  them, the weather comes from MET Malaysia.
 - `TESTER_EMAILS` (a secret: `npx wrangler secret put TESTER_EMAILS`): accounts that get the testing tools and the
   usage dashboard.
 
@@ -116,6 +121,8 @@ Everything A2B uses is free and needs no key:
 | Routing, speed limits, toll booths | [Valhalla public server](https://valhalla1.openstreetmap.de) (`ROUTING_URL`) | Community-run, fair use. |
 | Search | [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Community-run, fair use. |
 | Live traffic (optional) | [TomTom Routing API](https://developer.tomtom.com) (`TOMTOM_KEY` secret) | Times each route with today's traffic; free up to a monthly quota. Without a key, routes use typical speeds. Answers aren't stored. |
+| Weather (optional) | [Apple WeatherKit REST API](https://developer.apple.com/weatherkit/) (`WEATHERKIT_*` secrets, below) | Hourly forecasts for the exact spot; included with an Apple Developer Program membership (500,000 calls a month). Each ~11 km square is fetched at most once an hour. |
+| Weather | [MET Malaysia open data](https://developer.data.gov.my/realtime-api/weather) | 7-day forecasts for ~420 towns and live warnings. Used without WeatherKit, or when it fails; fetched once an hour for the whole country. Town positions are in `src/lib/met-towns.json` (`npm run met-towns`). |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
@@ -170,6 +177,7 @@ src/
   lib/providers.js      search (Photon) and routing (Valhalla), speed limits, reports along a route
   lib/construction.js   spotting roads that are probably still being built
   lib/traffic.js        live traffic for a route (TomTom)
+  lib/weather.js        the weather along a route (WeatherKit, MET Malaysia)
   lib/cameras.js        fixed speed cameras along a route
   lib/tolls.js          toll plazas and their prices
   lib/parking.js        car parks near a destination
@@ -247,4 +255,6 @@ over the internet included, you must offer them its source code under the same l
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL). Places and roads under
 construction from the [Overture Maps Foundation](https://overturemaps.org) (see `public/places/NOTICE.txt` once built).
 Map tiles by [OpenFreeMap](https://openfreemap.org), routing by [Valhalla](https://github.com/valhalla/valhalla),
-search by [Photon](https://github.com/komoot/photon), live traffic by [TomTom](https://www.tomtom.com).
+search by [Photon](https://github.com/komoot/photon), live traffic by [TomTom](https://www.tomtom.com). Weather
+forecasts and warnings from [MET Malaysia](https://www.met.gov.my) through [data.gov.my](https://data.gov.my) (CC BY
+4.0), and from [Apple Weather](https://weatherkit.apple.com/legal-attribution.html) when WeatherKit is set up.

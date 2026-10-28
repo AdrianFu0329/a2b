@@ -318,6 +318,7 @@ export function openSettings() {
       ${toggleRow('voice', 'Voice directions')}
       ${toggleRow('alerts', 'Report alerts while driving', 'Police, crashes, hazards and closures ahead')}
       ${toggleRow('speed_warning', 'Speeding warning', 'Speedometer turns red above the posted limit')}
+      ${toggleRow('weather', 'Weather on the way', 'Rain and storms on your route, and what to bring')}
     </div>
     <div class="set-group"><h3>Voice</h3><div id="voice-list"></div></div>
     <div class="set-group"><h3>Navigation</h3>
@@ -651,7 +652,8 @@ function openAbout() {
     <p>Keep your eyes on the road. Only use the app when it is safe and legal to do so. Reports from other drivers can be wrong.</p>
     <p>Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>.
        Map tiles by <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>.
-       Routing by <a href="https://valhalla.github.io/valhalla/" target="_blank" rel="noopener">Valhalla</a>, search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>, live traffic by <a href="https://www.tomtom.com" target="_blank" rel="noopener">TomTom</a>.
+       Routing by <a href="https://valhalla.github.io/valhalla/" target="_blank" rel="noopener">Valhalla</a>, search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>, live traffic by <a href="https://www.tomtom.com" target="_blank" rel="noopener">TomTom</a>,
+       weather by <a href="https://www.met.gov.my" target="_blank" rel="noopener">MET Malaysia</a> (data.gov.my) and <a href="https://weatherkit.apple.com/legal-attribution.html" target="_blank" rel="noopener"> Weather</a>.
        Shops and places also from <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a> (Meta, Microsoft, Foursquare, AllThePlaces and others; <a href="/places/NOTICE.txt" target="_blank">licences</a>).</p>
     <p>A2B is free and open source. <a href="https://github.com/thaqif0709/a2b" target="_blank" rel="noopener">Source code</a>, ideas and bug reports welcome, or send feedback from Settings.</p>
     <p class="about-credit">© 2026 Thaqif Syarafuddin bin Roslan and the A2B contributors.
