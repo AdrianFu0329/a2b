@@ -31,6 +31,8 @@ OUT = os.path.join(os.path.dirname(__file__), '..', 'src', 'lib', 'transit-data.
 UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)'
 KIND = {'LRT': 'LRT', 'MRT': 'MRT', 'MRL': 'Monorail', 'BRT': 'BRT'}
 # Words kept in capitals when station names are turned from "BANDAR TASIK SELATAN" into "Bandar Tasik Selatan".
+TRANSFER_M = 400  # stations this close are one interchange (Masjid Jamek, KL Sentral); TRANSFER_M in transit.js
+R = 6371008.8  # metres, as public/geo.js
 ACRONYMS = {'KL', 'KLCC', 'LRT', 'MRT', 'KTM', 'USJ', 'SS', 'IOI', 'UKM', 'UPM', 'UIA', 'TTDI', 'PJ', 'KLIA', 'TRX',
             'MRR2', 'BRT', 'TBS', 'JB', 'SA', 'PWTC', 'MAEPS', 'PPR', 'IKEA', 'KPJ', 'UITM', 'SJMC', 'KTMB', 'AU', 'II', 'III', 'UOA'}
 
@@ -66,6 +68,13 @@ def title(name):
         else:
             out.append(w)
     return ''.join(out).replace('  ', ' ')
+
+
+def distance(a, b):
+    # Haversine, as distance() in public/geo.js. a and b are (lat, lng).
+    dlat, dlng = math.radians(b[0] - a[0]), math.radians(b[1] - a[1])
+    h = math.sin(dlat / 2) ** 2 + math.cos(math.radians(a[0])) * math.cos(math.radians(b[0])) * math.sin(dlng / 2) ** 2
+    return 2 * R * math.asin(min(1, math.sqrt(h)))
 
 
 def encode(coords, precision=5):
@@ -178,6 +187,11 @@ def main():
             data['patterns'].append(g)
         data['feeds'][feed] = {'until': max(ends) if ends else None, 'source': url}
         print(f"  {feed}: timetable runs until {data['feeds'][feed]['until']}", flush=True)
+
+    # For each station, the others close enough to change trains on foot, and how far: [[station, metres], ...].
+    # Worked out here rather than when the Worker starts, which would spend its CPU on it.
+    pts = [(s[1], s[2]) for s in data['stops']]
+    data['nearby'] = [[[j, round(distance(a, b))] for j, b in enumerate(pts) if j != i and distance(a, b) <= TRANSFER_M] for i, a in enumerate(pts)]
 
     used = {g['shape'] for g in data['patterns'] if g.get('shape')}
     data['shapes'] = {k: encode(simplify([(lng, lat) for _, lng, lat in sorted(v)])) for k, v in data['shapes'].items() if k in used}

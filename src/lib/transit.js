@@ -19,9 +19,11 @@ const TRANSFER_M = 400; // stations this close are one interchange (Masjid Jamek
 const TRANSFER_EXTRA_S = 60; // stairs, gates
 const CHANGE_PENALTY_S = 240; // a change of train is worse than its minutes alone
 const MAX_OPTIONS = 3;
-const NIGHT_WAIT_S = 45 * 60; // waiting longer than this for a train means they've stopped for the night
+const NIGHT_WAIT_S = 45 * 60; // waiting longer than this, overnight, means trains have stopped for the night
+const NIGHT_ENDS_S = 5 * 3600; // KTM Komuter can be an hour apart by day: that's a long wait, not the night
 const QUICK_WALK_S = 30 * 60; // only suggest walking instead when it's a short walk
 const MYT = 8 * 3600_000;
+const FEED_NAMES = { prasarana: 'LRT, MRT, Monorail and BRT', ktmb: 'KTM Komuter' };
 const DAY = 86400;
 
 export const walkSeconds = (m) => Math.round((m * DETOUR) / WALK_MPS);
@@ -30,11 +32,10 @@ export const walkSeconds = (m) => Math.round((m * DETOUR) / WALK_MPS);
 const stops = DATA.stops.map(([name, lat, lng, code], i) => ({ i, name, lat, lng, code, at: [lng, lat], visits: [] }));
 const patterns = DATA.patterns.map((p, k) => ({ ...p, k }));
 for (const p of patterns) p.stops.forEach((s, pos) => stops[s].visits.push([p.k, pos]));
-const nearby = stops.map((a) =>
-  stops
-    .filter((b) => b !== a && distance(a.at, b.at) <= TRANSFER_M)
-    .map((b) => ({ to: b.i, secs: walkSeconds(distance(a.at, b.at)) + TRANSFER_EXTRA_S })),
-);
+// Stations close enough to change trains on foot, worked out by the build (TRANSFER_M there too).
+const nearby = DATA.nearby.map((list) => list.map(([to, m]) => ({ to, m, secs: walkSeconds(m) + TRANSFER_EXTRA_S })));
+// Each train leg's pattern and stops, kept off the leg itself so they aren't sent: withRealWalks re-boards with them.
+const rides = new WeakMap();
 const shapes = new Map();
 const shapeOf = (id) => {
   if (!id || !DATA.shapes[id]) return null;
@@ -107,7 +108,7 @@ function search(from, to, t0, day, forbidden) {
     const here = label[s];
     // Walk across to another line's platform, but never two walks in a row.
     if (here.prev.kind === 'ride') {
-      for (const n of nearby[s]) relax(n.to, { t: here.t + n.secs, cost: here.cost + n.secs, rides: here.rides, line: here.line, prev: { kind: 'walk', from: s, m: distance(stops[s].at, stops[n.to].at) } });
+      for (const n of nearby[s]) relax(n.to, { t: here.t + n.secs, cost: here.cost + n.secs, rides: here.rides, line: here.line, prev: { kind: 'walk', from: s, m: n.m } });
     }
     for (const [k, pos] of stops[s].visits) {
       const p = patterns[k];
@@ -174,7 +175,7 @@ function toTrip(found, from, to, dayStart) {
     } else {
       const p = patterns[st.k];
       const line = DATA.lines[p.line];
-      legs.push({
+      const leg = {
         mode: 'train',
         line: { id: p.line, short: line.short, name: line.name, color: line.color, text: line.text, kind: line.kind },
         towards: p.headsign,
@@ -187,7 +188,9 @@ function toTrip(found, from, to, dayStart) {
         arrive: ms(st.t),
         duration: st.t - st.dep,
         coords: rideLine(p, st.i, st.j),
-      });
+      };
+      rides.set(leg, { p, i: st.i, j: st.j, dayStart });
+      legs.push(leg);
     }
     t = st.t;
     place = stationOf(st.s);
@@ -215,12 +218,21 @@ export function planTransit(from, to, at = Date.now()) {
   const day = serviceDay(at);
   const dayStart = at - day.secs * 1000;
   const walkAll = walkSeconds(distance(from, to));
-  const note = (msg) => ({ trips: [], walk: walkAll, note: msg });
+  // A timetable past its end date drops that operator's trains (see runs). Say so: "no trains" would read as a
+  // real answer when it's only old data.
+  const outdated = Object.entries(DATA.feeds).filter(([, f]) => f.until && day.date > f.until).map(([id]) => FEED_NAMES[id] ?? id);
+  const stale = !outdated.length
+    ? null
+    : outdated.length === Object.keys(DATA.feeds).length
+      ? 'Train timetables are out of date, so trips by train can’t be planned right now.'
+      : `${outdated.join(' and ')}${outdated.length > 1 ? ' timetables are' : '’s timetable is'} out of date, so ${outdated.length > 1 ? 'their' : 'its'} trains aren’t included.`;
+  const note = (msg) => ({ trips: [], walk: walkAll, note: [stale, msg].filter(Boolean).join(' '), ...(stale && { outdated }) });
+  if (outdated.length === Object.keys(DATA.feeds).length) return note(null);
   if (!access(from).length) return note('No train station within walking distance of the start.');
   if (!access(to).length) return note('No train station within walking distance of the destination.');
 
   const first = search(from, to, day.secs, day, new Set());
-  if (!first) return note('No trains can get you there at this time.');
+  if (!first) return note(stale ? 'No other trains can get you there at this time.' : 'No trains can get you there at this time.');
   const trips = [toTrip(first, from, to, dayStart)];
   const seen = new Set([lineKey(trips[0])]);
   for (const line of trips[0].legs.filter((l) => l.mode === 'train').map((l) => l.line.id)) {
@@ -234,9 +246,10 @@ export function planTransit(from, to, at = Date.now()) {
   trips.sort((a, b) => a.arrive - b.arrive);
   // Late at night the first trip waits for the morning's first train: say so rather than offer a long wait.
   const firstTrain = trips[0].legs.find((l) => l.mode === 'train');
-  if (firstTrain.wait > NIGHT_WAIT_S) return { trips: trips.slice(0, MAX_OPTIONS), walk: walkAll, night: true, note: 'Trains have stopped for the night.', firstTrain: firstTrain.depart };
+  const overnight = day.secs < NIGHT_ENDS_S || (firstTrain.depart - dayStart) / 1000 >= DAY;
+  if (firstTrain.wait > NIGHT_WAIT_S && overnight) return { ...note('Trains have stopped for the night.'), trips: trips.slice(0, MAX_OPTIONS), night: true, firstTrain: firstTrain.depart };
   const quickerOnFoot = walkAll <= Math.min(trips[0].duration, QUICK_WALK_S);
-  return { trips: trips.slice(0, MAX_OPTIONS), walk: walkAll, note: quickerOnFoot ? 'Walking there is about as quick.' : null };
+  return { ...note(quickerOnFoot ? 'Walking there is about as quick.' : null), trips: trips.slice(0, MAX_OPTIONS) };
 }
 
 const lineKey = (trip) => trip.legs.filter((l) => l.mode === 'train').map((l) => `${l.line.id}:${l.from.code}:${l.to.code}`).join('>');
@@ -245,26 +258,60 @@ export const feeds = DATA.feeds;
 
 // ---------- Real walks ----------
 const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
-const MAX_WALKS = 8; // walking routes asked of the router per request, at most
+// The public routing server is volunteer-run (fair use), and driving routes need it too: ask it for a few walks per
+// request, at most, and remember walks for a day (destinations are often the same places, changes always are).
+const MAX_WALKS = 3;
+const WALK_TTL_MS = 24 * 3600_000;
+const WALK_CACHE_MAX = 500;
+const walkCache = new Map(); // key -> { at, walk }, for as long as this Worker instance lives
 
 // Swaps the straight-line walks of these trips for walking routes from the router (Valhalla's pedestrian costing):
-// the path to draw, its length and time. A walk the router can't find keeps its estimate. Trip totals follow.
-export async function withRealWalks(env, plan) {
-  const walks = new Map();
+// the path to draw, its length and time. A walk not asked for, or that the router can't find, keeps its estimate.
+// Then the trips are timed again: a longer walk can miss a KTM train and need the next one.
+export async function withRealWalks(env, plan, { now = Date.now() } = {}) {
   const key = (l) => [l.from.lng, l.from.lat, l.to.lng, l.to.lat].map((v) => v.toFixed(5)).join(',');
-  for (const trip of plan.trips) for (const l of trip.legs) if (l.mode === 'walk' && l.distance > 30 && walks.size < MAX_WALKS) walks.set(key(l), null);
-  await Promise.all([...walks.keys()].map(async (k) => walks.set(k, await walkRoute(env, k.split(',').map(Number)).catch(() => null))));
+  // The most useful first: the top trip's walks to the first station and from the last, then the other trips'.
+  const order = new Set();
+  const want = (l) => l?.mode === 'walk' && l.distance > 30 && order.add(key(l));
+  for (const trip of plan.trips) [trip.legs[0], trip.legs.at(-1)].forEach(want);
+  for (const trip of plan.trips) trip.legs.forEach(want);
+  const walks = new Map();
+  const ask = [];
+  for (const k of order) {
+    const hit = walkCache.get(k);
+    if (hit && now - hit.at < WALK_TTL_MS) walks.set(k, hit.walk);
+    else if (ask.length < MAX_WALKS) ask.push(k);
+  }
+  await Promise.all(ask.map(async (k) => {
+    const walk = await walkRoute(env, k.split(',').map(Number)).catch(() => null);
+    if (!walk) return; // not kept: asked again next time
+    walks.set(k, walk);
+    walkCache.delete(k);
+    walkCache.set(k, { at: now, walk });
+    if (walkCache.size > WALK_CACHE_MAX) walkCache.delete(walkCache.keys().next().value);
+  }));
   for (const trip of plan.trips) {
-    let shift = 0; // a longer walk than estimated makes everything after it later
+    let t = trip.depart; // when each leg can start, in ms
     for (const l of trip.legs) {
-      const w = l.mode === 'walk' && walks.get(key(l));
-      if (w) {
-        shift += w.duration - l.duration;
-        Object.assign(l, w);
-      } else if (l.mode === 'train' && shift) {
-        l.depart += shift * 1000;
-        l.arrive += shift * 1000;
+      if (l.mode === 'walk') {
+        const w = walks.get(key(l));
+        if (w) Object.assign(l, structuredClone(w));
+        t += l.duration * 1000;
+        continue;
       }
+      const ride = rides.get(l);
+      const b = ride && board(ride.p, ride.i, (t - ride.dayStart) / 1000);
+      if (b) {
+        l.depart = ride.dayStart + b.dep * 1000;
+        l.arrive = ride.dayStart + b.arrive(ride.j) * 1000;
+      } else {
+        const shift = t + l.wait * 1000 - l.depart; // no train after all: keep the old wait rather than drop the trip
+        l.depart += shift;
+        l.arrive += shift;
+      }
+      l.wait = Math.round((l.depart - t) / 1000);
+      l.duration = Math.round((l.arrive - l.depart) / 1000);
+      t = l.arrive;
     }
     Object.assign(trip, summarise(trip.legs, trip.depart));
   }

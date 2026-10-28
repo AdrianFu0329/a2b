@@ -14,9 +14,15 @@ const PUNCAK_ALAM = [101.468, 3.224];
 const USJ = [101.5851, 3.0567];
 const PAVILION = [101.7136, 3.149];
 
-// A Wednesday morning a week before the rail timetable runs out, so the tests keep working after a rebuild.
-const until = feeds.prasarana.until;
-const end = Date.parse(`${until.slice(0, 4)}-${until.slice(4, 6)}-${until.slice(6)}T09:00:00+08:00`) - 7 * 86400_000;
+const RAWANG = [101.575, 3.319];
+const KLANG = [101.4495, 3.0431];
+
+// 9am on the day after a timetable's last day (YYYYMMDD), Malaysia time.
+const dayAfter = (until) => Date.parse(`${until.slice(0, 4)}-${until.slice(4, 6)}-${until.slice(6)}T09:00:00+08:00`) + 86400_000;
+// A Wednesday morning a week before the first timetable runs out, so every line runs and the tests keep working
+// after a rebuild.
+const ENDS = Object.entries(feeds).sort(([, a], [, b]) => a.until.localeCompare(b.until));
+const end = dayAfter(ENDS[0][1].until) - 8 * 86400_000;
 const WEDNESDAY_9AM = end - ((new Date(end + 8 * 3600_000).getUTCDay() + 7 - 3) % 7) * 86400_000;
 const ONE_AM = WEDNESDAY_9AM + 16 * 3600_000; // Thursday 1am
 
@@ -74,6 +80,10 @@ test('says when there are no trains: too far from a station, or late at night', 
   assert.ok(night.night);
   assert.match(night.note, /stopped for the night/);
   assert.ok(night.firstTrain > ONE_AM + 4 * 3600_000, 'the first train is in the morning');
+  // An hour between KTM trains in the morning is a long wait, not the night.
+  const hourly = planTransit([101.579, 3.319], KAJANG, WEDNESDAY_9AM);
+  assert.ok(hourly.trips[0].legs[1].wait > 45 * 60, 'the next train from Rawang is a while');
+  assert.ok(!hourly.night && !/night/.test(hourly.note ?? ''), hourly.note);
   assert.match(planTransit(KLCC, [101.7136, 3.149], WEDNESDAY_9AM).note ?? '', /walking/i, 'Pavilion is a short walk');
 });
 
@@ -123,4 +133,98 @@ test('trips are still soonest arrival first after the real walks', async () => {
   }
   assert.notEqual(plan.trips[0], first);
   assert.ok(plan.trips.every((t, i) => !i || t.arrive >= plan.trips[i - 1].arrive));
+});
+
+test('says when a timetable is out of date, instead of "no trains"', () => {
+  const [[, firstEnd], [, lastEnd]] = ENDS;
+  if (firstEnd.until < lastEnd.until) {
+    const plan = planTransit(RAWANG, KAJANG, dayAfter(firstEnd.until));
+    assert.match(plan.note, /timetable is out of date, so its trains aren’t included/);
+    assert.equal(plan.outdated.length, 1);
+    assert.match(planTransit(KL_SENTRAL, KLCC, dayAfter(firstEnd.until)).note, /out of date/, 'even when other lines get you there');
+  }
+  const plan = planTransit(KL_SENTRAL, KLCC, dayAfter(lastEnd.until));
+  assert.deepEqual(plan.trips, []);
+  assert.match(plan.note, /^Train timetables are out of date/);
+  assert.doesNotMatch(plan.note, /No trains/);
+  assert.equal(planTransit(KL_SENTRAL, KLCC, WEDNESDAY_9AM).outdated, undefined, 'not before then');
+});
+
+// A fake router: every walk is `extra(leg)` seconds longer than estimated, along a three-point path.
+function fakeRouter(plan, extra) {
+  const asked = [];
+  const walks = plan.trips.flatMap((t) => t.legs).filter((l) => l.mode === 'walk');
+  const fetch = async (url, init) => {
+    const [a, b] = JSON.parse(init.body).locations;
+    asked.push([a, b]);
+    const est = walks.find((l) => Math.abs(l.from.lat - a.lat) < 1e-5 && Math.abs(l.from.lng - a.lon) < 1e-5 && Math.abs(l.to.lat - b.lat) < 1e-5 && Math.abs(l.to.lng - b.lon) < 1e-5);
+    const more = est && extra(est);
+    if (more == null) return new Response('', { status: 500 });
+    return Response.json({ trip: { summary: { length: 0.4, time: est.duration + more }, legs: [{ shape: '_p~iF~ps|U_ulLnnqC_mqNvxq`@' }] } });
+  };
+  return { asked, fetch };
+}
+
+async function withFetch(fetch, fn) {
+  const orig = globalThis.fetch;
+  globalThis.fetch = fetch;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = orig;
+  }
+}
+
+test('asks the public router for 3 walks at most, top trip first, and remembers them for a day', async () => {
+  const now = Date.now() + 10 * 86400_000; // its own slice of the walk cache
+  const plan = planTransit(KAJANG, MID_VALLEY, WEDNESDAY_9AM);
+  const walks = plan.trips.flatMap((t) => t.legs).filter((l) => l.mode === 'walk' && l.distance > 30);
+  assert.ok(new Set(walks.map((l) => `${l.from.lat},${l.to.lat}`)).size > 3, 'more walks than that to choose from');
+  const top = plan.trips[0];
+  const router = fakeRouter(plan, () => 60);
+  await withFetch(router.fetch, () => withRealWalks({ ROUTING_URL: 'https://routing.test/route' }, plan, { now }));
+  assert.equal(router.asked.length, 3);
+  const asked = (l) => router.asked.some(([a, b]) => Math.abs(a.lat - l.from.lat) < 1e-5 && Math.abs(b.lat - l.to.lat) < 1e-5);
+  assert.ok(asked(top.legs[0]) && asked(top.legs.at(-1)), 'the top trip’s first and last walks');
+
+  // The same trip again: those three come from memory, and three more are asked for.
+  const again = planTransit(KAJANG, MID_VALLEY, WEDNESDAY_9AM);
+  const second = fakeRouter(again, () => 60);
+  await withFetch(second.fetch, () => withRealWalks({ ROUTING_URL: 'https://routing.test/route' }, again, { now: now + 3600_000 }));
+  assert.ok(second.asked.length <= 3 && !second.asked.some(([a, b]) => router.asked.some(([c, d]) => a.lat === c.lat && b.lat === d.lat)));
+  assert.equal(again.trips.find((t) => t.legs[0].from.lat === top.legs[0].from.lat).legs[0].coords.length, 3, 'a remembered walk is still drawn');
+
+  // A day later they're asked for again.
+  const later = planTransit(KAJANG, MID_VALLEY, WEDNESDAY_9AM);
+  const third = fakeRouter(later, () => 60);
+  await withFetch(third.fetch, () => withRealWalks({ ROUTING_URL: 'https://routing.test/route' }, later, { now: now + 25 * 3600_000 }));
+  assert.equal(third.asked.length, 3);
+  assert.ok(third.asked.some(([a, b]) => Math.abs(a.lat - top.legs[0].from.lat) < 1e-5 && Math.abs(b.lat - top.legs[0].to.lat) < 1e-5));
+});
+
+test('a longer walk than estimated catches the next KTM train, not a train that has already gone', async () => {
+  const station = [101.575012, 3.318955]; // Rawang
+  const start = [station[0] + 0.004, station[1]]; // ~450 m away
+  const plan = planTransit(start, KAJANG, WEDNESDAY_9AM);
+  const trip = plan.trips[0];
+  const ktm = trip.legs[1];
+  assert.equal(ktm.line.kind, 'KTM Komuter');
+  assert.equal(ktm.every, null, 'a timetabled line');
+  const missed = ktm.depart; // the leg is updated in place
+  const missedBy = ktm.wait + 120; // reaches the platform two minutes after that train leaves
+  const router = fakeRouter(plan, (l) => (l === trip.legs[0] ? missedBy : null));
+  await withFetch(router.fetch, () => withRealWalks({ ROUTING_URL: 'https://routing.test/route' }, plan, { now: Date.now() + 40 * 86400_000 }));
+  const after = plan.trips.find((t) => t.legs[1].line?.id === ktm.line.id) ?? plan.trips[0];
+  const reach = after.depart + after.legs[0].duration * 1000;
+  const next = planTransit(station, KAJANG, reach).trips[0].legs.find((l) => l.mode === 'train');
+  assert.equal(after.legs[1].depart, next.depart, 'the next train from Rawang after reaching it');
+  assert.ok(after.legs[1].depart > missed, 'not the train that left before');
+  assert.equal(after.legs[1].wait, (after.legs[1].depart - reach) / 1000);
+  assert.equal(after.arrive - after.depart, after.duration * 1000);
+});
+
+test('trips by train are counted with routes', async () => {
+  const src = await import('node:fs/promises').then((fs) => fs.readFile(new URL('../src/worker.js', import.meta.url), 'utf8'));
+  const route = src.slice(src.indexOf("path === '/api/transit'"), src.indexOf("path === '/api/route'"));
+  assert.match(route, /count\('routes'\)/);
 });

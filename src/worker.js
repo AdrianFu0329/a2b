@@ -395,7 +395,9 @@ async function route(request, env, url) {
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('A trip needs a start and a destination.', 400);
     const at = Number.isFinite(body.at) && Math.abs(body.at - Date.now()) < 7 * 86400_000 ? body.at : Date.now();
-    return json(await withRealWalks(env, planTransit(from, to, at)));
+    const plan = await withRealWalks(env, planTransit(from, to, at));
+    await count('routes'); // with driving and walking routes
+    return json(plan);
   }
 
   if (path === '/api/route' && method === 'POST') {
