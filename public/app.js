@@ -58,7 +58,9 @@ let themeNow = null;
 
 // Preview / drive state
 let dest = null;
-let travel = ['walk', 'transit'].includes(local.get('travel')) ? local.get('travel') : 'drive'; // how to get there, remembered for next time
+// How to get there: 'drive' | 'walk' | 'transit'. Not remembered: every trip starts on Drive, so someone who walked once
+// isn't given footpaths (no cameras, alerts or tolls) next time they're in the car. See resetTravel.
+let travel = 'drive';
 let stops = []; // places to visit on the way, in order, not yet reached
 let routes = [];
 let selected = 0;
@@ -750,7 +752,7 @@ function estSpeed(prev, lngLat, t) {
 function handleFix(fix, first = false) {
   state.pos = fix;
   // Traffic sharing only buffers real drives: walking, browsing the map, and demo drives never become traffic.
-  if (mode === 'drive' && !sim) noteProbeFix(fix);
+  if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix); // walking speeds would look like a jam
   local.set('lastPos', fix.lngLat.map((v) => Math.round(v * 1e4) / 1e4));
   if (mode === 'watch') return; // the viewer's own position isn't part of someone else's drive
   if (!carMarker._map) carMarker.setLngLat(fix.lngLat).addTo(map);
@@ -935,7 +937,6 @@ function wireUi() {
     b.onclick = () => {
       if (b.dataset.travel === travel || !dest) return;
       travel = b.dataset.travel;
-      local.set('travel', travel);
       openPreview(dest);
     };
   }
@@ -1540,6 +1541,7 @@ const autoGo = (() => {
   };
   const blocked = () => !canAutoStartRoute({
     mode,
+    travel,
     routeAvailable: Boolean(routes[selected]),
     hasLocation: Boolean(state.pos),
     buttonDisabled: go().disabled,
@@ -1573,9 +1575,15 @@ function selectRoute(i) {
   autoGo.restart();
 }
 
+// Back to Drive when the preview closes or the trip ends (see travel).
+function resetTravel() {
+  travel = 'drive';
+}
+
 function backToBrowse() {
   autoGo.stop();
   mode = 'browse';
+  resetTravel();
   transit = null;
   drawTransit();
   schedulePois();
@@ -2067,6 +2075,7 @@ async function endDrive(arrived) {
   if (!arrived) backToBrowse();
   else {
     mode = 'browse';
+    resetTravel();
     $('drive-ui').classList.add('hidden');
     document.body.classList.remove('driving', 'walking');
     drawRoutes();
