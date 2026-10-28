@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
 
 import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
-import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
+import { distance, bearing, cumulative, encodePolyline, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { canAutoStartRoute } from './route-preview.js';
 import { Glide } from './motion.js';
@@ -23,7 +23,7 @@ import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
 import { matchesWordStarts } from './text.js';
-import { shouldCheck as shouldCheckFaster, pickFaster, offerText, OFFER_FOR_MS, KEEP_FOR_MS } from './faster-route.js';
+import { shouldCheck as shouldCheckFaster, pickFaster, offerText, checkBody, OFFER_FOR_MS, KEEP_FOR_MS } from './faster-route.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -1388,12 +1388,14 @@ function routeNote(rs) {
   return '';
 }
 
-async function requestRoutes(from, to, heading, via = []) {
+// `check`: a faster-route check's checkBody (faster-route.js), so the server can skip what an unwanted answer needs.
+async function requestRoutes(from, to, heading, via = [], { check = null } = {}) {
   const s = state.settings;
   const { routes: rs, closures_ignored: closuresIgnored, construction_avoided: constructionAvoided } = await api('/api/route', {
     method: 'POST',
     body: {
       from, to, heading, travel,
+      ...(check && { check }),
       via: via.map((p) => [p.lng, p.lat]),
       units: s.units,
       lang: navigator.language || 'en-US',
@@ -1934,9 +1936,10 @@ async function checkFaster({ force = false } = {}) {
   faster.checks++;
   const route = nav.route, from = live.snapped, heading = state.pos?.heading ?? undefined;
   try {
-    const rs = await requestRoutes(from, [dest.lng, dest.lat], heading, stops);
-    if (mode !== 'drive' || nav?.route !== route || !live) return; // rerouted or ended meanwhile
     const rest = nav.coords.slice(Math.max(0, nav.seg - 1));
+    const check = checkBody(rest, live.remainingTime, encodePolyline);
+    const rs = await requestRoutes(from, [dest.lng, dest.lat], heading, stops, { check });
+    if (mode !== 'drive' || nav?.route !== route || !live) return; // rerouted or ended meanwhile
     const pick = pickFaster(rs, { leftTime: live.remainingTime, rest, now: Date.now(), kept: faster.kept });
     if (pick) showFaster(pick);
   } catch {

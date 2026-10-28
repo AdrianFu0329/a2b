@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { shouldCheck, routeTime, overlap, pickFaster, offerText, MAX_CHECKS, KEEP_FOR_MS } from '../public/faster-route.js';
+import { shouldCheck, routeTime, overlap, pickFaster, offerText, simplify, checkBody, worthOffering, MAX_CHECKS, KEEP_FOR_MS, MAX_REST_CHARS } from '../public/faster-route.js';
+import { encodePolyline, decodePolyline } from '../public/geo.js';
 
 const T0 = Date.parse('2026-11-04T08:00:00+08:00');
 const MIN = 60_000;
@@ -90,4 +91,27 @@ test('the drive checks, offers on a card with Switch and Keep, and adopts the ro
   assert.match(body('endDrive'), /resetFaster\(\)/);
   const sw = await readFile(new URL('../public/sw.js', import.meta.url), 'utf8');
   assert.match(sw, /'\/faster-route\.js'/);
+});
+
+test('a check sends the rest of the route simplified, and the time left', () => {
+  // 20 km: straight north with a point every 10 m, then a right-angle turn east.
+  const north = Array.from({ length: 1001 }, (_, i) => [101.6, 3.0 + i * 0.00009]);
+  const east = Array.from({ length: 1000 }, (_, i) => [101.6 + (i + 1) * 0.00009, north.at(-1)[1]]);
+  const rest = [...north, ...east];
+  const kept = simplify(rest, 10);
+  assert.deepEqual(kept, [rest[0], north.at(-1), rest.at(-1)], 'only the ends and the corner');
+  const body = checkBody(rest, 1234.4, encodePolyline);
+  assert.equal(body.left, 1234);
+  assert.ok(overlap(decodePolyline(body.rest, 5), rest) > 0.99 && overlap(rest, decodePolyline(body.rest, 5)) > 0.99, 'the same road');
+  // A wiggle every point can't be simplified: too big to send, so it's an ordinary request.
+  const zigzag = Array.from({ length: 20_000 }, (_, i) => [101.6 + i * 0.0003, 3.0 + (i % 2) * 0.0005]);
+  assert.ok(encodePolyline(simplify(zigzag), 5).length > MAX_REST_CHARS);
+  assert.equal(checkBody(zigzag, 600, encodePolyline), null);
+});
+
+test('worth offering: at least 5 minutes and a tenth quicker', () => {
+  assert.equal(worthOffering(1500, 1800), true);
+  assert.equal(worthOffering(1560, 1800), false, '4 minutes');
+  assert.equal(worthOffering(6700, 7200), false, '8 minutes of 2 hours is under a tenth');
+  assert.equal(worthOffering(6400, 7200), true);
 });

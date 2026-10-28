@@ -17,6 +17,8 @@ import { reportsRepo } from './lib/reports.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
 import { planTransit, withRealWalks } from './lib/transit.js';
+import { decodePolyline } from '../public/geo.js';
+import { overlap, routeTime, worthOffering, MAX_OVERLAP, MAX_REST_CHARS } from '../public/faster-route.js';
 
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
@@ -431,6 +433,61 @@ async function route(request, env, url) {
     }
     let { routes } = first;
     const closuresIgnored = first.dropped;
+    // The extras on a route, each a nice-to-have: a slow or failing lookup never holds up the route.
+    // Speed limits and toll plazas, from Valhalla's trace_attributes.
+    const attributes = async (r) => {
+      const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
+      r.limits = a?.limits ?? null;
+      r.tolls = (a?.tolls ?? []).map((at) => ({ at }));
+    };
+    // Live traffic, when TomTom is set up: the route's time with today's traffic, and where the jams are.
+    const traffic = async (r) => {
+      if (!env.TOMTOM_KEY) return;
+      const [, t] = await Promise.all([count('tomtom'), liveTraffic(env, r).catch(() => null)]);
+      applyTraffic(r, t);
+    };
+    // Fixed speed cameras on each route, from the built list.
+    const cameras = (rs) => loadCameras(env.ASSETS).catch(() => []).then((cams) => rs.forEach((r) => (r.cameras = camerasAlong(r.coords, cams))));
+    const plazas = async (rs) => {
+      const list = rs.flatMap((r) => r.tolls.map((t) => [t, r.coords[t.at]]));
+      const details = await plazaDetails(db, list.map(([, p]) => p)).catch(() => []);
+      list.forEach(([t], i) => Object.assign(t, details[i] ?? {}));
+    };
+    // Congested blocks from opted-in drivers (a slow lookup never holds up the route), and road reports.
+    const reportsAndProbes = async (rs, area) => {
+      const [live, probeSegs] = await Promise.all([reports.inBox(area, user?.id), probesRepo(db).congested(area).catch(() => [])]);
+      return () => {
+        annotateWithReports(rs, live);
+        annotateWithProbes(rs, probeSegs, area);
+      };
+    };
+
+    // A drive checking for a faster way (public/faster-route.js) sends what's left of its route and its time. Most
+    // checks find only the way it's already going, so they end after the one routing request; traffic is looked up
+    // only when some route is really another way, and speed limits, tolls and cameras only for one worth offering.
+    const check = fasterCheck(body.check);
+    if (check) {
+      const twins = await constructionTwins(env.ASSETS, routes).catch(() => routes.map(() => []));
+      // Another way along a road probably still being built is never offered.
+      const ways = routes.map((r, i) => ({ r, same: overlap(r.coords, check.rest) >= MAX_OVERLAP, building: twins[i]?.length > 0 }));
+      routes = ways.filter((w) => w.same || !w.building).map((w) => w.r);
+      const other = ways.filter((w) => !w.same && !w.building).map((w) => w.r);
+      if (!other.length) {
+        await count('routes');
+        return json({ routes: [], closures_avoided: 0, closures_ignored: closuresIgnored, construction_avoided: 0 });
+      }
+      const area = routeReportBox(routes, [from, to]);
+      const [annotate] = await Promise.all([reportsAndProbes(routes, area), ...routes.map(traffic)]);
+      annotate();
+      const offer = other.filter((r) => worthOffering(routeTime(r), check.left));
+      await Promise.all([...offer.map(attributes), cameras(offer)]);
+      await plazas(offer);
+      for (const r of routes) delete r.shapes;
+      routes.sort((a, b) => a.duration - b.duration);
+      await count('routes');
+      return json({ routes, closures_avoided: closuresIgnored ? 0 : exclude.length, closures_ignored: closuresIgnored, construction_avoided: 0 });
+    }
+
     // A route along a road that's probably still being built (see construction.js): ask again around it, and
     // take the new routes unless they're a lot slower. Kept routes that still use one carry a warning.
     let constructionAvoided = 0;
@@ -449,33 +506,10 @@ async function route(request, env, url) {
       if (twins[i]?.length) r.warning = 'construction';
     });
     const routeArea = routeReportBox(routes, [from, to]);
-    const [live, probeSegs] = await Promise.all([
-      reports.inBox(routeArea, user?.id),
-      // Congested blocks from opted-in drivers; a slow lookup never holds up the route.
-      probesRepo(db).congested(routeArea).catch(() => []),
-      // Speed limits and toll plazas are nice-to-haves: a slow or failing lookup never holds up the route.
-      ...routes.map(async (r) => {
-        const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
-        r.limits = a?.limits ?? null;
-        r.tolls = (a?.tolls ?? []).map((at) => ({ at }));
-      }),
-      // Live traffic, when TomTom is set up: the route's time with today's traffic, and where the jams are.
-      ...routes.map(async (r) => {
-        if (!env.TOMTOM_KEY) return;
-        const [, traffic] = await Promise.all([count('tomtom'), liveTraffic(env, r).catch(() => null)]);
-        applyTraffic(r, traffic);
-      }),
-      // Fixed speed cameras on each route, from the built list.
-      loadCameras(env.ASSETS)
-        .catch(() => [])
-        .then((cams) => routes.forEach((r) => (r.cameras = camerasAlong(r.coords, cams)))),
-    ]);
+    const [annotate] = await Promise.all([reportsAndProbes(routes, routeArea), ...routes.map(attributes), ...routes.map(traffic), cameras(routes)]);
     for (const r of routes) delete r.shapes;
-    const plazas = routes.flatMap((r) => r.tolls.map((t) => [t, r.coords[t.at]]));
-    const details = await plazaDetails(db, plazas.map(([, p]) => p)).catch(() => []);
-    plazas.forEach(([t], i) => Object.assign(t, details[i] ?? {}));
-    annotateWithReports(routes, live);
-    annotateWithProbes(routes, probeSegs, routeArea);
+    await plazas(routes);
+    annotate();
     routes.sort((a, b) => a.duration - b.duration);
     await count('routes');
     return json({ routes, closures_avoided: closuresIgnored ? 0 : exclude.length, closures_ignored: closuresIgnored, construction_avoided: constructionAvoided });
@@ -648,6 +682,20 @@ function cleanPlace(p) {
   const lat = Number(p.lat), lng = Number(p.lng);
   if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) throw httpError('Place needs a valid location.', 400);
   return { name: String(p.name ?? 'Place').trim().slice(0, 80) || 'Place', address: String(p.address ?? '').trim().slice(0, 200), lat, lng };
+}
+
+// A faster-route check's { rest, left } (public/faster-route.js checkBody): the rest of the route, at least two points,
+// and the seconds left. Anything else is an ordinary route request.
+function fasterCheck(v) {
+  if (!v || typeof v.rest !== 'string' || v.rest.length > MAX_REST_CHARS || !(Number(v.left) > 0)) return null;
+  let rest;
+  try {
+    rest = decodePolyline(v.rest, 5);
+  } catch {
+    return null;
+  }
+  if (rest.length < 2 || rest.some(([x, y]) => !(Math.abs(x) <= 180 && Math.abs(y) <= 90))) return null;
+  return { rest, left: Number(v.left) };
 }
 
 function lngLat(v) {

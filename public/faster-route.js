@@ -5,6 +5,8 @@
 // clearly better: at least 5 minutes and 10% quicker than what's left of yours, and really another way, not the
 // same roads. The routing server is volunteer-run, so checks are few: the first after 2 minutes, then every 4, at
 // most 8 a drive, and only with a fair way still to go. app.js asks and shows the offer; the rules live here.
+// A check sends what's left of the route and its time (checkBody), so the server can answer "nothing faster" after one
+// routing request: no traffic lookups or speed limits unless a route is really another way and could be offered.
 
 import { distance } from './geo.js';
 
@@ -45,8 +47,12 @@ export function overlap(a, b) {
   const grid = new Map();
   const cell = (x, y) => `${Math.floor(x / CELL_DEG)}:${Math.floor(y / CELL_DEG)}`;
   for (let i = 0; i < b.length - 1; i++) {
-    // A segment is filed under the cells of both ends (they're short; long ones also under their middle).
-    const keys = new Set([cell(...b[i]), cell(...b[i + 1]), cell((b[i][0] + b[i + 1][0]) / 2, (b[i][1] + b[i + 1][1]) / 2)]);
+    // A segment is filed under every cell it passes through, sampled every half cell (a simplified line, as a check
+    // sends, has straights kilometres long), so a point near it is always in a cell next to one it's filed under.
+    const [x0, y0] = b[i], [x1, y1] = b[i + 1];
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) / (CELL_DEG / 2)));
+    const keys = new Set();
+    for (let k = 0; k <= n; k++) keys.add(cell(x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n));
     for (const k of keys) {
       if (!grid.has(k)) grid.set(k, []);
       grid.get(k).push(i);
@@ -93,10 +99,45 @@ export function pickFaster(routes, { leftTime, rest, now = Date.now(), kept = []
   }
   if (!best) return null;
   const saves = leftTime - best.time;
-  if (saves < MIN_SAVE_S || saves < leftTime * MIN_SAVE_SHARE) return null;
+  if (!worthOffering(best.time, leftTime)) return null;
   if (overlap(best.route.coords, rest) >= MAX_OVERLAP) return null;
   if (kept.some((k) => k.until > now && overlap(best.route.coords, k.coords) >= MAX_OVERLAP)) return null;
   return { route: best.route, saves: Math.round(saves) };
+}
+
+// Whether a route taking `time` seconds is enough quicker than the `leftTime` the ETA says to offer.
+export function worthOffering(time, leftTime) {
+  const saves = leftTime - time;
+  return saves >= MIN_SAVE_S && saves >= leftTime * MIN_SAVE_SHARE;
+}
+
+// A line with the points that change its shape by less than `tolM` metres dropped (Douglas-Peucker).
+export function simplify(coords, tolM = 10) {
+  if (coords.length < 3) return coords.slice();
+  const keep = new Uint8Array(coords.length);
+  keep[0] = keep[coords.length - 1] = 1;
+  const stack = [[0, coords.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    let far = 0, at = -1;
+    for (let i = a + 1; i < b; i++) {
+      const d = toSegment(coords[i], coords[a], coords[b]);
+      if (d > far) (far = d), (at = i);
+    }
+    if (at >= 0 && far > tolM) {
+      keep[at] = 1;
+      stack.push([a, at], [at, b]);
+    }
+  }
+  return coords.filter((_, i) => keep[i]);
+}
+
+// What a check sends with its routing request: what's left of the route, simplified (a long drive's thousands of
+// points, ~1 m precision), and the seconds the ETA says are left. Null when it would still be too big to send.
+export const MAX_REST_CHARS = 40_000;
+export function checkBody(rest, leftTime, encode) {
+  const line = encode(simplify(rest, 10), 5);
+  return line.length > MAX_REST_CHARS ? null : { rest: line, left: Math.round(leftTime) };
 }
 
 // "Save 8 min via Jalan Tun Razak" and what to say.
