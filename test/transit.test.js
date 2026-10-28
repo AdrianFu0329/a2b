@@ -103,3 +103,24 @@ test('walks become real walking routes, and the trip times follow', async () => 
   assert.equal(plan.trips[0].duration, before + walks * 120);
   assert.equal(trains(plan.trips[0])[0].depart - plan.trips[0].depart, (firstWalk.duration + trains(plan.trips[0])[0].wait) * 1000, 'the train is caught after the longer walk');
 });
+
+test('trips are still soonest arrival first after the real walks', async () => {
+  const plan = planTransit(USJ, PAVILION, WEDNESDAY_9AM);
+  const first = plan.trips[0];
+  const lastWalk = first.legs.at(-1);
+  assert.ok(plan.trips.slice(1).some((t) => t.legs.at(-1).from.name !== lastWalk.from.name), 'another trip ends at a different station');
+  const orig = globalThis.fetch;
+  // The first trip's walk from its last station turns out to be an hour: it should drop behind the others.
+  globalThis.fetch = async (url, init) => {
+    const [a] = JSON.parse(init.body).locations;
+    if (Math.abs(a.lat - lastWalk.from.lat) > 1e-5 || Math.abs(a.lon - lastWalk.from.lng) > 1e-5) return new Response('', { status: 500 });
+    return Response.json({ trip: { summary: { length: 4, time: 3600 }, legs: [{ shape: '_p~iF~ps|U_ulLnnqC_mqNvxq`@' }] } });
+  };
+  try {
+    await withRealWalks({ ROUTING_URL: 'https://routing.test/route' }, plan);
+  } finally {
+    globalThis.fetch = orig;
+  }
+  assert.notEqual(plan.trips[0], first);
+  assert.ok(plan.trips.every((t, i) => !i || t.arrive >= plan.trips[i - 1].arrive));
+});

@@ -268,6 +268,7 @@ export async function withRealWalks(env, plan) {
     }
     Object.assign(trip, summarise(trip.legs, trip.depart));
   }
+  plan.trips.sort((a, b) => a.arrive - b.arrive); // the real walks can change which arrives first
   return plan;
 }
 
