@@ -118,7 +118,7 @@ test('GPS that comes back puts the estimate right', () => {
 
 test('which marker shows where you are', () => {
   assert.equal(markerFor({ mode: 'ride', legMode: 'train', vehicle: 'car' }), 'train');
-  assert.equal(markerFor({ mode: 'ride', legMode: 'walk', vehicle: 'car' }), 'walker');
+  assert.equal(markerFor({ mode: 'ride', legMode: 'walk', vehicle: 'car' }), 'chevron', 'on foot: which way you face');
   assert.equal(markerFor({ mode: 'drive', legMode: null, vehicle: 'car' }), 'car');
   assert.equal(markerFor({ mode: 'browse', legMode: null, vehicle: 'chevron' }), 'chevron');
   assert.equal(markerFor({ mode: 'drive', legMode: null, vehicle: undefined }), 'chevron', 'the chevron by default, as on main');

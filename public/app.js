@@ -1510,7 +1510,7 @@ function renderRide(view) {
       ? `<li class="walk">${esc(sentence(walkText(l)))}</li>`
       : `<li style="--dot:${esc(l.line.color)}">${esc(l.line.name)} to ${esc(l.to.name)}</li>`)).join('');
   }
-  // Where you are: a train on the track, or a walking dot.
+  // Where you are: a train on the track, or on foot the chevron, turned the way you're going.
   const kind = markerFor({ mode, legMode: view.kind === 'ride' ? 'train' : 'walk' });
   const at = view.kind === 'walk' ? view.pos ?? state.pos?.lngLat : view.pos;
   const node = riderMarker.getElement();
@@ -1520,15 +1520,17 @@ function renderRide(view) {
   if (want ? vehicleShown !== want : vehicleShown?.startsWith('train:')) setupVehicle();
   const flatTrain = kind === 'train' && !vehicle3d;
   node.classList.toggle('train', flatTrain); // classList, not className: MapLibre keeps its own classes on it
-  node.classList.toggle('walker', kind === 'walker');
+  node.classList.toggle('walker', kind === 'chevron');
   node.style.setProperty('--rider', leg.line?.color ?? '#1c7ed6');
-  node.style.color = leg.line?.text ?? '#fff';
-  node.innerHTML = flatTrain ? TRAIN_ICON : '';
+  node.style.color = kind === 'chevron' ? 'var(--car)' : leg.line?.text ?? '#fff'; // the chevron in your colour
+  node.innerHTML = flatTrain ? TRAIN_ICON : kind === 'chevron' ? CAR : '';
+  if (kind === 'chevron') node.style.setProperty('--car', local.get('vehicleColor', DEFAULT_COLOR)); // your colour, as when driving
   if (vehicle3d) map.triggerRepaint();
   if (!at) return;
   if (kind === 'train' && vehicle3d) riderMarker.remove();
   else {
-    riderMarker.setLngLat(at).setRotation(kind === 'train' ? view.heading ?? 0 : 0);
+    const facing = kind === 'chevron' ? state.pos?.heading ?? view.heading ?? 0 : view.heading ?? 0;
+    riderMarker.setLngLat(at).setRotation(facing);
     if (!riderMarker._map) riderMarker.addTo(map);
   }
   if (follow && !userMoving && !touching) {
