@@ -23,6 +23,7 @@ import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
 import { matchesWordStarts } from './text.js';
+import { mapPlace } from './map-places.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -404,7 +405,6 @@ const POI_STYLE = { fuel: { color: '#e8590c' }, hospital: { color: '#e03131' }, 
 const BASE_PLACE_LAYERS = new Set(['poi', 'aerodrome_label']); // the base map's own labelled places
 const TAP_SLOP = 12; // px around a tap, for fingertips
 let basePlaceLayers = []; // this style's layers drawing those, found when it loads
-const KIND_NAMES = { rail: 'Train station', railway: 'Train station', bus: 'Bus stop', bus_station: 'Bus station', bus_stop: 'Bus stop', subway: 'Station', light_rail: 'LRT station', monorail: 'Monorail station', halt: 'Train station', aerodrome: 'Airport', airport: 'Airport' };
 
 // The place drawn under a point on the screen, A2B's own first, or null.
 function placeAt(point) {
@@ -412,11 +412,12 @@ function placeAt(point) {
   const box = [[point.x - TAP_SLOP, point.y - TAP_SLOP], [point.x + TAP_SLOP, point.y + TAP_SLOP]];
   const ours = map.getLayer('pois') && map.queryRenderedFeatures(box, { layers: ['pois'] })[0];
   if (ours) return { name: ours.properties.name, address: ours.properties.address, lng: ours.geometry.coordinates[0], lat: ours.geometry.coordinates[1] };
-  const f = basePlaceLayers.length && map.queryRenderedFeatures(box, { layers: basePlaceLayers }).find((x) => x.geometry.type === 'Point' && (x.properties['name:latin'] || x.properties.name));
-  if (!f) return null;
-  const p = f.properties;
-  const kind = KIND_NAMES[p.subclass] ?? KIND_NAMES[p.class] ?? String(p.subclass || p.class || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
-  return { name: p['name:latin'] || p.name, address: kind, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] };
+  // Stops, stations and car parks count even unnamed (many bus stops and "P" signs are): see map-places.js.
+  for (const f of basePlaceLayers.length ? map.queryRenderedFeatures(box, { layers: basePlaceLayers }) : []) {
+    const place = f.geometry.type === 'Point' && mapPlace(f.properties);
+    if (place) return { ...place, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] };
+  }
+  return null;
 }
 
 function tapPlaceOnMap(e) {
