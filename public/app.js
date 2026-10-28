@@ -9,7 +9,7 @@ import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
 import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES } from './places.js';
-import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
+import { start as startVehicle, DEFAULT_COLOR, vehicleFor } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
@@ -351,8 +351,11 @@ function addMapLayers() {
 
 // The car as a 3D model (Settings › Vehicle). The flat arrow marker keeps the position either way and shows
 // instead when 3D can't start (no WebGL, three.js didn't load).
+// The model matches how you're going: a motorbike while riding in Motorbike mode (see vehicleFor).
+let vehicleKind = null;
 async function setupVehicle() {
-  const kind = local.get('vehicle', 'chevron');
+  const kind = vehicleFor(mode === 'drive' ? travel : null, local.get('vehicle', 'chevron'));
+  vehicleKind = kind;
   vehicle3d = await startVehicle(map, kind, local.get('vehicleColor', DEFAULT_COLOR), () => (mode === 'watch' || !carMarker._map ? null : shown));
   carMarker.getElement().classList.toggle('as-3d', vehicle3d);
   map.triggerRepaint();
@@ -1580,6 +1583,7 @@ function selectRoute(i) {
 // Back to Drive when the preview closes or the trip ends (see travel).
 function resetTravel() {
   travel = 'drive';
+  if (vehicleKind === 'motorbike') setupVehicle(); // back to your usual vehicle
 }
 
 function backToBrowse() {
@@ -1692,6 +1696,7 @@ function startDrive() {
   $('drive-ui').classList.remove('hidden');
   tripSheet.set(false);
   $('alert').classList.add('hidden');
+  if (vehicleKind !== vehicleFor(travel, local.get('vehicle', 'chevron'))) setupVehicle(); // a motorbike while riding
   document.body.classList.add('driving');
   document.body.classList.toggle('walking', travel === 'walk');
   armBack();

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
 
-// The car on the map as a real 3D model (a chevron or a small car), drawn into the map with three.js through a
+// The car on the map as a real 3D model (a chevron, a small car, or a motorbike in Motorbike mode), drawn into the map with three.js through a
 // MapLibre custom layer, so it sits on the road in the map's own perspective. three.js is loaded on first use;
 // if it can't load or WebGL refuses, start() resolves false and the app keeps its flat arrow.
 
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const SIZE_PX = { chevron: 44, car: 48 }; // on-screen length, whatever the zoom
+const SIZE_PX = { chevron: 44, car: 48, motorbike: 58 }; // on-screen length, whatever the zoom
 export const VEHICLES = [['chevron', 'Chevron'], ['car', 'Car']];
 // Paint colours to choose from in Settings; the first, a brighter take on the app's plum, is the default.
 export const COLORS = [
@@ -14,6 +14,11 @@ export const COLORS = [
   ['#e5383b', 'Red'], ['#f5c400', 'Yellow'], ['#f4f4f6', 'White'], ['#2b2b31', 'Black'],
 ];
 export const DEFAULT_COLOR = COLORS[0][0];
+
+// The model to draw: a motorbike while riding in Motorbike mode, otherwise the one chosen in Settings.
+export function vehicleFor(travel, chosen) {
+  return travel === 'motorcycle' ? 'motorbike' : chosen === 'car' ? 'car' : 'chevron';
+}
 
 let THREE = null;
 let loading = null;
@@ -31,7 +36,7 @@ export async function start(map, kind, color, pose) {
   scene.add(new THREE.HemisphereLight('#ffffff', '#6b5a64', 1.6));
   const sun = new THREE.DirectionalLight('#ffffff', 2.2);
   sun.position.set(-0.6, 1.2, -0.4);
-  scene.add(sun, kind === 'car' ? car(color) : chevron(color), contactShadow(kind));
+  scene.add(sun, kind === 'car' ? car(color) : kind === 'motorbike' ? motorbike(color) : chevron(color), contactShadow(kind));
   const camera = new THREE.Camera();
   const rotateUp = new THREE.Matrix4().makeRotationX(Math.PI / 2);
   let renderer = null;
@@ -157,6 +162,37 @@ function car(color) {
   return g;
 }
 
+// A motorbike and its rider, drawn a little larger than the car so it reads at a glance: two wheels in line, the bodywork in the
+// chosen colour, a dark seat, handlebars, a headlight and tail light, and a rider with a white helmet.
+function motorbike(color) {
+  const g = new THREE.Group();
+  const paint = material(color, { roughness: 0.28, metalness: 0.3 });
+  const dark = material('#18181b', { roughness: 0.9 });
+  const wheel = new THREE.CylinderGeometry(0.16, 0.16, 0.08, 24);
+  wheel.rotateZ(Math.PI / 2);
+  for (const z of [-0.36, 0.36]) {
+    const w = new THREE.Mesh(wheel, dark);
+    w.position.set(0, 0.16, z);
+    g.add(w);
+  }
+  const body = new THREE.Mesh(slab(roundedRect(0.2, 0.7, 0.08), 0.14, 0.03), paint);
+  body.position.set(0, 0.22, 0);
+  const seat = new THREE.Mesh(slab(roundedRect(0.18, 0.3, 0.07), 0.05, 0.02), dark);
+  seat.position.set(0, 0.36, 0.12);
+  const bars = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.035, 0.035), dark);
+  bars.position.set(0, 0.44, -0.24);
+  const torso = new THREE.Mesh(slab(roundedRect(0.24, 0.16, 0.06), 0.24, 0.03), material('#2b2b31', { roughness: 0.7 }));
+  torso.position.set(0, 0.42, 0.06);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.1, 20, 14), material('#ffffff', { roughness: 0.3, emissive: '#ffffff', emissiveIntensity: 0.2 }));
+  helmet.position.set(0, 0.74, 0.02);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.05, 0.02), material('#fff6c8', { emissive: '#fff1a8', emissiveIntensity: 0.7 }));
+  head.position.set(0, 0.3, -0.43);
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.02), material('#ff3b47', { emissive: '#c4121d', emissiveIntensity: 0.7 }));
+  tail.position.set(0, 0.3, 0.42);
+  g.add(body, seat, bars, torso, helmet, head, tail);
+  return g;
+}
+
 // A soft dark patch under the model, so it looks grounded.
 function contactShadow(kind) {
   const c = document.createElement('canvas');
@@ -167,7 +203,7 @@ function contactShadow(kind) {
   r.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = r;
   g.fillRect(0, 0, 128, 128);
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(1.25, kind === 'car' ? 1.5 : 1.25), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(kind === 'motorbike' ? 0.7 : 1.25, kind === 'car' || kind === 'motorbike' ? 1.5 : 1.25), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
   m.rotation.x = -Math.PI / 2;
   m.position.y = 0.005;
   return m;
