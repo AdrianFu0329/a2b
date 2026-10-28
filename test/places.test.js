@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filesForWord, searchNearby, mergeResults } from '../public/places.js';
+import { filesForWord, searchNearby, mergeResults, typeQuery, placesOfType } from '../public/places.js';
 import { matchesWordStarts, normalizeText } from '../public/text.js';
 
 const ECO = [101.468, 3.224]; // Eco Grandeur, Puncak Alam
@@ -11,10 +11,17 @@ const ECO = [101.468, 3.224]; // Eco Grandeur, Puncak Alam
 // A tiny fake /places/ tree: one area (0.5° grid, row 6, col 202) with an "nan" file and an "st" file.
 const FILES = {
   '/places/index.json': { release: 'test', area: 0.5, areas: ['6_202'] },
-  '/places/6_202/files.json?v=test': { n: 1, nan: 2, st: 1, _: 1 },
+  '/places/6_202/files.json?v=test': { n: 1, nan: 2, st: 1, _: 1, '@fuel': 4 },
   '/places/6_202/nan.json?v=test': { p: [["Nando's", 101.45526, 3.2271, 'Lot 30, Ruang Niaga Eco Grandeur, Puncak Alam', 'restaurant'], ["Nando's", 101.518, 3.071, 'Aneka Walk, Shah Alam', 'restaurant']] },
   '/places/6_202/st.json?v=test': { p: [['Starbucks', 101.45806, 3.22737, 'Jalan Keramat', 'coffee_shop']] },
   '/places/6_202/n.json?v=test': { p: [] },
+  // Petrol stations around Eco Grandeur: two listings of one, and one too far away to be "near".
+  '/places/6_202/@fuel.json?v=test': { p: [
+    ['Shell Puncak Alam', 101.47, 3.23, 'Jalan Eco', 'gas_station'],
+    ['Petronas Eco Grandeur', 101.467, 3.2235, '', 'gas_station'],
+    ['Petronas Eco Grandeur', 101.4671, 3.2236, '', 'fueling_station'],
+    ['Petronas Far Away', 101.9, 3.4, '', 'gas_station'],
+  ] },
 };
 globalThis.fetch = async (url, init) => {
   // Like browsers, refuse a second argument that isn't an options object.
@@ -110,4 +117,30 @@ test('places named after a landmark but pinned far from it are dropped ("klcc")'
   assert.equal(names[0], 'KLCC Park');
   assert.ok(!names.includes('Twin Tower , KLCC') && !names.includes('Suria KLCC Malaysia'));
   assert.ok(mergeResults(server, local, 'nandos klcc', user).some((p) => p.name === "Nando's"));
+});
+
+test('searches that name a kind of place are recognised, in English and Malay, with any area', () => {
+  const t = (q) => typeQuery(q) && [typeQuery(q).type, typeQuery(q).area];
+  assert.deepEqual(t('petrol'), ['fuel', '']);
+  assert.deepEqual(t('Petrol Station'), ['fuel', '']);
+  assert.deepEqual(t('stesen minyak terdekat'), ['fuel', '']);
+  assert.deepEqual(t('petrol near klcc'), ['fuel', 'klcc']);
+  assert.deepEqual(t('shell petrol station'), ['fuel', 'shell']);
+  assert.deepEqual(t('hospitals in bangsar'), ['hospital', 'bangsar']);
+  assert.deepEqual(t('klinik dekat bangsar'), ['clinic', 'bangsar']);
+  assert.deepEqual(t('balai polis'), ['police', '']);
+  assert.deepEqual(t('nearest police station'), ['police', '']);
+  assert.deepEqual(t('kedai serbaneka near me'), ['convenience', '']);
+  assert.deepEqual(t('convenience store'), ['convenience', '']);
+  assert.equal(typeQuery('petronas'), null, 'a brand is a name search');
+  assert.equal(typeQuery('7-eleven'), null);
+  assert.equal(typeQuery('nandos eco grandeur'), null);
+});
+
+test('places of a kind come nearest first, once each, and only nearby', async () => {
+  const fuel = await placesOfType('fuel', ECO);
+  assert.deepEqual(fuel.map((p) => p.name), ['Petronas Eco Grandeur', 'Shell Puncak Alam']);
+  assert.ok(fuel[0].km < fuel[1].km);
+  assert.equal(fuel[0].type, 'fuel');
+  assert.deepEqual(await placesOfType('police', ECO), [], 'no file for that kind here');
 });

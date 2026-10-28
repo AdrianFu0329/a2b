@@ -325,6 +325,7 @@ export function openSettings() {
       ${toggleRow('avoid_tolls', 'Avoid toll roads')}
       ${toggleRow('avoid_highways', 'Avoid highways')}
       ${toggleRow('avoid_ferries', 'Avoid ferries')}
+      ${toggleRow('map_pois', 'Petrol, hospitals, clinics and shops on the map', 'Shown when zoomed in. Tap one, or a station or landmark, for routes there.')}
       <p class="hint" style="padding:4px 18px">Roads that other drivers report as closed are avoided automatically.</p>
     </div>
     <div class="set-group"><h3>Traffic</h3>
@@ -376,6 +377,7 @@ export function openSettings() {
       if (c.dataset.set === 'traffic_probe' && !c.checked) stopSharing();
       await saveSettings({ [c.dataset.set]: c.checked });
       if (c.dataset.set === 'voice') ctx.refreshSound();
+      if (c.dataset.set === 'map_pois') ctx.drawPois();
     };
   });
   body.querySelectorAll('[data-choice]').forEach((group) => {

@@ -24,7 +24,7 @@ const LOGIN_MAX_FAILURES = 8; // per address: wrong passwords for one account st
 // were dropped: behind the Pages proxy every client shares one IP, so they would lock out everyone at once)
 const RECENTS_KEPT = 20;
 const FULL_MESSAGE = 'A2B is full right now. You will be let in when a spot opens.';
-const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean', traffic_probe: 'boolean', weather: 'boolean' };
+const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean', traffic_probe: 'boolean', map_pois: 'boolean', weather: 'boolean' };
 
 export default {
   async fetch(request, env) {
