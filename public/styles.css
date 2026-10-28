@@ -270,6 +270,26 @@ body.walking #speedo, body.walking #limit, body.walking #toll-chip, body.walking
 .transit-only { display: none; }
 #preview.transit .transit-only { display: block; }
 #preview.transit #btn-go, #preview.transit #btn-leave-later { display: none; }
+#preview.transit .sheet-actions { flex-wrap: wrap; }
+#preview.transit #btn-transit-maps { flex-basis: 100%; }
+/* Riding a train trip: the line's colour in the banner, the stops below, the alert stands out. */
+.ride-banner .turn { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; background: var(--line, rgba(255,255,255,0.15)); color: var(--line-text, #fff); font-weight: 800; font-size: 15px; }
+.ride-banner .turn svg { width: 34px; height: 34px; }
+.ride-banner.alert { background: #e67700; }
+.ride-est b { background: #5f6b76; color: #fff; }
+.ride-sheet { max-height: 42vh; overflow-y: auto; }
+.ride-stops { list-style: none; margin: 4px 0 0; padding: 0; font-size: 15px; }
+.ride-stops li { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: center; padding: 6px 2px; color: var(--muted); }
+.ride-stops li::before { content: ''; width: 12px; height: 12px; margin: 0 3px; border-radius: 50%; border: 3px solid var(--dot, var(--muted)); background: var(--bg); box-sizing: border-box; }
+.ride-stops li.next { color: var(--text); font-weight: 700; }
+.ride-stops li.alight { color: var(--text); font-weight: 800; }
+.ride-stops li.alight::before { background: var(--dot, var(--muted)); }
+.ride-stops li.past { opacity: 0.45; }
+.ride-stops li.walk::before { border-style: dotted; }
+.rider { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--rider, #1c7ed6); color: #fff; border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.35); }
+.rider svg { width: 20px; height: 20px; }
+.rider.walker { width: 22px; height: 22px; background: #1c7ed6; }
+.rider.walker svg { display: none; }
 .route-opt.t-opt { flex-wrap: wrap; }
 .t-opt .t-steps { flex-basis: 100%; }
 .t-legs { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
@@ -286,7 +306,7 @@ body.walking #speedo, body.walking #limit, body.walking #toll-chip, body.walking
 
 /* ---------- Driving ---------- */
 /* Banner and the off-route pill stack, so the pill always sits just below the banner whatever its height. */
-#drive-ui .drive-top {
+#drive-ui .drive-top, #ride-ui .drive-top {
   position: absolute; top: calc(10px + var(--safe-top)); left: 10px; right: 10px; max-width: 560px;
   display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 10px; pointer-events: none;
 }

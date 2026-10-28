@@ -938,4 +938,10 @@ test('trips by train need a spot, a start and a destination', async () => {
   assert.ok(Array.isArray(res.body.trips));
   assert.equal(typeof res.body.walk, 'number');
   for (const trip of res.body.trips) assert.ok(trip.legs.some((l) => l.mode === 'train') && trip.arrive > trip.depart);
+  // Each ride carries its stations in order with the seconds after boarding, for following the trip on the phone.
+  for (const l of res.body.trips.flatMap((t) => t.legs).filter((x) => x.mode === 'train')) {
+    assert.equal(l.stations.length, l.stops + 1);
+    assert.deepEqual([l.stations[0][0], l.stations.at(-1)[0]], [l.from.name, l.to.name]);
+    assert.ok(l.stations.every(([name, lat, lng, t], i) => typeof name === 'string' && Math.abs(lat) < 90 && Math.abs(lng) < 180 && (!i || t > l.stations[i - 1][3])));
+  }
 });
