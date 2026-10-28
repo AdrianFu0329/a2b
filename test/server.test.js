@@ -154,7 +154,7 @@ function client(device) {
 function needsSpot(method, path) {
   if (path === '/api/presence') return false;
   if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/reverse') || path.startsWith('/api/parking'))) return true;
-  return method === 'POST' && path === '/api/route';
+  return method === 'POST' && (path === '/api/route' || path === '/api/transit');
 }
 
 let alice, bob;
@@ -906,4 +906,15 @@ test('presence check-ins admit new devices without a per-network throttle', asyn
   } finally {
     await env.DB.prepare('DELETE FROM presence').run();
   }
+});
+
+test('trips by train need a spot, a start and a destination', async () => {
+  assert.equal((await client('transit-no-spot')('POST', '/api/transit', { from: [101.6865, 3.134], to: [101.7116, 3.1579] })).status, 503);
+  const c = client();
+  assert.equal((await c('POST', '/api/transit', { from: [101.6865, 3.134] })).status, 400);
+  const res = await c('POST', '/api/transit', { from: [101.6865, 3.134], to: [101.7116, 3.1579] });
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray(res.body.trips));
+  assert.equal(typeof res.body.walk, 'number');
+  for (const trip of res.body.trips) assert.ok(trip.legs.some((l) => l.mode === 'train') && trip.arrive > trip.depart);
 });

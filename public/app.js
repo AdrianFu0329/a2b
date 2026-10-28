@@ -53,6 +53,8 @@ const reports = new Map(); // id -> report
 const reportMarkers = new Map(); // id -> maplibregl.Marker
 let follow = true;
 let mode = 'browse'; // browse | preview | drive | watch
+let travel = local.get('travel') === 'transit' ? 'transit' : 'drive'; // how to get there, remembered for next time
+let transit = null; // { place, trips, selected } while showing trips by train
 let themeNow = null;
 
 // Preview / drive state
@@ -305,6 +307,12 @@ function addMapLayers() {
       },
     });
     map.addLayer({ id: 'watch-route', type: 'line', source: 'watch-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': 6, 'line-opacity': 0.85 } }, before);
+    // A trip by train (see drawTransit): walks dashed, rides in their line's colour.
+    map.addSource('transit', { type: 'geojson', data: emptyFc() });
+    map.addLayer({ id: 'transit-walk', type: 'line', source: 'transit', filter: ['==', ['get', 'mode'], 'walk'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#5f6b76', 'line-width': 4, 'line-dasharray': [0.1, 2] } }, before);
+    map.addLayer({ id: 'transit-ride-casing', type: 'line', source: 'transit', filter: ['==', ['get', 'mode'], 'train'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 13] } }, before);
+    map.addLayer({ id: 'transit-ride', type: 'line', source: 'transit', filter: ['==', ['get', 'mode'], 'train'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 9] } }, before);
+    map.addLayer({ id: 'transit-stops', type: 'circle', source: 'transit', filter: ['==', ['get', 'mode'], 'stop'], paint: { 'circle-radius': 6, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 3 } });
     // Petrol stations, hospitals, clinics and convenience stores around the map (see drawPois). Under the base map's
     // own places, so a station or landmark keeps its spot and these fill the gaps around it.
     map.addSource('pois', { type: 'geojson', data: emptyFc() });
@@ -329,6 +337,7 @@ function addMapLayers() {
       map.on('mouseleave', id, () => (map.getCanvas().style.cursor = ''));
     }
   }
+  drawTransit();
   basePlaceLayers = map.getStyle().layers.filter((l) => BASE_PLACE_LAYERS.has(l['source-layer']) && l.type === 'symbol').map((l) => l.id);
   drawPois();
   setupVehicle(); // a new style drops custom layers too
@@ -922,6 +931,19 @@ function wireUi() {
 
   // Preview
   $('btn-go').onclick = startDrive;
+  for (const b of $('travel-seg').querySelectorAll('button')) {
+    b.onclick = () => {
+      if (b.dataset.travel === travel || !dest) return;
+      travel = b.dataset.travel;
+      local.set('travel', travel);
+      openPreview(dest);
+    };
+  }
+  $('btn-transit-maps').onclick = () => {
+    const from = state.pos?.lngLat ?? map.getCenter().toArray();
+    const q = `origin=${from[1]},${from[0]}&destination=${dest.lat},${dest.lng}&travelmode=transit`;
+    window.open(`https://www.google.com/maps/dir/?api=1&${q}`, '_blank', 'noopener');
+  };
   $('btn-save-place').onclick = () => dest && toggleSaved(dest);
   $('btn-leave-later').onclick = openLater;
 
@@ -1249,9 +1271,20 @@ async function openPreview(place) {
       : 'Waiting for your location… routes start from the middle of the map for now.'
     : 'Finding the best routes…';
   $('route-status').innerHTML = `<span class="spinner" aria-hidden="true"></span>${status}`;
+  renderTravel();
+  transit = null;
+  drawTransit();
+  if (travel === 'transit') {
+    autoGo.stop();
+    routeLabels.splice(0).forEach((m) => m.remove());
+    drawRoutes(); // no driving routes under the trip
+    return showTransit(place, from ?? map.getCenter().toArray(), from ? '' : status);
+  }
   try {
-    routes = await requestRoutes(from ?? map.getCenter().toArray(), [place.lng, place.lat]);
-    if (mode !== 'preview' || dest !== place) return;
+    const found = await requestRoutes(from ?? map.getCenter().toArray(), [place.lng, place.lat]);
+    // Gone, or switched to Train while these were on their way: they mustn't come back (or start a drive).
+    if (mode !== 'preview' || dest !== place || travel !== 'drive') return;
+    routes = found;
     $('route-status').textContent = [from ? '' : status, routeNote(routes)].filter(Boolean).join(' ');
     renderRouteOptions();
     renderPeekSummary();
@@ -1260,10 +1293,87 @@ async function openPreview(place) {
     $('btn-go').disabled = false;
     autoGo.restart();
   } catch (e) {
+    if (mode !== 'preview' || dest !== place || travel !== 'drive') return;
+    $('route-list').innerHTML = '';
+    $('route-status').textContent = e.message;
+  }
+}
+
+// ---------- Trips by train ----------
+// LRT, MRT, Monorail, BRT and KTM Komuter trips from the server (src/lib/transit.js): each as its walks and rides,
+// with the lines' own colours, and the chosen one drawn on the map. There's no turn-by-turn for these; a link
+// opens Google Maps for live departure times instead.
+function renderTravel() {
+  for (const b of $('travel-seg').querySelectorAll('button')) b.classList.toggle('on', b.dataset.travel === travel);
+  $('preview').classList.toggle('transit', travel === 'transit');
+}
+
+async function showTransit(place, from, status) {
+  try {
+    const plan = await api('/api/transit', { method: 'POST', body: { from, to: [place.lng, place.lat] } });
+    if (mode !== 'preview' || dest !== place || travel !== 'transit') return;
+    transit = { place, trips: plan.trips, selected: 0 };
+    const night = plan.night ? `${plan.note} The first trains leave around ${formatClock(new Date(plan.firstTrain))}.` : plan.note;
+    $('route-status').textContent = [status, night, plan.trips.length ? 'Times are estimates from the official timetables.' : ''].filter(Boolean).join(' ');
+    renderTransit();
+    const b = new maplibregl.LngLatBounds();
+    for (const l of plan.trips[0]?.legs ?? []) for (const c of l.coords) b.extend(c);
+    if (!b.isEmpty()) fitTo(b, { padding: sheetPadding(), duration: 700, maxZoom: 16 });
+  } catch (e) {
     if (mode !== 'preview' || dest !== place) return;
     $('route-list').innerHTML = '';
     $('route-status').textContent = e.message;
   }
+}
+
+const WALK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13" cy="4" r="2" fill="currentColor"/><path d="m9 21 2.5-7 2.5 2.5V21M8 11l2-4 4 1 2 4M11.5 14 10 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const lineChip = (l) => `<span class="t-line" style="background:${esc(l.line.color)};color:${esc(l.line.text)}">${esc(l.line.short)}</span>`;
+const mins = (s) => formatDuration(Math.max(60, s));
+
+function renderTransit() {
+  const box = $('route-list');
+  box.innerHTML = '';
+  if (!transit.trips.length) return drawTransit();
+  transit.trips.forEach((trip, i) => {
+    const b = el('button', `route-opt t-opt${i === transit.selected ? ' on' : ''}`);
+    const legs = trip.legs
+      .filter((l) => l.mode === 'train' || l.duration >= 60)
+      .map((l) => (l.mode === 'walk' ? `<span class="t-walk">${WALK_ICON}${Math.round(l.duration / 60)}</span>` : lineChip(l)))
+      .join('<span class="t-sep">›</span>');
+    const facts = [`arrive ${formatClock(new Date(trip.arrive))}`, trip.changes ? `${trip.changes} change${trip.changes > 1 ? 's' : ''}` : 'no changes'];
+    const steps = i === transit.selected ? `<ol class="t-steps">${trip.legs.map(stepHtml).join('')}</ol>` : '';
+    b.innerHTML = `<span class="r-time">${formatDuration(trip.duration)}</span><span class="r-info"><b>${facts.join(' · ')}</b><br><span class="t-legs">${legs}</span></span>${steps}`;
+    b.onclick = () => {
+      transit.selected = i;
+      renderTransit();
+    };
+    box.append(b);
+  });
+  drawTransit();
+}
+
+function stepHtml(l) {
+  const units = state.settings.units;
+  if (l.mode === 'walk') {
+    const to = l.to.name === 'Destination' ? (dest?.name ?? 'your destination') : `${l.to.name} station`;
+    return `<li><span>Walk to ${esc(to)}<small>${mins(l.duration)} · ${formatDistance(l.distance, units)}</small></span></li>`;
+  }
+  const when = l.every ? `Every ${l.every} min` : `Train at ${formatClock(new Date(l.depart))}`;
+  return `<li class="ride" style="--dot:${esc(l.line.color)}"><span>${lineChip(l)} ${esc(l.line.name)} towards ${esc(l.towards)}
+    <small>${esc(when)} · ${l.stops} stop${l.stops > 1 ? 's' : ''} to ${esc(l.to.name)}, ${mins(l.duration)}</small></span></li>`;
+}
+
+// The chosen trip on the map: walks dashed, rides in their line's colour, a dot where you get on and off.
+function drawTransit() {
+  const src = map?.getSource('transit');
+  if (!src) return;
+  const trip = transit?.trips[transit.selected];
+  const features = [];
+  for (const l of trip?.legs ?? []) {
+    features.push({ type: 'Feature', properties: { mode: l.mode, color: l.line?.color ?? '#5f6b76' }, geometry: { type: 'LineString', coordinates: l.coords } });
+    if (l.mode === 'train') for (const s of [l.from, l.to]) features.push({ type: 'Feature', properties: { mode: 'stop', color: l.line.color, name: s.name }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } });
+  }
+  src.setData({ type: 'FeatureCollection', features });
 }
 
 // What the server did about closures, worth a line under the route options.
@@ -1465,6 +1575,8 @@ function selectRoute(i) {
 function backToBrowse() {
   autoGo.stop();
   mode = 'browse';
+  transit = null;
+  drawTransit();
   schedulePois();
   routes = [];
   dest = null;
