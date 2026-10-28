@@ -16,6 +16,7 @@ import { plazaDetails } from './lib/tolls.js';
 import { reportsRepo } from './lib/reports.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
+import { planTransit, withRealWalks } from './lib/transit.js';
 
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
@@ -385,6 +386,16 @@ async function route(request, env, url) {
     const lat = num(url, 'lat'), lng = num(url, 'lng');
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw httpError('lat and lng are required.', 400);
     return json({ place: await reverseGeocode(env, { lat, lng }) });
+  }
+
+  // Trips by train (LRT, MRT, Monorail, BRT, KTM Komuter): see src/lib/transit.js.
+  if (path === '/api/transit' && method === 'POST') {
+    await needSpot();
+    const body = await readJson(request);
+    const from = lngLat(body.from), to = lngLat(body.to);
+    if (!from || !to) throw httpError('A trip needs a start and a destination.', 400);
+    const at = Number.isFinite(body.at) && Math.abs(body.at - Date.now()) < 7 * 86400_000 ? body.at : Date.now();
+    return json(await withRealWalks(env, planTransit(from, to, at)));
   }
 
   if (path === '/api/route' && method === 'POST') {
