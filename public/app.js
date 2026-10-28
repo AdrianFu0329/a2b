@@ -1847,6 +1847,7 @@ function takeFaster() {
   const pick = faster.offer;
   if (!pick || mode !== 'drive') return hideFaster();
   adoptRoute(pick.route, live?.snapped ?? state.pos?.lngLat);
+  if (state.pos) driveTick(state.pos); // the new arrival time and line now, not at the next GPS fix
   speak(`Taking the faster route${pick.route.via ? ` via ${pick.route.via}` : ''}.`);
 }
 
