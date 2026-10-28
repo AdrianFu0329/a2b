@@ -128,4 +128,69 @@ export function mergeResults(server, local, q, near) {
     .slice(0, 12);
 }
 
+// ---------- Searching by kind of place ----------
+
+// "petrol", "klinik near bangsar", "balai polis terdekat": searches that name a kind of place, not a place. Most
+// petrol stations are just called "Petronas" or "Shell" and many hospitals "… Medical Centre", so searching
+// names misses the nearest ones. These read the area's file of that kind (scripts/build-places.py TYPES) instead.
+export const TYPES = {
+  fuel: { label: 'Petrol stations', words: ['petrol stations?', 'gas stations?', 'fuel stations?', 'petrol pumps?', 'stesen minyak', 'pam minyak', 'isi minyak', 'petrol', 'fuel', 'minyak'] },
+  hospital: { label: 'Hospitals', words: ['hospitals?', 'medical cent(?:re|er)s?', 'emergency rooms?', 'emergency', 'kecemasan'] },
+  clinic: { label: 'Clinics', words: ['klinik kesihatan', 'clinics?', 'klinik', 'poliklinik', 'polyclinics?', 'doctors?', 'gps?'] },
+  police: { label: 'Police stations', words: ['police stations?', 'balai polis', 'ibu pejabat polis', 'police', 'polis', 'ipd'] },
+  convenience: { label: 'Convenience stores', words: ['convenience stores?', 'convenience shops?', 'kedai serbaneka', 'kedai runcit', 'convenience', 'serbaneka', 'mini ?marts?'] },
+};
+const TYPE_RES = Object.entries(TYPES).map(([type, t]) => [type, new RegExp(`\\b(?:${t.words.join('|')})\\b`, 'gi')]);
+const FILLER = /\b(?:near(?:by|est)?|closest|at|in|around|by|the|a|an|me|my|here|dekat|berdekatan|terdekat|di|kat|sini|yang)\b/gi;
+const TYPE_RADIUS_KM = 25;
+const TYPE_RESULTS = 12;
+
+// { type, area } when q names a kind of place (area: the rest of the words, '' for "near me"), else null.
+export function typeQuery(q) {
+  for (const [type, re] of TYPE_RES) {
+    if (!q.match(re)) continue;
+    const area = q.replace(re, ' ').replace(FILLER, ' ').replace(/[^\p{L}\p{N}'&.-]+/gu, ' ').replace(/\s+/g, ' ').trim();
+    return { type, area };
+  }
+  return null;
+}
+
+// Every listed place of a kind in the areas around `at`, as [name, lng, lat, address, category] rows.
+async function typeRows(type, at) {
+  const idx = await loadIndex();
+  if (!idx) return [];
+  const v = encodeURIComponent(idx.release ?? '');
+  const areas = areasAround(at, idx.area, idx.areaSet);
+  const lists = await Promise.all(areas.map((a) => getJson(`${BASE}/${a}/files.json?v=${v}`)));
+  const shards = await Promise.all(areas.filter((_, i) => lists[i]?.[`@${type}`]).map((a) => getJson(`${BASE}/${a}/@${type}.json?v=${v}`)));
+  return shards.flatMap((s) => s?.p ?? []);
+}
+
+const toPlace = ([name, lng, lat, address, category], type, at) =>
+  ({ name, address, lat, lng, category: category || type, type, km: distance(at, [lng, lat]) / 1000, source: 'overture' });
+
+// The places of a kind nearest to `at` ([lng, lat]), within TYPE_RADIUS_KM, nearest first.
+export async function placesOfType(type, at) {
+  const found = (await typeRows(type, at)).map((r) => toPlace(r, type, at)).filter((p) => p.km <= TYPE_RADIUS_KM);
+  // The same place listed twice (two sources a few metres apart) shows once.
+  found.sort((a, b) => a.km - b.km);
+  const out = [];
+  for (const p of found) {
+    if (out.some((o) => words(o.name).join(' ') === words(p.name).join(' ') && distance([o.lng, o.lat], [p.lng, p.lat]) < 80)) continue;
+    out.push(p);
+    if (out.length === TYPE_RESULTS) break;
+  }
+  return out;
+}
+
+// The places of these kinds inside a map view ([west, south, east, north]), for showing them on the map; at most
+// `max`, the ones nearest the middle of the view first.
+export async function placesOfTypesIn(types, [w, s, e, n], max = 300) {
+  const mid = [(w + e) / 2, (s + n) / 2];
+  const lists = await Promise.all(types.map(async (type) => (await typeRows(type, mid))
+    .filter(([, lng, lat]) => lng >= w && lng <= e && lat >= s && lat <= n)
+    .map((r) => toPlace(r, type, mid))));
+  return lists.flat().sort((a, b) => a.km - b.km).slice(0, max);
+}
+
 export const attribution = 'Places: Overture Maps Foundation';

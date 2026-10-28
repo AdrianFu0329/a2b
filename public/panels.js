@@ -9,6 +9,7 @@ import { pickVoice } from './voice.js';
 import { appVersion } from './update.js';
 import { VEHICLES, COLORS, DEFAULT_COLOR } from './vehicle3d.js';
 import { onlineLine } from './presence.js';
+import { tileCount, clearOfflineTiles, originUsage } from './offline.js';
 
 let ctx; // callbacks from app.js
 let authMode = 'signup';
@@ -257,6 +258,16 @@ function openPanel(title, html) {
 }
 
 // The voice directions are read in (see voice.js), with a sample to hear it.
+async function renderOfflineSize() {
+  const el = $('s-offline-size');
+  if (!el) return;
+  const [count, usage] = await Promise.all([tileCount(), originUsage()]);
+  const fresh = $('s-offline-size');
+  if (!fresh) return; // settings closed while counting
+  const mb = usage?.usage ? ` · ${(usage.usage / 1048576).toFixed(0)} MB used by the app` : '';
+  fresh.textContent = count ? `${count.toLocaleString()} map tiles${mb}` : `Nothing saved yet${mb}`;
+}
+
 function renderVoiceList() {
   const box = $('voice-list');
   const v = pickVoice();
@@ -313,6 +324,7 @@ export function openSettings() {
       ${toggleRow('avoid_tolls', 'Avoid toll roads')}
       ${toggleRow('avoid_highways', 'Avoid highways')}
       ${toggleRow('avoid_ferries', 'Avoid ferries')}
+      ${toggleRow('map_pois', 'Petrol, hospitals, clinics and shops on the map', 'Shown when zoomed in. Tap one, or a station or landmark, for routes there.')}
       <p class="hint" style="padding:4px 18px">Roads that other drivers report as closed are avoided automatically.</p>
     </div>
     <div class="set-group"><h3>Traffic</h3>
@@ -327,6 +339,10 @@ export function openSettings() {
       <div class="set-row swatch-row"><span>Colour</span><div class="swatches" id="s-vehicle-color">${COLORS
         .map(([c, l]) => `<button data-c="${c}" aria-label="${l}" title="${l}" class="${local.get('vehicleColor', DEFAULT_COLOR) === c ? 'on' : ''}" style="--c:${c}"></button>`)
         .join('')}</div></div>
+    </div>
+    <div class="set-group"><h3>Offline maps</h3>
+      <label class="set-row"><span>Save maps for drives<small>Keep the map along your route on this phone, for tunnels and dead spots</small></span><input type="checkbox" class="switch" id="s-offline" ${local.get('offlineMaps', true) ? 'checked' : ''}></label>
+      <div class="set-row"><span>Saved on this phone<small id="s-offline-size">…</small></span><div class="choice"><button id="s-offline-clear">Clear</button></div></div>
     </div>
     <div class="set-group"><h3>Places</h3>
       <button class="set-row" id="s-home"><span>Home<small>${esc(state.home?.address || state.home?.name || 'Not set')}</small></span></button>
@@ -360,6 +376,7 @@ export function openSettings() {
       if (c.dataset.set === 'traffic_probe' && !c.checked) stopSharing();
       await saveSettings({ [c.dataset.set]: c.checked });
       if (c.dataset.set === 'voice') ctx.refreshSound();
+      if (c.dataset.set === 'map_pois') ctx.drawPois();
     };
   });
   body.querySelectorAll('[data-choice]').forEach((group) => {
@@ -371,6 +388,14 @@ export function openSettings() {
       if (group.dataset.choice === 'theme') ctx.applyTheme();
     };
   });
+  // Saved maps live on this device only (like the vehicle), so they bypass the synced settings.
+  $('s-offline').onchange = (e) => local.set('offlineMaps', e.target.checked);
+  $('s-offline-clear').onclick = async () => {
+    await clearOfflineTiles();
+    toast('Saved maps cleared.');
+    renderOfflineSize();
+  };
+  renderOfflineSize();
   renderVoiceList();
   if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => $('voice-list') && renderVoiceList();
   // Kept on this device: it's about how this screen looks.
@@ -628,7 +653,8 @@ function openAbout() {
     <p>Keep your eyes on the road. Only use the app when it is safe and legal to do so. Reports from other drivers can be wrong.</p>
     <p>Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>.
        Map tiles by <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>.
-       Routing by <a href="https://valhalla.github.io/valhalla/" target="_blank" rel="noopener">Valhalla</a>, search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>, live traffic by <a href="https://www.tomtom.com" target="_blank" rel="noopener">TomTom</a>.
+       Routing by <a href="https://valhalla.github.io/valhalla/" target="_blank" rel="noopener">Valhalla</a>, search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>, live traffic by <a href="https://www.tomtom.com" target="_blank" rel="noopener">TomTom</a>,
+       train timetables from Prasarana and KTMB via <a href="https://data.gov.my" target="_blank" rel="noopener">data.gov.my</a>.
        Shops and places also from <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a> (Meta, Microsoft, Foursquare, AllThePlaces and others; <a href="/places/NOTICE.txt" target="_blank">licences</a>).</p>
     <p>A2B is free and open source. <a href="https://github.com/thaqif0709/a2b" target="_blank" rel="noopener">Source code</a>, ideas and bug reports welcome, or send feedback from Settings.</p>
     <p class="about-credit">© 2026 Thaqif Syarafuddin bin Roslan and the A2B contributors.
