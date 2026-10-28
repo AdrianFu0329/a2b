@@ -456,15 +456,16 @@ async function route(request, env, url) {
     // Congested blocks from opted-in drivers (a slow lookup never holds up the route), and road reports.
     const reportsAndProbes = async (rs, area) => {
       const [live, probeSegs] = await Promise.all([reports.inBox(area, user?.id), probesRepo(db).congested(area).catch(() => [])]);
-      return () => {
-        annotateWithReports(rs, live);
-        annotateWithProbes(rs, probeSegs, area);
+      return (some = rs) => {
+        annotateWithReports(some, live);
+        annotateWithProbes(some, probeSegs, area);
       };
     };
 
     // A drive checking for a faster way (public/faster-route.js) sends what's left of its route and its time. Most
-    // checks find only the way it's already going, so they end after the one routing request; traffic is looked up
-    // only when some route is really another way, and speed limits, tolls and cameras only for one worth offering.
+    // checks find only the way it's already going, so they end after the one routing request. Otherwise traffic is
+    // looked up for the other ways first; only when one is quick enough to offer is the way the car is going looked up
+    // too (its fresh traffic can still make it the quicker), and speed limits, tolls and cameras for the one to offer.
     const check = fasterCheck(body.check);
     if (check) {
       const twins = await constructionTwins(env.ASSETS, routes).catch(() => routes.map(() => []));
@@ -477,10 +478,16 @@ async function route(request, env, url) {
         return json({ routes: [], closures_avoided: 0, closures_ignored: closuresIgnored, construction_avoided: 0 });
       }
       const area = routeReportBox(routes, [from, to]);
-      const [annotate] = await Promise.all([reportsAndProbes(routes, area), ...routes.map(traffic)]);
-      annotate();
+      const [annotate] = await Promise.all([reportsAndProbes(routes, area), ...other.map(traffic)]);
+      annotate(other);
       const offer = other.filter((r) => worthOffering(routeTime(r), check.left));
-      await Promise.all([...offer.map(attributes), cameras(offer)]);
+      if (!offer.length) {
+        await count('routes');
+        return json({ routes: [], closures_avoided: 0, closures_ignored: closuresIgnored, construction_avoided: 0 });
+      }
+      const same = routes.filter((r) => !other.includes(r));
+      await Promise.all([...same.map(traffic), ...offer.map(attributes), cameras(offer)]);
+      annotate(same);
       await plazas(offer);
       for (const r of routes) delete r.shapes;
       routes.sort((a, b) => a.duration - b.duration);

@@ -1915,11 +1915,11 @@ function adoptRoute(route, at) {
 // ---------- Faster route found ----------
 // Now and then while driving, routes from here are asked for again; one clearly quicker and really another way is
 // offered on a card, said once, and gone after 20 s if not taken. See faster-route.js for when and what counts.
-const faster = { lastCheck: 0, checks: 0, busy: false, kept: [], offer: null, timer: null };
+const faster = { lastCheck: 0, checks: 0, quiet: 0, busy: false, kept: [], offer: null, timer: null };
 
 function resetFaster() {
   hideFaster();
-  Object.assign(faster, { lastCheck: 0, checks: 0, busy: false, kept: [] });
+  Object.assign(faster, { lastCheck: 0, checks: 0, quiet: 0, busy: false, kept: [] });
 }
 
 async function checkFaster({ force = false } = {}) {
@@ -1927,7 +1927,7 @@ async function checkFaster({ force = false } = {}) {
   const now = Date.now();
   const toStop = stops[0] && state.pos ? distance(state.pos.lngLat, [stops[0].lng, stops[0].lat]) : null;
   const due = shouldCheckFaster({
-    now, startedAt: driveStarted, lastCheck: faster.lastCheck, checks: faster.checks, left: live.remaining, leftTime: live.remainingTime,
+    now, startedAt: driveStarted, lastCheck: faster.lastCheck, checks: faster.checks, quiet: faster.quiet, left: live.remaining, leftTime: live.remainingTime,
     offRoute: live.offRoute, busy: faster.busy, toStop, demo: Boolean(sim),
   });
   if (!due && !force) return;
@@ -1941,9 +1941,11 @@ async function checkFaster({ force = false } = {}) {
     const rs = await requestRoutes(from, [dest.lng, dest.lat], heading, stops, { check });
     if (mode !== 'drive' || nav?.route !== route || !live) return; // rerouted or ended meanwhile
     const pick = pickFaster(rs, { leftTime: live.remainingTime, rest, now: Date.now(), kept: faster.kept });
+    faster.quiet = pick ? 0 : faster.quiet + 1; // nothing found: wait longer before the next (checkGap)
     if (pick) showFaster(pick);
   } catch {
-    // A failed check is just no offer: the drive carries on as it is.
+    // A failed check is just no offer: the drive carries on as it is, and the next waits longer.
+    faster.quiet++;
   } finally {
     faster.busy = false;
   }

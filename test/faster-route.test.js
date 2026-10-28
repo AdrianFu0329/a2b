@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { shouldCheck, routeTime, overlap, pickFaster, offerText, simplify, checkBody, worthOffering, MAX_CHECKS, KEEP_FOR_MS, MAX_REST_CHARS } from '../public/faster-route.js';
+import { shouldCheck, routeTime, overlap, pickFaster, offerText, simplify, checkBody, worthOffering, checkGap, MAX_CHECKS, KEEP_FOR_MS, MAX_REST_CHARS } from '../public/faster-route.js';
 import { encodePolyline, decodePolyline } from '../public/geo.js';
 
 const T0 = Date.parse('2026-11-04T08:00:00+08:00');
@@ -114,4 +114,18 @@ test('worth offering: at least 5 minutes and a tenth quicker', () => {
   assert.equal(worthOffering(1560, 1800), false, '4 minutes');
   assert.equal(worthOffering(6700, 7200), false, '8 minutes of 2 hours is under a tenth');
   assert.equal(worthOffering(6400, 7200), true);
+});
+
+test('checks that find nothing wait longer for the next: 4, 6, 8, then every 10 minutes', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 9].map((q) => checkGap(q) / MIN), [4, 4, 6, 8, 10, 10]);
+  assert.equal(shouldCheck({ ...drive, quiet: 3, lastCheck: drive.now - 7 * MIN }), false, 'three found nothing: 8 minutes');
+  assert.equal(shouldCheck({ ...drive, quiet: 3, lastCheck: drive.now - 8 * MIN }), true);
+  // An hour's drive: checks at 2, 6, 12, 20, 30, 40, 50 minutes when none finds anything (it was 8 by 30 minutes).
+  const at = [];
+  let lastCheck = 0, quiet = 0;
+  for (let m = 0; m <= 60; m++) {
+    const now = T0 + m * MIN;
+    if (shouldCheck({ ...drive, now, lastCheck, quiet, checks: at.length, leftTime: (65 - m) * 60 })) at.push(m), (lastCheck = now), quiet++;
+  }
+  assert.deepEqual(at, [2, 6, 12, 20, 30, 40, 50]);
 });

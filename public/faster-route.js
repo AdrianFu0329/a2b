@@ -3,15 +3,19 @@
 
 // "Faster route found": while driving, now and then ask for routes from where you are, and offer one only when it's
 // clearly better: at least 5 minutes and 10% quicker than what's left of yours, and really another way, not the
-// same roads. The routing server is volunteer-run, so checks are few: the first after 2 minutes, then every 4, at
-// most 8 a drive, and only with a fair way still to go. app.js asks and shows the offer; the rules live here.
+// same roads. The routing server is volunteer-run, so checks are few: the first after 2 minutes, then 4 minutes on,
+// waiting longer after each that finds nothing (6, 8, then 10 minutes), at most 8 a drive, and only with a fair way
+// still to go. app.js asks and shows the offer; the rules live here.
 // A check sends what's left of the route and its time (checkBody), so the server can answer "nothing faster" after one
 // routing request: no traffic lookups or speed limits unless a route is really another way and could be offered.
 
 import { distance } from './geo.js';
 
 export const FIRST_CHECK_MS = 2 * 60_000;
-export const CHECK_EVERY_MS = 4 * 60_000;
+// The wait before the next check, by how many checks in a row have found nothing to offer: 4 minutes after the first
+// (or after an offer), then 6, 8, and 10 from then on.
+export const CHECK_GAPS_MS = [4, 6, 8, 10].map((m) => m * 60_000);
+export const checkGap = (quiet = 0) => CHECK_GAPS_MS[Math.min(Math.max(quiet - 1, 0), CHECK_GAPS_MS.length - 1)];
 export const MAX_CHECKS = 8;
 export const MIN_LEFT_M = 5000; // not worth it near the end
 export const MIN_LEFT_S = 5 * 60;
@@ -25,14 +29,14 @@ const NEAR_ROAD_M = 35; // a point this close to the other route counts as on it
 const SAMPLE_M = 50;
 const CELL_DEG = 0.005; // ~550 m grid cells, for finding nearby segments quickly
 
-// Whether to ask for routes now. `drive`: { now, startedAt, lastCheck, checks, left (m), leftTime (s), offRoute,
-// busy, toStop (m to the next stop, or null), demo }.
-export function shouldCheck({ now, startedAt, lastCheck = 0, checks = 0, left, leftTime, offRoute = false, busy = false, toStop = null, demo = false }) {
+// Whether to ask for routes now. `drive`: { now, startedAt, lastCheck, checks, quiet (checks in a row that found
+// nothing), left (m), leftTime (s), offRoute, busy, toStop (m to the next stop, or null), demo }.
+export function shouldCheck({ now, startedAt, lastCheck = 0, checks = 0, quiet = 0, left, leftTime, offRoute = false, busy = false, toStop = null, demo = false }) {
   if (demo || offRoute || busy || checks >= MAX_CHECKS) return false;
   if (!(left > MIN_LEFT_M) || !(leftTime > MIN_LEFT_S)) return false;
   if (toStop != null && toStop < NEAR_STOP_M) return false;
   if (now - startedAt < FIRST_CHECK_MS) return false;
-  return !lastCheck || now - lastCheck >= CHECK_EVERY_MS;
+  return !lastCheck || now - lastCheck >= checkGap(quiet);
 }
 
 // A route's time from its start, the way the drive's ETA counts it (nav.js remainingTime): its steps' times, which

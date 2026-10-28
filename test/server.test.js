@@ -353,6 +353,18 @@ test('a faster-route check ends after one routing request when every route is th
     assert.equal(full.tolls, undefined);
     assert.equal(quick.shapes, undefined, 'encoded shapes stay on the server');
 
+    // Driving the first half of LINE and on: the short route is the same way, the full one another. The way the car
+    // is going is only looked up when the other is quick enough to offer.
+    const half = encode(LINE.slice(0, 12), 5);
+    [tomtomCalls, traceCalls] = [0, 0];
+    const slow = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], check: { rest: half, left: 450 } });
+    assert.deepEqual(slow.body.routes, [], 'the other way (600 s) is no quicker');
+    assert.deepEqual([tomtomCalls, traceCalls], [1, 0], 'traffic for the other way only');
+    [tomtomCalls, traceCalls] = [0, 0];
+    const quicker = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], check: { rest: half, left: 2000 } });
+    assert.equal(quicker.body.routes.length, 2);
+    assert.deepEqual([tomtomCalls, traceCalls], [2, 1], 'then the way the car is going too, and the extras for the offer');
+
     // A check that doesn't make sense is an ordinary route request.
     [tomtomCalls, traceCalls] = [0, 0];
     const plain = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], check: { rest: 'x', left: 0 } });
