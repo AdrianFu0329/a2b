@@ -40,7 +40,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 
 | Feature | What it does |
 | --- | --- |
-| 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "petrol near klcc") for the nearest ones. |
+| 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "petrol near klcc") for the nearest ones. Places you pick are kept as your search history, on the phone without an account (Clear wipes it). |
 | ⛽ **On the map** | Petrol stations, hospitals, clinics and convenience stores show on the map when zoomed in. Tap one, or any station (LRT, MRT, KTM, monorail, bus) or landmark the map shows, for routes there. |
 | 🛣️ **Routes** | Up to three routes with drive time in live traffic (jams coloured on the line), arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
 | 🚶 **Walking** | Switch the route options to Walk for footpaths and pedestrian crossings, with the same spoken directions. |

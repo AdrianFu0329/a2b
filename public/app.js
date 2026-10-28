@@ -1049,7 +1049,10 @@ function openSearchFor(target) {
   $('search-target').classList.toggle('hidden', !label);
   $('search-input').placeholder = target ? 'Search for an address' : 'Where to?';
   showSearchHome();
-  setTimeout(() => $('search-input').focus(), 50);
+  // Focus now, inside the tap: iPhones only bring the keyboard up for a focus made during the tap itself, and
+  // ignored the old delayed one. The delayed one stays as a fallback for browsers that need a frame first.
+  $('search-input').focus();
+  setTimeout(() => document.activeElement !== $('search-input') && $('search-input').focus(), 50);
 }
 
 function showSearchHome() {
@@ -1065,9 +1068,18 @@ function renderSearchHome() {
   const { saved, recent } = state.places;
   $('saved-head').classList.toggle('hidden', !saved.length);
   $('recent-head').classList.toggle('hidden', !recent.length);
+  $('recent-clear').onclick = clearRecent;
   $('search-empty-hint').classList.toggle('hidden', saved.length + recent.length > 0);
   renderPlaceList($('saved-list'), saved, 'star', 'saved');
   renderPlaceList($('recent-list'), recent, 'recent', 'recent');
+}
+
+// Clear the search history (on this phone, or on the account when signed in).
+async function clearRecent() {
+  if (!confirm('Clear your search history?')) return;
+  for (const p of [...state.places.recent]) await removePlace('recent', p.id).catch(() => {});
+  renderSearchHome();
+  toast('Search history cleared.');
 }
 
 function renderPlaceList(ul, list, icon, kind) {
@@ -1214,6 +1226,8 @@ async function pickPlace(p) {
     return addStop(p);
   }
   closeScreen('search');
+  // Search history: kept on this phone without an account (and on the account with one), so it's there next time.
+  addPlace('recent', p).then(renderSearchHome).catch(() => {});
   openPreview(p);
 }
 
