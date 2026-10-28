@@ -934,16 +934,20 @@ test('presence check-ins admit new devices without a per-network throttle', asyn
   }
 });
 
-test('EV chargers: the whole list, fetched from OpenStreetMap once and kept in the database', async () => {
+test('EV chargers: the whole list, fetched from OpenStreetMap by the nightly job and kept in the database', async () => {
   const alice = client();
-  const r = await alice('GET', '/api/chargers');
-  assert.equal(r.status, 200);
-  assert.deepEqual(r.body.chargers, [['Suria KLCC EV', 101.7119, 3.1579, 'CCS2 · up to 60 kW', 'ev_charging_station']]);
+  await env.DB.prepare('DELETE FROM chargers').run();
   const calls = overpassCalls;
-  assert.ok(calls <= 1, 'the nightly job or the first request filled it, once');
-  await alice('GET', '/api/chargers');
+  const empty = await alice('GET', '/api/chargers');
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.body.chargers, []);
+  assert.equal(overpassCalls, calls, 'a request never downloads them');
   await worker.scheduled({}, env);
-  assert.equal(overpassCalls, calls, 'not again within the week');
+  assert.equal(overpassCalls, calls + 1, 'the nightly job does');
+  const r = await alice('GET', '/api/chargers');
+  assert.deepEqual(r.body.chargers, [['Suria KLCC EV', 101.7119, 3.1579, 'CCS2 · up to 60 kW', 'ev_charging_station']]);
+  await worker.scheduled({}, env);
+  assert.equal(overpassCalls, calls + 1, 'not again within the week');
 });
 
 test('trips by train need a spot, a start and a destination', async () => {

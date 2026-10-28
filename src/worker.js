@@ -19,8 +19,6 @@ import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
 import { planTransit, withRealWalks } from './lib/transit.js';
 
-let lastChargerFill = 0; // see /api/chargers
-
 const MAX_BODY = 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_FAILURES = 8; // per address: wrong passwords for one account stop here (per-network throttles
@@ -385,17 +383,14 @@ async function route(request, env, url) {
     return res;
   }
 
-  // EV chargers (src/lib/chargers.js): all of them, a few hundred small rows, for the phone to search and draw.
+  // EV chargers (src/lib/chargers.js): all of them, a few hundred small rows, for the phone to search and draw. Only
+  // the nightly job fills the table, never a request: a whole-country Overpass download takes up to a minute, and
+  // drivers asking at once would each start one. Until the first run the list is empty (the phone still has
+  // Overture's chargers), and phones ask again sooner.
   if (path === '/api/chargers' && method === 'GET') {
     await needSpot();
-    let chargers = await allChargers(db);
-    if (!chargers.length && Date.now() - lastChargerFill > 600_000) {
-      // A fresh database, before the first nightly refresh: fill it now (at most every 10 minutes if that fails).
-      lastChargerFill = Date.now();
-      await refreshChargers(env);
-      chargers = await allChargers(db);
-    }
-    return json({ chargers }, 200, { 'cache-control': 'private, max-age=3600' });
+    const chargers = await allChargers(db);
+    return json({ chargers }, 200, { 'cache-control': `private, max-age=${chargers.length ? 3600 : 600}` });
   }
 
   if (path === '/api/reverse' && method === 'GET') {
