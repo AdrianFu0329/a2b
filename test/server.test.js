@@ -74,7 +74,8 @@ globalThis.fetch = async (url, init = {}) => {
     return Response.json({ trip: fakeTrip(LINE, 120), alternates: [{ trip: fakeTrip(LINE.slice(0, 15), 90) }] });
   }
   if (u.includes('/trace_attributes')) {
-    return Response.json({ edges: [{ begin_shape_index: 0, speed_limit: 50 }, { begin_shape_index: 5, end_shape_index: 10, speed_limit: 50, end_node: { type: 'toll_booth' } }, { begin_shape_index: 10, speed_limit: 30 }, { begin_shape_index: 15 }] });
+    // A tunnel from shape index 12 to 15, in two edges (as Valhalla splits a long one).
+    return Response.json({ edges: [{ begin_shape_index: 0, speed_limit: 50 }, { begin_shape_index: 5, end_shape_index: 10, speed_limit: 50, end_node: { type: 'toll_booth' } }, { begin_shape_index: 10, end_shape_index: 12, speed_limit: 30 }, { begin_shape_index: 12, end_shape_index: 13, speed_limit: 30, tunnel: true }, { begin_shape_index: 13, end_shape_index: 15, speed_limit: 30, tunnel: true }, { begin_shape_index: 15 }] });
   }
   if (u.includes('openstreetmap.org/api/0.6/map')) {
     osmLookups++;
@@ -319,6 +320,7 @@ test('routes avoid reported closures and account for reported traffic', async ()
   assert.equal(r.body.routes[0].duration, 90, 'fastest first');
   assert.equal(full.steps[0].street, 'Test Street');
   assert.deepEqual(full.limits, [[0, 50], [10, 30], [15, null]]);
+  assert.deepEqual(full.tunnels, [[12, 15]], 'a tunnel in two edges is one stretch');
   assert.equal(full.shapes, undefined, 'encoded shapes stay on the server');
 });
 
@@ -404,6 +406,7 @@ test('a stop splits the drive into legs but stays one route', async () => {
   assert.deepEqual(route.steps.map((s) => s.begin), [0, 10, 10, 20]);
   // The fake service answers every leg the same way; the second leg's runs are shifted by its offset (10).
   assert.deepEqual(route.limits, [[0, 50], [10, 30], [15, null], [10, 50], [20, 30], [25, null]]);
+  assert.deepEqual(route.tunnels, [[12, 15], [22, 25]], 'each leg’s tunnel, at its offset');
 });
 
 test('polylines round-trip', () => {

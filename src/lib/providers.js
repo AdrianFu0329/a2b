@@ -302,12 +302,17 @@ export function lanes(list) {
   return out.some((l) => l.use) ? out : null;
 }
 
-// Posted speed limits and toll booths along a route, from OpenStreetMap via Valhalla's trace_attributes.
-// limits: runs [[first shape index, km/h or null], ...], one entry per change; tolls: shape indexes of toll plazas.
+// Posted speed limits, toll booths and tunnels along a route, from OpenStreetMap via Valhalla's trace_attributes.
+// limits: runs [[first shape index, km/h or null], ...], one entry per change; tolls: shape indexes of toll plazas;
+// tunnels: [[first, last shape index], ...], where GPS drops out (public/dead-reckoning.js keeps the car moving).
 export async function fetchRouteAttributes(env, shapes, coords) {
   const perLeg = await Promise.all(shapes.map(({ shape }) => fetchLegEdges(env, shape)));
-  const runs = [], tolls = [];
+  const runs = [], tolls = [], tunnels = [];
   perLeg.forEach((edges, i) => {
+    for (const [a, b] of tunnelRuns(edges ?? [], shapes[i].offset)) {
+      if (tunnels.length && a - tunnels.at(-1)[1] <= 1) tunnels.at(-1)[1] = Math.max(tunnels.at(-1)[1], b);
+      else tunnels.push([a, b]);
+    }
     for (const [at, v] of (edges && speedLimitRuns(edges)) ?? [[0, null]]) {
       if (!runs.length || runs.at(-1)[1] !== v) runs.push([at + shapes[i].offset, v]);
     }
@@ -315,7 +320,19 @@ export async function fetchRouteAttributes(env, shapes, coords) {
       if (!tolls.length || distance(coords[tolls.at(-1)], coords[at]) > 300) tolls.push(at);
     }
   });
-  return { limits: runs.some((r) => r[1] != null) ? runs : null, tolls };
+  return { limits: runs.some((r) => r[1] != null) ? runs : null, tolls, tunnels };
+}
+
+// Shape index ranges of the tunnel edges, joined where one runs into the next (a long tunnel is several edges).
+export function tunnelRuns(edges, offset = 0) {
+  const runs = [];
+  for (const e of edges) {
+    if (!e.tunnel || e.begin_shape_index == null) continue;
+    const a = e.begin_shape_index + offset, b = (e.end_shape_index ?? e.begin_shape_index) + offset;
+    if (runs.length && a - runs.at(-1)[1] <= 1) runs.at(-1)[1] = Math.max(runs.at(-1)[1], b);
+    else runs.push([a, b]);
+  }
+  return runs;
 }
 
 async function fetchLegEdges(env, shape) {
@@ -327,7 +344,7 @@ async function fetchLegEdges(env, shape) {
       encoded_polyline: shape,
       shape_match: 'edge_walk',
       costing: 'auto',
-      filters: { attributes: ['edge.speed_limit', 'edge.begin_shape_index', 'edge.end_shape_index', 'node.type'], action: 'include' },
+      filters: { attributes: ['edge.speed_limit', 'edge.tunnel', 'edge.begin_shape_index', 'edge.end_shape_index', 'node.type'], action: 'include' },
     }),
     signal: AbortSignal.timeout(4000),
   });
