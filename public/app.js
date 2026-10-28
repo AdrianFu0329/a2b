@@ -22,6 +22,7 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
+import { isSchoolTime, schoolAhead } from './school-zones.js';
 import { matchesWordStarts } from './text.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
@@ -86,6 +87,7 @@ let trail = []; // lines driven earlier in this drive: parts of routes replaced 
 let offTrail = []; // where the car has been since it left the current route
 const tollsSpoken = new Set(); // toll plazas (route + index) already announced this drive
 const camerasWarned = new Set(); // fixed speed cameras (route + index) already announced this drive
+const schoolsWarned = new Set(); // school zones (route + index) already announced this drive
 const cameraPins = [];
 
 // ================= Boot =================
@@ -586,6 +588,23 @@ function checkCameras() {
     <div class="alert-actions"><button class="btn ghost" data-a="dismiss">OK</button></div><div class="alert-timer"><i style="animation-duration:10000ms"></i></div>`;
   card.classList.remove('hidden');
   card.querySelector('[data-a]').onclick = () => card.classList.add('hidden');
+}
+
+// While driving at school times: a spoken "School zone ahead" and a chip from about 300 m before each school on the
+// route until just past it. Nothing outside the school runs. See school-zones.js.
+function checkSchools() {
+  const chip = $('school-chip');
+  const next = state.settings.alerts && isSchoolTime(Date.now(), live.snapped) && schoolAhead(live.along, nav.route.schools, nav.cum);
+  if (!next) return chip.classList.add('hidden');
+  const { school, ahead } = next;
+  const units = state.settings.units;
+  chip.innerHTML = `<b>SCHOOL</b><span>${ahead > 0 ? formatDistance(ahead, units) : 'Now'} · Slow down${school.name ? `<small>${esc(school.name)}</small>` : ''}</span>`;
+  chip.classList.remove('hidden');
+  const key = `${nav.total}:${school.at}`;
+  if (ahead > 0 && !schoolsWarned.has(key)) {
+    schoolsWarned.add(key);
+    speak('School zone ahead. Slow down.');
+  }
 }
 
 // Turn arrow on the map for the next maneuver: from just before the turn to just after it
@@ -1555,7 +1574,9 @@ function startDrive() {
   drawTrail();
   tollsSpoken.clear();
   camerasWarned.clear();
+  schoolsWarned.clear();
   $('toll-chip').classList.add('hidden');
+  $('school-chip').classList.add('hidden');
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
   live = null;
@@ -1633,6 +1654,7 @@ function driveTick(fix) {
   if (live.prompt) speak(live.prompt);
   checkTolls();
   checkCameras();
+  checkSchools();
   checkAlerts();
   if (share) pushShare();
 
@@ -1938,6 +1960,7 @@ async function endDrive(arrived) {
   offTrail = [];
   drawTrail();
   $('toll-chip').classList.add('hidden');
+  $('school-chip').classList.add('hidden');
   onRoute = [];
   stops = [];
   renderStopMenu();

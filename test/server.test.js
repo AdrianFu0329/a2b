@@ -27,6 +27,7 @@ const DETOUR = LINE.map(([lng, lat]) => [lng + 0.003, lat]); // a parallel stree
 let osmLookups = 0;
 let tomtomDown = false;
 let cameras = null; // the built speed camera list, as in public/cameras.json
+let schools = null; // the built school list, as in public/schools.json
 let tomtomCalls = 0;
 
 function fakeTrip(coords, time) {
@@ -117,6 +118,7 @@ globalThis.fetch = async (url, init = {}) => {
 const ASSETS = {
   async fetch(req) {
     if (new URL(req.url).pathname === '/cameras.json' && cameras) return Response.json({ cameras });
+    if (new URL(req.url).pathname === '/schools.json' && schools) return Response.json({ schools });
     const name = new URL(req.url).pathname.replace('/construction/', '');
     const key = construction && `${Math.floor(construction[0][0] / 0.05)}_${Math.floor(construction[0][1] / 0.05)}`;
     if (name === 'index.json') return Response.json({ tiles: key ? [key] : [] });
@@ -375,6 +377,22 @@ test('routes list the fixed speed cameras on them, not the ones across a divided
   }
   const none = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
   assert.deepEqual(none.body.routes[0].cameras, [], 'no list built: no cameras');
+});
+
+test('routes list the schools beside them, for school zone warnings', async () => {
+  // LINE runs north from 52.5 to 52.509 along 13.4; 0.001° of longitude is about 68 m here.
+  schools = [
+    [13.4012, 52.5036, 'Test Primary School'], // ~80 m east of the road, by point 8
+    [13.4, 52.5068, 'Test Secondary School'], // on it, between points 15 and 16
+    [13.41, 52.505, 'Far School'], // ~680 m off
+  ];
+  try {
+    const r = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
+    const full = r.body.routes.find((x) => x.coords.length === 21);
+    assert.deepEqual(full.schools.map((x) => [x.at, x.name]), [[8, 'Test Primary School'], [16, 'Test Secondary School']]);
+  } finally {
+    schools = null;
+  }
 });
 
 test('a camera mapped twice is warned about once', () => {
