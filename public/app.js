@@ -37,6 +37,10 @@ const ROUTE = {
   day: { main: '#9b2c6b', casing: '#4a0f31', driven: '#c3b3bd', drivenCasing: '#8f7a87' },
   night: { main: '#d0569a', casing: '#5e1640', driven: '#8a7684', drivenCasing: '#3b2f39' },
 };
+// At night the map's roads are plum, so a plum walking route melts into them: walks are a bright sky blue instead,
+// a colour nothing else on the night map uses (also for the walks in train trips).
+const WALK_NIGHT = { main: '#5ccbff', casing: '#06283d', driven: '#5d7685', drivenCasing: '#24323b' };
+const routeTheme = () => (travel === 'walk' && themeNow === 'night' ? WALK_NIGHT : ROUTE[themeNow]);
 const JAM_COLOURS = { 1: '#f2a516', 2: '#e8442e', 3: '#a3121c' }; // slow, queuing, stationary
 const REPORT_REFRESH_MS = 60_000;
 const STILL_SPEED = 1; // m/s; slower than this counts as standing still
@@ -311,7 +315,7 @@ function addMapLayers() {
     map.addLayer({ id: 'watch-route', type: 'line', source: 'watch-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ROUTE[themeNow].main, 'line-width': 6, 'line-opacity': 0.85 } }, before);
     // A trip by train (see drawTransit): walks dashed, rides in their line's colour.
     map.addSource('transit', { type: 'geojson', data: emptyFc() });
-    map.addLayer({ id: 'transit-walk', type: 'line', source: 'transit', filter: ['==', ['get', 'mode'], 'walk'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#5f6b76', 'line-width': 4, 'line-dasharray': [0.1, 2] } }, before);
+    map.addLayer({ id: 'transit-walk', type: 'line', source: 'transit', filter: ['==', ['get', 'mode'], 'walk'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': themeNow === 'night' ? WALK_NIGHT.main : '#5f6b76', 'line-width': themeNow === 'night' ? 6 : 4, 'line-dasharray': [0.1, 2] } }, before);
     map.addLayer({ id: 'transit-ride-casing', type: 'line', source: 'transit', filter: ['==', ['get', 'mode'], 'train'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 13] } }, before);
     map.addLayer({ id: 'transit-ride', type: 'line', source: 'transit', filter: ['==', ['get', 'mode'], 'train'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 9] } }, before);
     map.addLayer({ id: 'transit-stops', type: 'circle', source: 'transit', filter: ['==', ['get', 'mode'], 'stop'], paint: { 'circle-radius': 6, 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 3 } });
@@ -648,6 +652,7 @@ function drawRoutes() {
     features.sort((a, b) => a.properties.selected - b.properties.selected);
   }
   src.setData({ type: 'FeatureCollection', features });
+  map.setPaintProperty('routes-casing', 'line-color', routeTheme().casing); // a walk's own colours at night
   map.setPaintProperty('routes-main', 'line-gradient', mode === 'preview' ? routeColours(routes[selected], 0) : null);
   drawManeuverArrow();
 }
@@ -673,7 +678,7 @@ function drawDriveLine() {
   if (Math.abs(to - trimmedTo) * nav.total < 1) return;
   trimmedAt = now;
   trimmedTo = to;
-  const c = ROUTE[themeNow];
+  const c = routeTheme();
   map.setPaintProperty('routes-casing', 'line-gradient', ['step', ['line-progress'], c.drivenCasing, to, c.casing]);
   map.setPaintProperty('routes-main', 'line-gradient', routeColours(nav.route, to));
 }
@@ -681,7 +686,7 @@ function drawDriveLine() {
 // The selected route's colours along its length: muted where already driven (up to `driven`, a fraction of the
 // length), then the route colour, with live-traffic and driver-speed jams in amber to deep red.
 function routeColours(route, driven) {
-  const c = ROUTE[themeNow];
+  const c = routeTheme();
   const jams = [...(route?.traffic?.jams ?? []), ...(route?.probe_jams ?? [])];
   const cuts = [...new Set([0, driven, ...jams.flatMap((j) => [j.from, j.to])])].filter((x) => x >= 0 && x < 1).sort((x, y) => x - y);
   const levelAt = (x) => Math.max(0, ...jams.filter((j) => j.from <= x && x < j.to).map((j) => j.level));
