@@ -288,8 +288,8 @@ body.walking #speedo, body.walking #limit, body.walking #toll-chip, body.walking
 .ride-stops li.walk::before { border-style: dotted; }
 .rider { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--rider, #1c7ed6); color: #fff; border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.35); }
 .rider svg { width: 20px; height: 20px; }
-.rider.walker { width: 22px; height: 22px; background: #1c7ed6; }
-.rider.walker svg { display: none; }
+.rider.walker { width: 44px; height: 44px; background: none; border: 0; box-shadow: none; color: var(--car, #e23d9b); filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.35)); }
+.rider.walker svg { width: 44px; height: 44px; }
 .route-opt.t-opt { flex-wrap: wrap; }
 .t-opt .t-steps { flex-basis: 100%; }
 .t-legs { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
