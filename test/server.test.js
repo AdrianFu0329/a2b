@@ -25,6 +25,7 @@ let failWithExcludes = false;
 let lastLocateBody = null;
 const DETOUR = LINE.map(([lng, lat]) => [lng + 0.003, lat]); // a parallel street ~200 m east
 let osmLookups = 0;
+let signedTrip = null; // a route with a signed exit, for the exit-sign test
 let tomtomDown = false;
 let cameras = null; // the built speed camera list, as in public/cameras.json
 let tomtomCalls = 0;
@@ -71,6 +72,7 @@ globalThis.fetch = async (url, init = {}) => {
       const a = fakeTrip(LINE.slice(0, 11), 60), b = fakeTrip(LINE.slice(10), 60);
       return Response.json({ trip: { summary: { length: 2, time: 120 }, legs: [a.legs[0], b.legs[0]] } });
     }
+    if (signedTrip) return Response.json({ trip: signedTrip });
     return Response.json({ trip: fakeTrip(LINE, 120), alternates: [{ trip: fakeTrip(LINE.slice(0, 15), 90) }] });
   }
   if (u.includes('/trace_attributes')) {
@@ -905,5 +907,28 @@ test('presence check-ins admit new devices without a per-network throttle', asyn
     for (let i = 0; i < 5; i++) assert.equal((await check(`fresh-device-${i}`)).status, 200);
   } finally {
     await env.DB.prepare('DELETE FROM presence').run();
+  }
+});
+
+test('an exit’s sign comes with its step, and the cues name it', async () => {
+  const coords = [[13.4, 52.5], [13.4, 52.505], [13.401, 52.51]];
+  const trip = fakeTrip(coords, 120);
+  trip.legs[0].maneuvers.splice(1, 0, {
+    type: 21, instruction: 'Take exit 218 on the left.', verbal_transition_alert_instruction: 'Take exit 218.', verbal_pre_transition_instruction: 'Take exit 218 onto 241.',
+    street_names: ['241'], begin_shape_index: 1, end_shape_index: 2, length: 0.5, time: 30,
+    sign: { exit_number_elements: [{ text: '218' }], exit_branch_elements: [{ text: '241' }], exit_toward_elements: [{ text: 'Seremban' }, { text: 'Labu' }] },
+  });
+  trip.legs[0].maneuvers[0].end_shape_index = 1;
+  signedTrip = trip;
+  try {
+    const r = await client()('POST', '/api/route', { from: [13.4, 52.5], to: [13.401, 52.51] });
+    assert.equal(r.status, 200);
+    const exit = r.body.routes[0].steps.find((st) => st.sign);
+    assert.deepEqual(exit.sign, { exit: '218', roads: ['241'], toward: ['Seremban', 'Labu'] });
+    assert.equal(exit.alert, 'Take exit 218 towards Seremban and Labu.');
+    assert.equal(exit.pre, 'Take exit 218 onto 241 towards Seremban and Labu.');
+    assert.ok(r.body.routes[0].steps.filter((st) => st !== exit).every((st) => !('sign' in st)), 'only exits carry one');
+  } finally {
+    signedTrip = null;
   }
 });

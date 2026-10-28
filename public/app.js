@@ -23,6 +23,7 @@ import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
 import { matchesWordStarts } from './text.js';
+import { signPlaces } from './signs.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -1684,9 +1685,25 @@ function renderBanner() {
   if (next.type.startsWith('arrive')) street = dest?.name || 'Destination';
   if (next.type === 'stop') street = stops[0]?.name || 'Your stop';
   $('turn-street').textContent = street;
+  renderSign(next.sign);
   $('then').classList.toggle('hidden', !then);
   if (then) $('then-icon').innerHTML = stepIcon(then);
   renderLanes(next, distToNext);
+}
+
+// An exit's overhead sign, Malaysian style: a green panel with the exit number, the road it leads onto and where
+// it goes ("EXIT 218 · 241 · Seremban / Labu"). It stands in for the street line when it names places.
+function renderSign(sign) {
+  const box = $('turn-sign');
+  const places = signPlaces(sign);
+  box.classList.toggle('hidden', !sign);
+  $('turn-street').classList.toggle('hidden', Boolean(places));
+  if (!sign) return;
+  box.innerHTML = [
+    sign.exit ? `<span class="sign-exit">EXIT ${esc(sign.exit)}</span>` : '',
+    ...(sign.roads ?? []).map((r) => `<span class="sign-road">${esc(r)}</span>`),
+    places ? `<span class="sign-to">${esc(places)}</span>` : '',
+  ].join('');
 }
 
 // Which lanes to be in, shown as you get close to the turn.
