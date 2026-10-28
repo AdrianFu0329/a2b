@@ -24,9 +24,9 @@ test('metres to pixels: the same ground width at every zoom', () => {
   assert.equal(z1, 10);
   assert.equal(z2, 22);
   assert.ok(Math.abs(px2 / px1 - 2 ** 12) < 1e-6, 'doubles with each zoom');
-  // At zoom 17.5 near KL a metre is ~2.4 px: a 4.5 m band is ~10.7 px.
-  const at175 = px1 * 2 ** 7.5;
-  assert.ok(at175 > 10 && at175 < 11.5, `${at175}`);
+  // At zoom 17.5 near KL a metre is ~2.37 px.
+  const perM = (px1 * 2 ** 7.5) / BAND_M;
+  assert.ok(perM > 2.2 && perM < 2.55, `${perM}`);
   const byFeature = metresExpr(['get', 'shift'], 3.1);
   assert.deepEqual(byFeature[4][0], '/', 'a feature’s own metres, divided per zoom');
 });

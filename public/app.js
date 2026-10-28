@@ -317,11 +317,11 @@ function addMapLayers() {
     const band = (m) => metresExpr(m, 3.1); // resized for the junction's own latitude when shown (junctionLook)
     const shift = metresExpr(['get', 'shift'], 3.1);
     const lineLayout = { 'line-cap': 'round', 'line-join': 'round' };
-    map.addLayer({ id: 'junction-glow', type: 'line', source: 'junction', layout: lineLayout, paint: { 'line-color': JUNCTION_GREEN, 'line-opacity': 0.35, 'line-blur': 10, 'line-width': band(BAND_M * 3), 'line-offset': shift } });
-    map.addLayer({ id: 'junction-shadow', type: 'line', source: 'junction', filter: ['get', 'bridge'], layout: lineLayout, paint: { 'line-color': '#000000', 'line-opacity': 0.55, 'line-blur': 6, 'line-width': band(BAND_M * 1.6), 'line-offset': shift, 'line-translate': [0, 7], 'line-translate-anchor': 'viewport' } });
+    map.addLayer({ id: 'junction-glow', type: 'line', source: 'junction', layout: lineLayout, paint: { 'line-color': JUNCTION_GREEN, 'line-opacity': 0.5, 'line-blur': 14, 'line-width': band(BAND_M * 2.5), 'line-offset': shift } });
+    map.addLayer({ id: 'junction-shadow', type: 'line', source: 'junction', filter: ['get', 'bridge'], layout: lineLayout, paint: { 'line-color': '#000000', 'line-opacity': 0.55, 'line-blur': 6, 'line-width': band(BAND_M * 1.6), 'line-offset': shift, 'line-translate': [0, 5], 'line-translate-anchor': 'viewport' } });
     map.addLayer({ id: 'junction-band', type: 'line', source: 'junction', filter: ['!', ['get', 'bridge']], layout: lineLayout, paint: { 'line-color': JUNCTION_GREEN, 'line-width': band(BAND_M), 'line-offset': shift } });
-    map.addLayer({ id: 'junction-bridge-edge', type: 'line', source: 'junction', filter: ['get', 'bridge'], layout: lineLayout, paint: { 'line-color': '#e9fff3', 'line-width': band(BAND_M * 1.35), 'line-offset': shift, 'line-translate': [0, -6], 'line-translate-anchor': 'viewport' } });
-    map.addLayer({ id: 'junction-bridge', type: 'line', source: 'junction', filter: ['get', 'bridge'], layout: lineLayout, paint: { 'line-color': JUNCTION_GREEN, 'line-width': band(BAND_M), 'line-offset': shift, 'line-translate': [0, -6], 'line-translate-anchor': 'viewport' } });
+    map.addLayer({ id: 'junction-bridge-edge', type: 'line', source: 'junction', filter: ['get', 'bridge'], layout: lineLayout, paint: { 'line-color': '#e9fff3', 'line-width': band(BAND_M * 1.25), 'line-offset': shift, 'line-translate': [0, -4], 'line-translate-anchor': 'viewport' } });
+    map.addLayer({ id: 'junction-bridge', type: 'line', source: 'junction', filter: ['get', 'bridge'], layout: lineLayout, paint: { 'line-color': JUNCTION_GREEN, 'line-width': band(BAND_M), 'line-offset': shift, 'line-translate': [0, -4], 'line-translate-anchor': 'viewport' } });
     map.addLayer({
       id: 'junction-cams', type: 'symbol', source: 'junction-cams',
       layout: { 'icon-image': 'junction-cam', 'icon-anchor': 'bottom', 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport', 'icon-offset': [0, -6], 'icon-allow-overlap': true, 'icon-ignore-placement': true },
@@ -1796,7 +1796,7 @@ function drawJunctionBand() {
 // after a style change, which brings the base layers back fresh.
 function junctionLook(on) {
   if (!map?.getLayer('junction-dim')) return;
-  map.setPaintProperty('junction-dim', 'fill-opacity', on ? (themeNow === 'night' ? 0.5 : 0.42) : 0);
+  map.setPaintProperty('junction-dim', 'fill-opacity', on ? (themeNow === 'night' ? 0.66 : 0.62) : 0);
   if (on && junction) {
     // Metres to pixels depend on latitude: size the band for where this junction is.
     for (const [id, m] of [['junction-glow', BAND_M * 3], ['junction-shadow', BAND_M * 1.6], ['junction-band', BAND_M], ['junction-bridge-edge', BAND_M * 1.35], ['junction-bridge', BAND_M]]) {

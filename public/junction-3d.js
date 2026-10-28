@@ -11,11 +11,11 @@
 export const PITCH = 65;
 export const ZOOM = 17.5;
 export const LANE_M = 3.5; // a Malaysian expressway lane
-export const BAND_M = 4.5; // the band: a lane and a bit, so it reads at a glance
+export const BAND_M = 8; // the band: about two lanes wide, like AMAP's, so it reads at a glance and covers the route line
 export const AHEAD_M = 200; // the band runs this far past the junction's last decision
 export const SHIFT_M = 300; // before a decision with lane data, the band moves over across this stretch
 const RAMP_M = 120; // ...sliding across in its first part
-const PIECE_M = 30; // ...in steps this long
+const PIECE_M = 10; // ...in steps this long (short, so the band's edge looks smooth, not stepped)
 const EARTH_M = 40075016.686;
 const TILE_PX = 512;
 
