@@ -83,12 +83,14 @@
       <button id="btn-save-place" class="icon-btn" aria-label="Save place"><svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6L12 16.7l-5.4 2.9 1.1-6-4.5-4.2 6.1-.8Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
       <button class="icon-btn" data-close="preview" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
     </div>
+    <div id="travel-seg" class="seg travel-seg" role="tablist"><button data-travel="drive">Drive</button><button data-travel="walk">Walk</button><button data-travel="transit">Train</button></div>
     <div id="route-list" class="route-list"></div>
     <div id="route-weather" class="route-weather hidden" aria-live="polite"></div>
     <p id="route-status" class="hint"></p>
     <div class="sheet-actions">
       <button id="btn-leave-later" class="btn ghost">Leave later</button>
       <button id="btn-go" class="btn primary" disabled>Go now</button>
+      <button id="btn-transit-maps" class="btn primary transit-only">Live times in Google Maps</button>
     </div>
   </section>
 

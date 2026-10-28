@@ -43,6 +43,8 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 | 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "petrol near klcc") for the nearest ones. |
 | ⛽ **On the map** | Petrol stations, hospitals, clinics and convenience stores show on the map when zoomed in. Tap one, or any station (LRT, MRT, KTM, monorail, bus) or landmark the map shows, for routes there. |
 | 🛣️ **Routes** | Up to three routes with drive time in live traffic (jams coloured on the line), arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
+| 🚶 **Walking** | Switch the route options to Walk for footpaths and pedestrian crossings, with the same spoken directions. |
+| 🚆 **By train** | Switch a route to Train for trips on the LRT, MRT, Monorail, BRT and KTM Komuter: the walk to the station, which line (in its colour) and which way, how often trains run, where to change and the walk at the end, drawn on the map. Live departure times open in Google Maps. |
 | 🗣️ **Turn by turn** | Spoken directions, the next turn and the one after, lane guidance, roundabout exits, a turn arrow on the map, and rerouting when you go off route. |
 | 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
@@ -125,6 +127,7 @@ Everything A2B uses is free and needs no key:
 | Weather (optional) | [Apple WeatherKit REST API](https://developer.apple.com/weatherkit/) (`WEATHERKIT_*` secrets, below) | Hourly forecasts for the exact spot; included with an Apple Developer Program membership (500,000 calls a month). Each ~11 km square is fetched at most once an hour. |
 | Weather | [MET Malaysia open data](https://developer.data.gov.my/realtime-api/weather) | 7-day forecasts for ~420 towns and live warnings. Used without WeatherKit, or when it fails; fetched once an hour for the whole country. Town positions are in `src/lib/met-towns.json` (`npm run met-towns`). |
 | Humidity at the destination | [MET Norway Locationforecast](https://api.met.no/weatherapi/locationforecast/2.0/documentation) | Free, also for commercial use, with credit. Only when the forecast has no humidity (MET Malaysia's doesn't), for what-to-wear tips. Each ~11 km square at most once an hour. |
+| Train timetables (LRT, MRT, Monorail, BRT, KTM Komuter) | [data.gov.my GTFS](https://developer.data.gov.my/realtime-api/gtfs-static) (Prasarana, KTMB) | Built with `npm run transit` into `src/lib/transit-data.json`, kept in git. Each feed runs to an end date the build prints; rebuild before then. Walks to and from stations use the routing server's walking routes. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
@@ -181,6 +184,7 @@ src/
   lib/traffic.js        live traffic for a route (TomTom)
   lib/weather.js        the weather along a route (WeatherKit, MET Malaysia, MET Norway)
   lib/shared-cache.js   outside services' answers shared by every driver (memory and D1)
+  lib/transit.js        trips by train (LRT, MRT, Monorail, BRT, KTM Komuter)
   lib/cameras.js        fixed speed cameras along a route
   lib/tolls.js          toll plazas and their prices
   lib/parking.js        car parks near a destination
@@ -258,7 +262,8 @@ over the internet included, you must offer them its source code under the same l
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL). Places and roads under
 construction from the [Overture Maps Foundation](https://overturemaps.org) (see `public/places/NOTICE.txt` once built).
 Map tiles by [OpenFreeMap](https://openfreemap.org), routing by [Valhalla](https://github.com/valhalla/valhalla),
-search by [Photon](https://github.com/komoot/photon), live traffic by [TomTom](https://www.tomtom.com). Weather
+search by [Photon](https://github.com/komoot/photon), live traffic by [TomTom](https://www.tomtom.com). Train
+timetables from Prasarana and KTMB through [data.gov.my](https://data.gov.my) (CC BY 4.0). Weather
 forecasts and warnings from [MET Malaysia](https://www.met.gov.my) through [data.gov.my](https://data.gov.my) (CC BY
 4.0), humidity from [MET Norway](https://api.met.no) (CC BY 4.0), and from
 [Apple Weather](https://weatherkit.apple.com/legal-attribution.html) when WeatherKit is set up.
