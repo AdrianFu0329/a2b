@@ -23,6 +23,7 @@ import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
 import { matchesWordStarts } from './text.js';
+import { restStopsAlong, nextRestStop, BreakClock } from './rest-stops.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -563,6 +564,46 @@ function checkTolls() {
   if (next.ahead > 0 && next.ahead <= 1000 && !tollsSpoken.has(key)) {
     tollsSpoken.add(key);
     speak(`Toll plaza in ${spokenDistance(next.ahead, units)}.`);
+  }
+}
+
+// While driving a long way: a chip for each R&R coming up on your side of the road, and after two hours without a
+// break, the next one suggested (spoken once). Tap the chip to stop there. See rest-stops.js.
+const LONG_DRIVE_M = 50_000;
+let restRows = null; // rest-stops.json's rows once loaded
+let restAlong = null; // { nav, list }: this route's stops
+let breakClock = null;
+const restSpoken = new Set();
+
+function loadRestStops() {
+  if (restRows) return;
+  fetch('/rest-stops.json')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => (restRows = d?.stops ?? null))
+    .catch(() => {});
+}
+
+function checkRest(fix) {
+  const chip = $('rest-chip');
+  const sinceBreak = breakClock?.update(Date.now(), fix.speed) ?? 0;
+  if (!restRows || !nav || !live) return;
+  if (restAlong?.nav !== nav) restAlong = { nav, list: restStopsAlong(nav.coords, nav.cum, restRows) };
+  const next = !stops.length && nextRestStop(live.along, restAlong.list, { sinceBreak, longDrive: nav.total >= LONG_DRIVE_M });
+  if (!next) return chip.classList.add('hidden');
+  const { stop, ahead, remind } = next;
+  const units = state.settings.units;
+  chip.innerHTML = `<b>${stop.kind === 's' ? 'R&amp;R' : 'REST'}</b><span>${remind ? 'Time for a break? ' : ''}${esc(stop.name === 'R&R' ? 'Rest and service area' : stop.name)}<small>${formatDistance(ahead, units)} ahead · Tap to stop here</small></span>`;
+  chip.onclick = () => {
+    chip.classList.add('hidden');
+    addStop({ name: stop.name, address: stop.kind === 's' ? 'R&R' : 'Lay-by', lat: stop.lat, lng: stop.lng });
+  };
+  chip.classList.remove('hidden');
+  const key = `${breakClock.since}:${stop.name}`;
+  if (remind && !restSpoken.has(key)) {
+    restSpoken.add(key);
+    const hours = Math.floor(sinceBreak / 3600);
+    const which = { 'R&R': 'An R&R', 'Lay-by': 'A lay-by' }[stop.name] ?? stop.name;
+    speak(`You've been driving for ${hours > 1 ? `over ${hours} hours` : 'a while'}. ${which} is ${spokenDistance(ahead, units)} ahead, if you'd like a break.`);
   }
 }
 
@@ -1556,6 +1597,11 @@ function startDrive() {
   tollsSpoken.clear();
   camerasWarned.clear();
   $('toll-chip').classList.add('hidden');
+  $('rest-chip').classList.add('hidden');
+  breakClock = new BreakClock(Date.now());
+  restAlong = null;
+  restSpoken.clear();
+  loadRestStops();
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
   live = null;
@@ -1632,6 +1678,7 @@ function driveTick(fix) {
   drawManeuverArrow();
   if (live.prompt) speak(live.prompt);
   checkTolls();
+  checkRest(fix);
   checkCameras();
   checkAlerts();
   if (share) pushShare();
@@ -1938,6 +1985,7 @@ async function endDrive(arrived) {
   offTrail = [];
   drawTrail();
   $('toll-chip').classList.add('hidden');
+  $('rest-chip').classList.add('hidden');
   onRoute = [];
   stops = [];
   renderStopMenu();
