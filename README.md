@@ -46,7 +46,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 | 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
 | 🅿️ **Parking** | Car parks near your destination, paid or free, with type and spaces. Pick one and the drive reroutes there. Or search "parking", "parking klcc" or "letak kereta pavilion". |
-| 🌦️ **Weather** | Whether it may rain when you arrive or on the way, at the time you'll be there, with MET Malaysia's warnings and a tip to prepare (an umbrella or raincoat, darker clothes, a jacket for the highlands). A voice heads-up a few km before possible heavy rain. |
+| 🌦️ **Weather and rest** | Whether it may rain when you arrive or on the way, at the time you'll be there, with MET Malaysia's warnings and short tips (an umbrella or raincoat, darker clothes, a jacket for the highlands, light sleeves when it's humid). A tip to rest every 2 hours on long or night drives, a spoken reminder after each 2 hours at the wheel, and a voice heads-up a few km before possible heavy rain. |
 | 🚧 **Roadworks** | Routes avoid roads that look to be still under construction, and roads drivers report as closed. |
 | 🚓 **Reports** | Traffic, police, crashes, hazards, blocked lanes, closures and cameras, with voice alerts ahead and "still there?" checks after. |
 | 🚗 **Your car** | A 3D chevron or car in the colour you like, a speedometer that turns red over the limit, and the road you've driven greyed out. |
@@ -123,6 +123,7 @@ Everything A2B uses is free and needs no key:
 | Live traffic (optional) | [TomTom Routing API](https://developer.tomtom.com) (`TOMTOM_KEY` secret) | Times each route with today's traffic; free up to a monthly quota. Without a key, routes use typical speeds. Answers aren't stored. |
 | Weather (optional) | [Apple WeatherKit REST API](https://developer.apple.com/weatherkit/) (`WEATHERKIT_*` secrets, below) | Hourly forecasts for the exact spot; included with an Apple Developer Program membership (500,000 calls a month). Each ~11 km square is fetched at most once an hour. |
 | Weather | [MET Malaysia open data](https://developer.data.gov.my/realtime-api/weather) | 7-day forecasts for ~420 towns and live warnings. Used without WeatherKit, or when it fails; fetched once an hour for the whole country. Town positions are in `src/lib/met-towns.json` (`npm run met-towns`). |
+| Humidity at the destination | [MET Norway Locationforecast](https://api.met.no/weatherapi/locationforecast/2.0/documentation) | Free, also for commercial use, with credit. Only when the forecast has no humidity (MET Malaysia's doesn't), for what-to-wear tips. Each ~11 km square at most once an hour. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
@@ -177,7 +178,7 @@ src/
   lib/providers.js      search (Photon) and routing (Valhalla), speed limits, reports along a route
   lib/construction.js   spotting roads that are probably still being built
   lib/traffic.js        live traffic for a route (TomTom)
-  lib/weather.js        the weather along a route (WeatherKit, MET Malaysia)
+  lib/weather.js        the weather along a route (WeatherKit, MET Malaysia, MET Norway)
   lib/cameras.js        fixed speed cameras along a route
   lib/tolls.js          toll plazas and their prices
   lib/parking.js        car parks near a destination
@@ -257,4 +258,5 @@ construction from the [Overture Maps Foundation](https://overturemaps.org) (see 
 Map tiles by [OpenFreeMap](https://openfreemap.org), routing by [Valhalla](https://github.com/valhalla/valhalla),
 search by [Photon](https://github.com/komoot/photon), live traffic by [TomTom](https://www.tomtom.com). Weather
 forecasts and warnings from [MET Malaysia](https://www.met.gov.my) through [data.gov.my](https://data.gov.my) (CC BY
-4.0), and from [Apple Weather](https://weatherkit.apple.com/legal-attribution.html) when WeatherKit is set up.
+4.0), humidity from [MET Norway](https://api.met.no) (CC BY 4.0), and from
+[Apple Weather](https://weatherkit.apple.com/legal-attribution.html) when WeatherKit is set up.

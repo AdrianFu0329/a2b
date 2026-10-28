@@ -21,7 +21,7 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
-import { weatherPoints, weatherQuery, describeTrip, wetAhead, spokenWeather } from './weather.js';
+import { weatherPoints, weatherQuery, describeTrip, wetAhead, spokenWeather, restReminder, drivesAtNight } from './weather.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -87,6 +87,7 @@ const tollsSpoken = new Set(); // toll plazas (route + index) already announced 
 const camerasWarned = new Set(); // fixed speed cameras (route + index) already announced this drive
 let weather = null; // { route, points, answer } for the route on screen or being driven (see weather.js)
 const weatherSpoken = new Set(); // wet stretches (route + point) already announced this drive
+let restsSaid = 0; // 2-hour rest reminders spoken this drive
 const cameraPins = [];
 
 // ================= Boot =================
@@ -1108,35 +1109,37 @@ function routeNote(rs) {
   return '';
 }
 
-// The weather on the way and on arrival for a route, leaving now (see weather.js). It's extra: a failure or a full
-// A2B just leaves the line out. Each route's answer is kept, so switching between routes doesn't ask again.
+// The weather on the way and on arrival for a route, leaving now, plus rest tips for a long or night drive (see
+// weather.js). The weather is extra: a failure or a full A2B just leaves it out. Each route's answer is kept, so
+// switching between routes doesn't ask again.
 async function loadWeather(route) {
   if (!route || state.settings.weather === false) return renderWeather(null);
   if (weather?.route === route) return renderWeather(weather);
   route.weather ??= (async () => {
     const points = weatherPoints(route);
-    if (!points.length) return null;
-    const answer = await api(`/api/weather?${weatherQuery(points)}`);
+    const answer = points.length ? await api(`/api/weather?${weatherQuery(points)}`).catch(() => null) : null;
     return { route, points, answer };
-  })().catch(() => null);
+  })();
   const w = await route.weather;
-  if (w && (routes[selected] === route || nav?.route === route)) {
+  if (routes[selected] === route || nav?.route === route) {
     weather = w;
     if (mode === 'preview') renderWeather(w);
-  } else if (mode === 'preview' && routes[selected] === route) renderWeather(null);
+  }
 }
 
 function renderWeather(w) {
   const box = $('route-weather');
-  const trip = w && describeTrip(w.answer, w.points, (at) => formatClock(new Date(at)));
+  const trip = w && describeTrip(w.answer, w.points, { start: Date.now(), seconds: w.route.duration }, {
+    clock: (at) => formatClock(new Date(at)),
+    duration: formatDuration,
+  });
   box.classList.toggle('hidden', !trip);
   if (!trip) return (box.innerHTML = '');
-  const lines = [trip.arrival, trip.ahead, ...trip.warnings].filter(Boolean);
   const credit = trip.sources.map((src) => `<a href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.name)}</a>`).join(' · ');
   box.dataset.sky = trip.sky;
   box.innerHTML = `<span class="w-ic" aria-hidden="true">${WEATHER_ICONS[trip.sky] ?? WEATHER_ICONS.clear}</span>
-    <div class="w-text">${lines.map((l, i) => `<p${i ? '' : ' class="w-main"'}>${esc(l)}</p>`).join('')}
-    ${trip.tips.length ? `<p class="w-tip">${esc(trip.tips.join(' '))}</p>` : ''}${credit ? `<small>${credit}</small>` : ''}</div>`;
+    <div class="w-text">${trip.lines.map((l, i) => `<p${i ? '' : ' class="w-main"'}>${esc(l)}</p>`).join('')}
+    ${trip.tips.length ? `<ul class="w-tips">${trip.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}${credit ? `<small>${credit}</small>` : ''}</div>`;
 }
 
 const WEATHER_ICONS = {
@@ -1147,11 +1150,19 @@ const WEATHER_ICONS = {
 };
 WEATHER_ICONS['heavy-rain'] = WEATHER_ICONS.rain;
 WEATHER_ICONS.haze = WEATHER_ICONS.windy = WEATHER_ICONS.cloudy;
+WEATHER_ICONS.rest = '<svg viewBox="0 0 24 24"><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5Z" fill="currentColor"/><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5c-.8 1 .8 2 0 3M12 3.5c-.8 1 .8 2 0 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
-// While driving: one spoken heads-up a few km before rain or a storm the forecast puts on the way. After a reroute,
-// the new route's weather is fetched (from the server's hourly cache, so it's cheap).
+// While driving: one spoken heads-up a few km before rain or a storm the forecast puts on the way, and a reminder
+// to rest every 2 hours at the wheel. After a reroute, the new route's weather is fetched (from the server's hourly
+// cache, so it's cheap).
 function checkWeather() {
   if (state.settings.weather === false || !nav || !live) return;
+  const rest = restReminder((Date.now() - driveStarted) / 1000, restsSaid, drivesAtNight(Date.now(), 0));
+  if (rest) {
+    restsSaid++;
+    speak(rest);
+    toast(rest, 8000);
+  }
   if (weather?.route !== nav.route) return void loadWeather(nav.route);
   const next = wetAhead(weather.answer, weather.points, live.along);
   const key = next && `${nav.total}:${next.i}`;
@@ -1435,6 +1446,7 @@ function startDrive() {
   tollsSpoken.clear();
   camerasWarned.clear();
   weatherSpoken.clear();
+  restsSaid = 0;
   $('toll-chip').classList.add('hidden');
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');

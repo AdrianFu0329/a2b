@@ -8,7 +8,9 @@
 // hourly, for the exact spot. Each ~11 km square is fetched at most once an hour and shared by everyone driving
 // through it. Without a key, or when WeatherKit fails, MET Malaysia's free open forecast (api.data.gov.my) is used
 // instead: morning, afternoon and night for the nearest of its ~420 towns and districts, fetched once an hour for
-// the whole country. The weather is a nice-to-have: anything that fails just leaves that point without a forecast.
+// the whole country. MET Malaysia has no humidity, so for the destination it's added from MET Norway's free
+// Locationforecast (api.met.no), one fetch per square per hour. The weather is a nice-to-have: anything that fails
+// just leaves that point without a forecast, or without humidity.
 
 import { distance } from '../../public/geo.js';
 import TOWNS from './met-towns.json' with { type: 'json' };
@@ -16,6 +18,7 @@ import TOWNS from './met-towns.json' with { type: 'json' };
 const MET_FORECAST = 'https://api.data.gov.my/weather/forecast/?limit=10000';
 const MET_WARNINGS = 'https://api.data.gov.my/weather/warning/?limit=50';
 const WEATHERKIT = 'https://weatherkit.apple.com/api/v1/weather/en';
+const MET_NORWAY = 'https://api.met.no/weatherapi/locationforecast/2.0/compact';
 const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
 export const MAX_POINTS = 8;
 const CELL_DEG = 0.1; // ~11 km squares share one WeatherKit forecast
@@ -27,6 +30,7 @@ const MYT = 8 * 3600_000; // Malaysia time, which MET Malaysia's dates and times
 export const SOURCES = {
   weatherkit: { name: ' Weather', url: 'https://weatherkit.apple.com/legal-attribution.html' },
   met: { name: 'MET Malaysia', url: 'https://www.met.gov.my' },
+  metno: { name: 'MET Norway', url: 'https://api.met.no' },
 };
 
 // ---------- What the weather means for a driver ----------
@@ -179,6 +183,30 @@ export function weatherKitAt(hours, at) {
 // "MostlyCloudy" -> "Mostly cloudy".
 const conditionText = (code) => String(code ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/^./, (c) => c.toUpperCase());
 
+// ---------- MET Norway (humidity) ----------
+
+// The hourly temperature and humidity for one square: [start ms, °C, humidity 0-1]. MET Norway asks every app to
+// say who it is in the User-Agent and not to ask for the same place more than its Expires header allows (~30 min).
+async function metNorwayHours(cell, cache) {
+  const [lat, lng] = cell;
+  const key = new Request(`https://cache.a2b/weather/metno/${lat}/${lng}`);
+  const hit = cache && (await cache.match(key));
+  if (hit) return hit.json();
+  const res = await fetch(`${MET_NORWAY}?lat=${lat}&lon=${lng}`, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`MET Norway ${res.status}`);
+  const hours = ((await res.json()).properties?.timeseries ?? []).map((t) => [
+    Date.parse(t.time), t.data?.instant?.details?.air_temperature ?? null, (t.data?.instant?.details?.relative_humidity ?? NaN) / 100,
+  ]);
+  if (cache) await cache.put(key, new Response(JSON.stringify(hours), { headers: { 'cache-control': `public, max-age=${FORECAST_TTL}` } }));
+  return hours;
+}
+
+export function metNorwayAt(hours, at) {
+  const h = hours.filter((x) => x[0] <= at + 1800_000).at(-1);
+  if (!h || at - h[0] > 3 * 3600_000 || !Number.isFinite(h[2])) return null;
+  return { temp: h[1], humidity: Math.round(h[2] * 100) / 100 };
+}
+
 // ---------- Both together ----------
 
 async function cachedJson(url, ttl, cache, cacheKey) {
@@ -217,12 +245,21 @@ export async function weatherAlong(env, points, { now = Date.now(), cache = glob
     }),
   );
 
+  // Humidity for the destination, for what-to-wear tips, when the forecast came without it.
+  const last = points.length - 1, dest = forecasts[last];
+  if (dest && dest.humidity == null) {
+    const extra = await metNorwayHours(cellOf([points[last].lng, points[last].lat]), cache)
+      .then((hours) => metNorwayAt(hours, points[last].at))
+      .catch((e) => (console.warn('weather', e.message), null));
+    if (extra) forecasts[last] = { ...dest, temp: dest.temp ?? extra.temp, humidity: extra.humidity, extra: 'metno' };
+  }
+
   const states = [...new Set(towns.filter(Boolean).map((t) => t.state))];
   const end = Math.max(now, ...points.map((p) => p.at));
   const warnings = await cachedJson(MET_WARNINGS, WARNINGS_TTL, cache, 'https://cache.a2b/weather/met/warnings')
     .then((w) => warningsFor(Array.isArray(w) ? w : [], states, now, end))
     .catch(() => []);
 
-  const used = new Set([...forecasts.filter(Boolean).map((f) => f.source), ...(warnings.length ? ['met'] : [])]);
+  const used = new Set([...forecasts.filter(Boolean).flatMap((f) => [f.source, f.extra].filter(Boolean)), ...(warnings.length ? ['met'] : [])]);
   return { points: forecasts, warnings, sources: [...used].map((s) => SOURCES[s]) };
 }

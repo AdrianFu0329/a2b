@@ -46,6 +46,7 @@ globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   if (u.includes('api.data.gov.my/weather/forecast')) return Response.json([]);
   if (u.includes('api.data.gov.my/weather/warning')) return Response.json([]);
+  if (u.includes('api.met.no')) return Response.json({ properties: { timeseries: [] } });
   if (u.includes('api.tomtom.com')) {
     tomtomCalls++;
     if (tomtomDown) return Response.json({ error: 'over quota' }, { status: 403 });

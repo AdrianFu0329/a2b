@@ -235,11 +235,13 @@ textarea.field { height: auto; padding: 12px 14px; resize: vertical; font: inher
 .route-weather[data-sky='cloudy'] .w-ic, .route-weather[data-sky='haze'] .w-ic, .route-weather[data-sky='windy'] .w-ic { color: var(--muted); }
 .route-weather[data-sky='rain'] .w-ic, .route-weather[data-sky='heavy-rain'] .w-ic { color: #2f80ed; }
 .route-weather[data-sky='storm'] .w-ic { color: #7b4fd6; }
+.route-weather[data-sky='rest'] .w-ic { color: var(--accent-text); }
 .route-weather svg { width: 24px; height: 24px; display: block; }
 .route-weather .w-text { min-width: 0; }
 .route-weather p { margin: 0; overflow-wrap: anywhere; }
 .route-weather .w-main { font-weight: 600; }
-.route-weather .w-tip { margin-top: 4px; font-weight: 600; color: var(--accent-text); }
+.route-weather .w-tips { margin: 6px 0 0; padding-left: 18px; font-weight: 600; color: var(--accent-text); }
+.route-weather .w-tips li + li { margin-top: 2px; }
 .route-weather small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
 .route-weather small a { color: inherit; }
 .route-opt { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 2px solid var(--line); text-align: left; }
