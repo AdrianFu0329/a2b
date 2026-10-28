@@ -9,7 +9,7 @@ import { TrainGuide, markerFor, walkText, boardText } from './train-guide.js';
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
-import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES } from './places.js';
+import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES, addTypeSource } from './places.js';
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -403,13 +403,16 @@ function arrowHeadImage() {
 
 // A rounded amber tag reading TOLL, for toll plazas on the map.
 // ---------- Places on the map you can tap to go ----------
-// Petrol stations, hospitals, clinics and convenience stores come from this phone's Overture files
-// (public/places.js), drawn by A2B when the map is zoomed in far enough to be useful, while browsing or choosing a
+// Petrol stations, EV chargers, hospitals, clinics and convenience stores come from this phone's Overture files
+// (public/places.js; EV chargers also from the server's list), drawn by A2B when the map is zoomed in far enough to be useful, while browsing or choosing a
 // route (not while driving). Stations (LRT, MRT, KTM, monorail, buses), landmarks and the airport are already on
 // the base map from OpenStreetMap; tapping those works too. Either way, a tap shows the routes there.
-const POI_TYPES = ['fuel', 'hospital', 'clinic', 'convenience'];
+// EV chargers: the server keeps OpenStreetMap's and Open Charge Map's (src/lib/chargers.js); Overture's few are in the files.
+addTypeSource('ev', () => api('/api/chargers').then((r) => r.chargers ?? []));
+const CHARGERS_ATTRIBUTION = 'EV chargers: © OpenStreetMap contributors, Open Charge Map';
+const POI_TYPES = ['fuel', 'ev', 'hospital', 'clinic', 'convenience'];
 const POI_MIN_ZOOM = 13;
-const POI_STYLE = { fuel: { color: '#e8590c' }, hospital: { color: '#e03131' }, clinic: { color: '#1c7ed6' }, convenience: { color: '#2f9e44' } };
+const POI_STYLE = { fuel: { color: '#e8590c' }, ev: { color: '#0c8599' }, hospital: { color: '#e03131' }, clinic: { color: '#1c7ed6' }, convenience: { color: '#2f9e44' } };
 const BASE_PLACE_LAYERS = new Set(['poi', 'aerodrome_label']); // the base map's own labelled places
 const TAP_SLOP = 12; // px around a tap, for fingertips
 let basePlaceLayers = []; // this style's layers drawing those, found when it loads
@@ -456,7 +459,7 @@ async function drawPois() {
   });
 }
 
-// A round badge: a petrol pump, an H for a hospital, a cross for a clinic.
+// A round badge: a petrol pump, a lightning bolt for an EV charger, an H for a hospital, a cross for a clinic.
 function poiImage(type) {
   const size = 52, c = document.createElement('canvas');
   c.width = c.height = size;
@@ -469,7 +472,13 @@ function poiImage(type) {
   g.strokeStyle = '#ffffff';
   g.stroke();
   g.fillStyle = g.strokeStyle = '#ffffff';
-  if (type === 'hospital') {
+  if (type === 'ev') {
+    // A lightning bolt.
+    g.beginPath();
+    for (const [x, y] of [[29, 11], [17, 28], [25, 28], [22, 41], [35, 23], [27, 23], [31, 11]]) g.lineTo(x, y);
+    g.closePath();
+    g.fill();
+  } else if (type === 'hospital') {
     g.font = '800 26px system-ui, -apple-system, sans-serif';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
@@ -1156,7 +1165,7 @@ function showResults(q, near, places, note, overture, enter) {
     li.firstElementChild.onclick = () => pickPlace(p);
     ul.append(li);
   }
-  if (overture) ul.append(el('li', 'search-note', esc(placesAttribution)));
+  if (overture) ul.append(el('li', 'search-note', esc(places.some((p) => p.type === 'ev') ? `${placesAttribution} · ${CHARGERS_ATTRIBUTION}` : placesAttribution)));
   if (enter && places.length === 1) pickPlace(places[0]);
 }
 
