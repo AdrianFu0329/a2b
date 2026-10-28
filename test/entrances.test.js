@@ -15,15 +15,21 @@ const NODES = [
   { type: 'node', id: 5, lat: 3.1185, lon: 101.6760, tags: { amenity: 'parking_entrance', motorcar: 'no', name: 'Motorcycles' } },
 ];
 
-function fakeServers({ overpass = NODES, overpassDown = false, matrix = 'ok' } = {}) {
-  const calls = { overpass: 0, matrix: 0, bodies: [] };
+// The built file, as the Worker's static assets serve it.
+function assetsWith(nodes) {
+  const calls = { reads: 0 };
+  const assets = { fetch: async (req) => {
+    calls.reads++;
+    assert.equal(new URL(req.url).pathname, '/parking-entrances.json');
+    return nodes ? Response.json({ entrances: entranceRows(nodes) }) : new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } });
+  } };
+  return { assets, calls };
+}
+
+function fakeRouter({ matrix = 'ok' } = {}) {
+  const calls = { matrix: 0, bodies: [] };
   globalThis.fetch = async (url, init) => {
     const u = String(url);
-    if (u.startsWith('https://overpass-api.de/')) {
-      calls.overpass++;
-      assert.match(new URLSearchParams(String(init.body)).get('data'), /around:350,3\.118,101\.677\)\[amenity=parking_entrance\]/);
-      return overpassDown ? new Response('busy', { status: 429 }) : Response.json({ elements: overpass });
-    }
     if (u.endsWith('/sources_to_targets')) {
       calls.matrix++;
       const body = JSON.parse(init.body);
@@ -38,13 +44,14 @@ function fakeServers({ overpass = NODES, overpassDown = false, matrix = 'ok' } =
 }
 
 test('entrances drivers may use: private and motorcycle-only ones left out, customers kept, named by ref', () => {
-  assert.deepEqual(entranceRows(NODES).map((r) => r.name), ['Mid Valley Car Park Zone C', 'Entrance A', '']);
+  assert.deepEqual(entranceRows(NODES).map((r) => r[2]), ['Mid Valley Car Park Zone C', 'Entrance A', '']);
+  assert.deepEqual(entranceRows(NODES)[0], [101.6762, 3.1172, 'Mid Valley Car Park Zone C'], 'as the file keeps them: lng, lat, name');
 });
 
 test('the quickest entrance to reach from where you are, counting the walk to the place', async () => {
   forgetEntrances();
-  const calls = fakeServers();
-  const list = await entrancesNear({}, MID_VALLEY);
+  const calls = fakeRouter();
+  const list = await entrancesNear({ ASSETS: assetsWith(NODES).assets }, MID_VALLEY);
   assert.deepEqual(list.map((e) => e.name), ['', 'Mid Valley Car Park Zone C', 'Entrance A'], 'nearest the place first');
   const best = await pickEntrance({ ROUTING_URL: 'https://routing.test/route' }, [101.67, 3.08], list);
   assert.equal(best.name, 'Mid Valley Car Park Zone C');
@@ -55,25 +62,27 @@ test('the quickest entrance to reach from where you are, counting the walk to th
 
 test('the router down: the entrance nearest the place', async () => {
   forgetEntrances();
-  fakeServers({ matrix: 'down' });
-  const list = await entrancesNear({}, MID_VALLEY);
+  fakeRouter({ matrix: 'down' });
+  const list = await entrancesNear({ ASSETS: assetsWith(NODES).assets }, MID_VALLEY);
   assert.equal(await pickEntrance({ ROUTING_URL: 'https://routing.test/route' }, [101.67, 3.08], list), list[0]);
   assert.equal(await pickEntrance({}, [101.67, 3.08], []), null, 'none there');
 });
 
-test('entrances are kept for a day per spot (~100 m); a failed lookup isn’t kept', async () => {
+test('the file is read once; not built yet, the app still routes, and it looks again later', async () => {
   forgetEntrances();
-  fakeServers({ overpassDown: true });
-  await assert.rejects(entrancesNear({}, MID_VALLEY, { now: 0 }));
-  const calls = fakeServers();
-  await entrancesNear({}, MID_VALLEY, { now: 1000 });
-  await entrancesNear({}, [101.6772, 3.1181], { now: 3600_000 });
-  assert.equal(calls.overpass, 1, 'asked again after the failure, then kept');
-  await entrancesNear({}, MID_VALLEY, { now: 1000 + 86400_000 });
-  assert.equal(calls.overpass, 2, 'a day later, asked again');
+  const missing = assetsWith(null);
+  assert.deepEqual(await entrancesNear({ ASSETS: missing.assets }, MID_VALLEY, { now: 0 }), []);
+  await entrancesNear({ ASSETS: missing.assets }, MID_VALLEY, { now: 60_000 });
+  assert.equal(missing.calls.reads, 1, 'not every route');
+  const built = assetsWith(NODES);
+  assert.equal((await entrancesNear({ ASSETS: built.assets }, MID_VALLEY, { now: 700_000 })).length, 3, 'ten minutes on, found');
+  await entrancesNear({ ASSETS: built.assets }, [101.71, 3.15], { now: 800_000 });
+  assert.equal(built.calls.reads, 1, 'then kept');
+  assert.deepEqual(await entrancesNear({ ASSETS: built.assets }, [101.71, 3.15]), [], 'none near another place');
 });
 
 test('the street the route reaches the entrance on', () => {
   assert.equal(arrivalStreet({ steps: [{ street: 'Jalan Bukit Bintang' }, { street: 'Jalan Raja Chulan' }, { type: 'arrive', street: '' }] }), 'Jalan Raja Chulan');
   assert.equal(arrivalStreet({ steps: [] }), '');
+  assert.equal(arrivalStreet({ steps: [{ street: 'Jalan Syed Putra' }, { street: 'To Boulevard Hotel' }, { type: 'arrive' }] }), 'Jalan Syed Putra', 'not a sign');
 });

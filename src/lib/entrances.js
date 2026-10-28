@@ -3,49 +3,52 @@
 
 // Car park entrances at a destination. A route to a mall (Pavilion, Mid Valley, Sunway Pyramid) otherwise ends at
 // the middle of the building, often on a road on the wrong side of it. OpenStreetMap maps the entrances
-// (amenity=parking_entrance), so the drive can end at one: the one quickest to get to from where you are, counting
-// the walk from it to the place. Overpass finds them; one Valhalla matrix request times the drive to each. Any
-// failure just means no entrance, and the route goes to the place as before.
+// (amenity=parking_entrance); scripts/build-parking-entrances.mjs builds them into public/parking-entrances.json,
+// read here through the Worker's static assets like the speed cameras, so a route never waits on Overpass. The drive
+// ends at the one quickest to get to from where you are, counting the walk from it to the place: one Valhalla matrix
+// request times the drive to each. Any failure just means no entrance, and the route goes to the place as before.
 
 import { distance } from '../../public/geo.js';
 
 const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
-const OVERPASS = 'https://overpass-api.de/api/interpreter';
 export const RADIUS_M = 350;
 const CANDIDATES = 5; // timed per route request, the nearest to the place
-const CACHE_MS = 86400_000;
-const CACHE_MAX = 500;
 const WALK_MPS = 1.25;
 const WALK_DETOUR = 1.3;
+const RETRY_MS = 600_000; // the file missing (not built): look again after this
 const CLOSED = new Set(['private', 'no', 'permit', 'delivery', 'staff', 'employees']);
 
-const cache = new Map(); // "lat,lng" to ~100 m -> { at, list }
+let loaded = null; // { at, rows: [[lng, lat, name]] } once read, for this Worker instance
+
+async function allEntrances(assets, now) {
+  if (loaded && (loaded.rows.length || now - loaded.at < RETRY_MS)) return loaded.rows;
+  let rows = [];
+  try {
+    const res = await assets?.fetch(new Request('https://assets.local/parking-entrances.json'));
+    if (res?.ok && (res.headers.get('content-type') ?? '').includes('json')) rows = (await res.json()).entrances ?? [];
+  } catch {}
+  loaded = { at: now, rows };
+  return rows;
+}
 
 // The public car park entrances within RADIUS_M of `to` ([lng, lat]), nearest first: { name, lat, lng, m }.
 export async function entrancesNear(env, [lng, lat], { now = Date.now() } = {}) {
-  const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
-  const hit = cache.get(key);
-  if (hit && now - hit.at < CACHE_MS) return withDistance(hit.list, [lng, lat]);
-  const q = `[out:json][timeout:15];node(around:${RADIUS_M},${lat},${lng})[amenity=parking_entrance];out body;`;
-  const res = await fetch(env.OVERPASS_URL || OVERPASS, {
-    method: 'POST',
-    headers: { 'user-agent': UA, 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ data: q }),
-    signal: AbortSignal.timeout(6000),
-  });
-  if (!res.ok) throw new Error(`Overpass: ${res.status}`);
-  const list = entranceRows((await res.json()).elements ?? []);
-  cache.delete(key);
-  cache.set(key, { at: now, list });
-  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
-  return withDistance(list, [lng, lat]);
+  const pad = RADIUS_M / 100_000;
+  const near = [];
+  for (const [x, y, name] of await allEntrances(env.ASSETS, now)) {
+    if (Math.abs(y - lat) > pad || Math.abs(x - lng) > pad * 1.1) continue;
+    const m = Math.round(distance([lng, lat], [x, y]));
+    if (m <= RADIUS_M) near.push({ name, lat: y, lng: x, m });
+  }
+  return near.sort((a, b) => a.m - b.m);
 }
 
 export function forgetEntrances() {
-  cache.clear();
+  loaded = null;
 }
 
-// Overpass nodes -> entrances drivers may use. Customer-only ones stay: that's a mall's own car park.
+// Overpass nodes -> entrances drivers may use, as the build writes them: [lng, lat, name]. Customer-only ones stay:
+// that's a mall's own car park.
 export function entranceRows(elements) {
   return elements
     .filter((e) => e.lat != null && e.lon != null)
@@ -53,11 +56,9 @@ export function entranceRows(elements) {
     .map((e) => {
       const t = e.tags ?? {};
       const name = t['name:en'] || t.name || (t.ref ? `Entrance ${t.ref}` : '');
-      return { name, lat: e.lat, lng: e.lon };
+      return [Math.round(e.lon * 1e6) / 1e6, Math.round(e.lat * 1e6) / 1e6, name];
     });
 }
-
-const withDistance = (list, to) => list.map((e) => ({ ...e, m: Math.round(distance(to, [e.lng, e.lat])) })).sort((a, b) => a.m - b.m);
 
 // The entrance to drive to from `from`: the least drive time (one sources_to_targets request) plus the walk on to
 // the place. If the router can't say, the one nearest the place. Null when there are none.
@@ -93,7 +94,11 @@ async function driveTimes(env, [lng, lat], targets) {
 }
 
 // The road the route reaches the entrance on: the street of the last step that names one.
+// A step's "street" can be a road sign's destination ("To Boulevard Hotel"), not a road: skipped.
 export function arrivalStreet(route) {
-  for (let i = (route?.steps?.length ?? 0) - 1; i >= 0; i--) if (route.steps[i].street) return route.steps[i].street;
+  for (let i = (route?.steps?.length ?? 0) - 1; i >= 0; i--) {
+    const street = route.steps[i].street;
+    if (street && !/^to\s/i.test(street)) return street;
+  }
   return '';
 }

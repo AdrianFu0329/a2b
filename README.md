@@ -122,7 +122,7 @@ Everything A2B uses is free and needs no key:
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
 | Fixed speed cameras (AES, AWAS) | OpenStreetMap, found through Photon | Built with `npm run cameras` into `public/cameras.json`, kept in git. |
-| Car park entrances | OpenStreetMap, through the [Overpass API](https://overpass-api.de) (`OVERPASS_URL`) | Looked up per destination and kept for a day. |
+| Car park entrances | OpenStreetMap, through the [Overpass API](https://overpass-api.de) | Built with `npm run parking-entrances` into `public/parking-entrances.json`, kept in git. |
 
 The community servers ask for fair use, which is why the beta caps how many people use it at once. For more
 traffic, point `ROUTING_URL` and `GEOCODER_URL` at your own [Valhalla](https://github.com/valhalla/valhalla) and

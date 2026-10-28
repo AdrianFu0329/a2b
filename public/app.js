@@ -1281,8 +1281,15 @@ async function openPreview(place, { toPlace = false } = {}) {
 
 // A car park entrance makes sense for a place you drive to and park at (a mall, an office, a hospital), not for a
 // spot picked on the map, typed coordinates, a car park already, or Home.
+// Only big places with their own car parks: around a shop or an office, the nearest entrance can be another
+// building's (a shop in Bukit Bintang would end at Pavilion's car park).
+const ENTRANCE_PLACES = new Set([
+  'mall', 'shopping_centre', 'shopping_center', 'shopping_mall', 'department_store', 'hospital', 'specialty_hospital',
+  'stadium', 'university', 'college', 'conference_centre', 'convention_centre', 'convention_center', 'exhibition_centre',
+  'aerodrome', 'airport', 'theme_park', 'zoo',
+]);
 function wantsEntrance(place) {
-  return !place.exact && place.category !== 'parking' && place.name !== 'Home';
+  return !place.exact && ENTRANCE_PLACES.has(place.category);
 }
 
 // What the server did about closures, worth a line under the route options.

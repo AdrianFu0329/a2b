@@ -5,6 +5,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/worker.js';
 import { createD1 } from './d1-shim.js';
+import { entranceRows } from '../src/lib/entrances.js';
 import { hashPassword, verifyPassword, normalizeEmail } from '../src/lib/auth.js';
 import { extendedExpiry, shouldRemove } from '../src/lib/reports.js';
 import { buildRouteRequest, photonToPlace, lanes, searchPlaces, corridorBox, routeReportBox } from '../src/lib/providers.js';
@@ -58,10 +59,7 @@ globalThis.fetch = async (url, init = {}) => {
       sections: full ? [{ sectionType: 'TRAFFIC', startPointIndex: 10, endPointIndex: 15, magnitudeOfDelay: 2, delayInSeconds: 300 }] : undefined,
     }] });
   }
-  if (u.startsWith('https://overpass-api.de/') && /parking_entrance/.test(decodeURIComponent(String(init.body)))) {
-    entranceLookups++;
-    return Response.json({ elements: entranceNodes });
-  }
+
   if (u.endsWith('/sources_to_targets')) {
     // The entrance on the far side (east) is quicker to drive to.
     const { targets } = JSON.parse(init.body);
@@ -128,6 +126,10 @@ globalThis.fetch = async (url, init = {}) => {
 const ASSETS = {
   async fetch(req) {
     if (new URL(req.url).pathname === '/cameras.json' && cameras) return Response.json({ cameras });
+    if (new URL(req.url).pathname === '/parking-entrances.json') {
+      entranceLookups++;
+      return Response.json({ entrances: entranceRows(entranceNodes) });
+    }
     const name = new URL(req.url).pathname.replace('/construction/', '');
     const key = construction && `${Math.floor(construction[0][0] / 0.05)}_${Math.floor(construction[0][1] / 0.05)}`;
     if (name === 'index.json') return Response.json({ tiles: key ? [key] : [] });
@@ -934,12 +936,12 @@ test('routes to a big place end at its car park entrance, unless the app asks fo
     assert.deepEqual(r.body.entrance, { name: 'Entrance B', street: 'Test Street', lat: 52.5088, lng: 13.4012 }, 'the quicker one to reach');
     assert.deepEqual([lastRouteBody.locations.at(-1).lat, lastRouteBody.locations.at(-1).lon], [52.5088, 13.4012], 'the route ends there');
     await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509] });
-    assert.equal(entranceLookups, before + 1, 'kept for the day');
+    assert.equal(entranceLookups, before + 1, 'the file read once');
 
     const exact = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], entrances: false });
     assert.equal(exact.body.entrance, null);
     assert.deepEqual([lastRouteBody.locations.at(-1).lat, lastRouteBody.locations.at(-1).lon], [52.509, 13.4], 'the place itself');
-    assert.equal(entranceLookups, before + 1, 'not looked up');
+    assert.equal(entranceLookups, before + 1, 'not read again');
 
     forgetEntrances();
     entranceNodes = [];
