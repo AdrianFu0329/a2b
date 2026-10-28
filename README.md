@@ -45,6 +45,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 | 🛣️ **Routes** | Up to three routes with drive time in live traffic (jams coloured on the line), arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
 | 🚶 **Walking** | Switch the route options to Walk for footpaths and pedestrian crossings, with the same spoken directions. |
 | 🚆 **By train** | Switch a route to Train for trips on the LRT, MRT, Monorail, BRT and KTM Komuter: the walk to the station, which line (in its colour) and which way, how often trains run, where to change and the walk at the end, drawn on the map. Live departure times open in Google Maps. |
+| 🚇 **Train guidance** | Start a train trip to be guided through it: the walk to the station, which train, the next station as you go (estimated from the timetable underground, where GPS drops out), "Next stop: Masjid Jamek. Get off here." with a buzz, and where to change. A 3D train in the line's colour shows where you are on the line. Works while A2B is open on screen. |
 | 🗣️ **Turn by turn** | Spoken directions, the next turn and the one after, lane guidance, roundabout exits, a turn arrow on the map, and rerouting when you go off route. |
 | 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
