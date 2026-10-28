@@ -1740,10 +1740,12 @@ function showJunction(index) {
   for (const c of line) box.extend(c);
   if (shown) box.extend(shown.pos); // you, on your way in
   const heading = bearing(line[0], line.at(-1));
-  const padding = { top: Math.round(innerHeight * 0.36), bottom: 150, left: 40, right: 40 };
-  const cam = map.cameraForBounds(box, { padding, bearing: heading });
+  const padding = { top: Math.round(innerHeight * 0.36), bottom: Math.round(innerHeight * 0.25), left: 40, right: 40 }; // clear of the banner and the bottom panel, so your car shows
+  // The drive view's own padding counts towards the fit too, and with it the junction doesn't fit: clear it first.
+  map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+  const cam = map.cameraForBounds(box, { padding, bearing: heading }) ?? { center: box.getCenter(), zoom: 16 };
   camZoom = null;
-  if (cam) map.easeTo({ center: cam.center, zoom: Math.min(cam.zoom, 17.5), bearing: heading, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 900 });
+  map.easeTo({ center: cam.center, zoom: Math.min(cam.zoom, 17.5), bearing: heading, pitch: 0, duration: 900 });
   if (!junctionsSpoken.has(key)) {
     junctionsSpoken.add(key);
     speak(`${j.text}.`);
@@ -1771,6 +1773,7 @@ if (typeof location !== 'undefined' && ['localhost', '127.0.0.1'].includes(locat
       junctionForced = true;
     },
     exit: () => leaveJunction(),
+    camera: () => ({ zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing(), center: map.getCenter().toArray(), easing: map.isEasing() }),
   };
 }
 
