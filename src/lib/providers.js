@@ -10,6 +10,7 @@ import { normalizeText, matches } from '../../public/text.js';
 export { normalizeText, matches };
 import { pointAlong } from '../../public/nav.js';
 import { tollIndexes } from './tolls.js';
+import { findJunctions } from '../../public/junction-view.js';
 
 const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
 
@@ -249,6 +250,7 @@ export function normalizeTrip(trip, units = 'metric') {
   const coords = [];
   const steps = [];
   const shapes = [];
+  const maneuvers = []; // as Valhalla gave them, for finding junctions
   trip.legs.forEach((leg, li) => {
     const pts = decodePolyline(leg.shape, 6);
     const offset = Math.max(0, coords.length - 1); // each leg starts where the last one ended
@@ -260,6 +262,7 @@ export function normalizeTrip(trip, units = 'metric') {
       if (arriving && !last) {
         steps.push({ ...step(m, unit, offset), type: 'stop', alert: 'You will reach your stop.', pre: 'You have reached your stop.' });
       } else steps.push(step(m, unit, offset));
+      maneuvers.push({ type: m.type, length: m.length * unit, begin: m.begin_shape_index + offset, toward: (m.sign?.exit_toward_elements ?? []).map((e) => e.text) });
     }
   });
   return {
@@ -273,6 +276,7 @@ export function normalizeTrip(trip, units = 'metric') {
     stops: trip.legs.length - 1,
     via: viaName(steps),
     steps,
+    junctions: findJunctions(maneuvers),
   };
 }
 
