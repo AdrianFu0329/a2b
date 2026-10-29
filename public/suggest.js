@@ -190,12 +190,16 @@ async function send() {
   const btn = $('suggest-yes');
   btn.disabled = true;
   try {
-    await api('/api/suggestions', {
+    const { suggestion } = await api('/api/suggestions', {
       method: 'POST',
       body: { kind: s.kind, name, category: s.category, note: $('suggest-note')?.value ?? '', address: s.address ?? '', ...(s.kind === 'gone' ? {} : spot()), was },
     });
     closeSuggest(false);
-    toast("Thanks! We'll check it and add it to search.", 3500);
+    if (suggestion?.status === 'approved') {
+      // Another driver had said the same, so it's in search already (src/lib/suggestions.js agrees).
+      toast('Thanks! Another driver said the same, so it’s in search now.', 3500);
+      syncDriverPlaces(true);
+    } else toast("Thanks! We'll check it and add it to search.", 3500);
   } catch (e) {
     btn.disabled = false;
     fail(e.message);
