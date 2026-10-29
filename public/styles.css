@@ -329,12 +329,11 @@ body.walking #speedo, body.walking #limit, body.walking #toll-chip, body.walking
 .ride-sheet.closed .ride-stops, .ride-sheet.closed .sheet-actions, .ride-sheet.closed .ride-here-hint, .ride-sheet.closed .ride-eta { display: none; }
 .ride-eta { margin: 0 2px 6px; font-size: 15px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 #resume { z-index: 20; }
+#here-confirm { z-index: 21; } /* over the ride's sheet of stops */
 .ride-here-hint { margin: 8px 2px 0; color: var(--muted); font-size: 13px; text-align: center; }
 .ride-stops li[data-k] { cursor: pointer; border-radius: 8px; }
 .ride-stops li[data-k]:active { background: var(--bg-2); }
 /* Tapped once: tap again to say you're there. */
-.ride-stops li.ask { background: var(--bg-2); color: var(--text); font-weight: 700; }
-.ride-stops li.ask::after { content: 'Tap again: I’m here'; grid-column: 2; color: var(--accent-text); font-size: 13px; font-weight: 600; }
 .ride-stops { list-style: none; margin: 4px 0 0; padding: 0; font-size: 15px; }
 .ride-stops li { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: center; padding: 6px 2px; color: var(--muted); }
 .ride-stops li::before { content: ''; width: 12px; height: 12px; margin: 0 3px; border-radius: 50%; border: 3px solid var(--dot, var(--muted)); background: var(--bg); box-sizing: border-box; }

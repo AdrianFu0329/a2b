@@ -974,20 +974,13 @@ function wireUi() {
   $('btn-ride-start').onclick = startRide;
   $('btn-ride-stop').onclick = () => endRide(false);
   $('btn-ride-here').onclick = () => rideHere();
-  // On a ride, tap a station to say you're there, and again to be sure: a stray tap while scrolling the list mustn't
-  // move you (tapping your stop gets you off the train).
+  // On a ride, tap a station to say you're there. A sheet asks first: an accidental tap mustn't move you (tapping
+  // your stop gets you off the train, with "Get off here" said and buzzed).
   $('ride-stops').onclick = (e) => {
     const li = e.target.closest('li[data-k]');
-    if (!li) return;
-    const k = Number(li.dataset.k);
-    if (hereAsk?.k === k && Date.now() - hereAsk.at < 5000) {
-      hereAsk = null;
-      return rideHere(k);
-    }
-    hereAsk = { k, at: Date.now() };
-    for (const x of $('ride-stops').querySelectorAll('li.ask')) x.classList.remove('ask');
-    li.classList.add('ask');
+    if (li) askHere(Number(li.dataset.k));
   };
+  $('btn-here-no').onclick = () => $('here-confirm').classList.add('hidden');
   rideSheet.init();
   $('btn-compass').onclick = () => map.easeTo({ bearing: 0, pitch: 0 });
   $('btn-loc-retry').onclick = () => {
@@ -1109,7 +1102,7 @@ function closeScreen(id) {
   if (id === 'report-sheet') reportDraft = null;
 }
 
-const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'resume', 'preview'];
+const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'resume', 'here-confirm', 'preview'];
 
 // Closes the top-most screen; returns false when nothing was open.
 function closeTop() {
@@ -1711,11 +1704,30 @@ function noteReplan(msg) {
 }
 
 // "I'm already here": you say where you are when GPS can't (underground, inside a station, no signal).
-let hereAsk = null; // a station tapped once in the list, waiting for the second tap: { k, at }
 function rideHere(station = null) {
   if (mode !== 'ride' || !guide) return;
   if (!sayRide(guide.here({ now: rideNow(), station }))) return;
   rideTick();
+}
+
+// A station tapped in the list: what saying you're there would do (board the train, move you on, get you off), and
+// "I'm here" to do it. The big button needs no asking: its label already says where.
+function askHere(k) {
+  if (mode !== 'ride' || !guide || guide.leg.mode !== 'train') return;
+  const leg = guide.leg, at = guide.i, last = leg.stations.length - 1;
+  const name = leg.stations[k][0], after = guide.trip.legs[at + 1];
+  const waiting = guide.phase === 'wait';
+  $('here-title').textContent = waiting ? (k ? `On the train, at ${name}?` : 'On the train?') : `You’re at ${name}?`;
+  $('here-sub').textContent = k === last
+    ? after?.mode === 'train' ? `That’s where you change, to the ${after.line.name}.` : 'That’s your stop: you get off here.'
+    : waiting && !k ? `Leaving ${name} now. ${last} stop${last > 1 ? 's' : ''} to ${leg.to.name}.`
+    : `${last - k} stop${last - k > 1 ? 's' : ''} to ${leg.to.name} from there.`;
+  $('btn-here-yes').onclick = () => {
+    $('here-confirm').classList.add('hidden');
+    if (guide?.i === at) rideHere(k); // still on that train: the trip hasn't moved on (or been planned again) meanwhile
+  };
+  $('here-confirm').classList.remove('hidden');
+  armBack();
 }
 
 const sentence = (t) => t.replace(/\.$/, '');
@@ -1759,8 +1771,7 @@ function renderRide(view) {
     const last = leg.stations.length - 1;
     const states = view.stations ?? leg.stations.map(([name], k) => ({ name, state: k === last ? 'alight' : k === 0 ? 'next' : 'later' }));
     list.style.setProperty('--dot', leg.line.color);
-    const ask = hereAsk && Date.now() - hereAsk.at < 5000 ? hereAsk.k : null;
-    list.innerHTML = states.map((x, k) => `<li class="${x.state}${k === ask ? ' ask' : ''}" data-k="${k}" aria-label="I'm at ${esc(x.name)}">${esc(x.name)}${x.state === 'alight' ? ' · get off' : ''}</li>`).join('');
+    list.innerHTML = states.map((x, k) => `<li class="${x.state}" data-k="${k}" aria-label="I'm at ${esc(x.name)}">${esc(x.name)}${x.state === 'alight' ? ' · get off' : ''}</li>`).join('');
   } else {
     list.style.removeProperty('--dot');
     list.innerHTML = guide.trip.legs.slice(guide.i).map((l) => (l.mode === 'walk'
@@ -1872,6 +1883,7 @@ function stopCompass() {
 
 function endRide(arrived) {
   forgetTrip();
+  $('here-confirm').classList.add('hidden');
   clearInterval(rideTimer);
   rideTimer = null;
   const name = dest?.name ?? '';
