@@ -1100,6 +1100,28 @@ function onBack() {
 let searchTarget = null; // null = navigate | 'home' | 'work' | 'save'
 let searchSeq = 0;
 
+// The server's search for every caller, asked as little as possible: the location rounded to ~1 km (as the server
+// caches it) and the query in lower case, so a repeat within 10 minutes (a backspace, the same search again) is
+// answered on the phone, and a search still on its way is called off when a newer one starts (newest: true).
+const SEARCH_MEMO_MS = 10 * 60 * 1000;
+const searchMemo = new Map(); // url -> { at, promise }
+let searchAbort = null;
+function searchServer(q, near, { newest = false } = {}) {
+  const lang = (navigator.language || 'en').slice(0, 2);
+  const url = `/api/search?q=${encodeURIComponent(q.trim().toLowerCase())}&lat=${near[1].toFixed(2)}&lng=${near[0].toFixed(2)}&lang=${lang}`;
+  const hit = searchMemo.get(url);
+  if (hit && Date.now() - hit.at < SEARCH_MEMO_MS) return hit.promise;
+  if (newest) {
+    searchAbort?.abort();
+    searchAbort = new AbortController();
+  }
+  const promise = api(url, { signal: newest ? searchAbort.signal : undefined });
+  promise.catch(() => searchMemo.delete(url)); // a failure is asked again
+  searchMemo.set(url, { at: Date.now(), promise });
+  if (searchMemo.size > 60) searchMemo.delete(searchMemo.keys().next().value);
+  return promise;
+}
+
 function openSearchFor(target) {
   armBack();
   searchTarget = target;
@@ -1169,7 +1191,7 @@ async function runSearch(q, enter = false) {
     const [server, local] = pasted
       ? [{ places: [{ name: 'Coordinates', address: q, lat, lng }] }, []]
       : await Promise.all([
-          api(`/api/search?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}&lang=${(navigator.language || 'en').slice(0, 2)}`),
+          searchServer(q, near, { newest: true }),
           searchNearby(q, near).catch(() => []),
         ]);
     // A search for parking is answered with the car parks around the place (or you), nearest first: only those.
@@ -1222,8 +1244,7 @@ async function searchByType(q, near) {
   const mine = (await placesOfType(t.type, near)).filter((p) => matchesWordStarts(`${p.name} ${p.address}`, t.area));
   if (mine.length) return { places: mine, note: `${label} near you matching "${t.area}"` };
 
-  const lang = (navigator.language || 'en').slice(0, 2);
-  const search = (text) => api(`/api/search?q=${encodeURIComponent(text)}&lat=${near[1]}&lng=${near[0]}&lang=${lang}`);
+  const search = (text) => searchServer(text, near);
   const [whole, local, where] = await Promise.all([search(q).catch(() => ({ places: [] })), searchNearby(q, near).catch(() => []), search(t.area)]);
   const named = mergeResults(whole.places ?? [], local, q, near).filter((p) => matchesWordStarts(p.name, q)).slice(0, 3);
   // A mall or venue before a station of the same name, as the usual search ranks them.
