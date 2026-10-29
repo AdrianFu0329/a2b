@@ -622,8 +622,7 @@ const inboxTabs = (tab) =>
     .join('')}</div>`;
 
 // Places drivers suggested (src/lib/suggestions.js): each opens on the map to approve or reject (public/suggest.js).
-// The last few reviewed are listed under them, those two drivers agreed on too, and an approved one can be taken back
-// out of search.
+// The last few reviewed are listed under them, and an approved one can be taken back out of search.
 async function renderPlaceSuggestions(body) {
   let pending, reviewed;
   try {
@@ -637,7 +636,7 @@ async function renderPlaceSuggestions(body) {
     <p><b>${esc(suggestionSummary(s))}</b>${s.note ? `<br>“${esc(s.note)}”` : ''}</p>
     <small>${esc(s.by_name ?? 'Former driver')} · ${esc(when(s.created_at))}${s.address ? ` · ${esc(s.address)}` : ''}</small>
     <div class="fb-actions">${s.status === 'pending' ? '<button class="btn ghost" data-review>Review on map</button>'
-      : `<span class="fb-tag">${esc(s.auto && s.status === 'approved' ? 'Auto-approved: two drivers agreed' : { approved: 'Approved', rejected: 'Rejected', undone: 'Taken out' }[s.status] ?? s.status)} · ${esc(when(s.reviewed_at))}</span>${s.status === 'approved' ? '<button class="btn ghost" data-undo>Take out</button>' : ''}`}</div>
+      : `<span class="fb-tag">${esc({ approved: 'Approved', rejected: 'Rejected', undone: 'Taken out' }[s.status] ?? s.status)} · ${esc(when(s.reviewed_at))}</span>${s.status === 'approved' ? '<button class="btn ghost" data-undo>Take out</button>' : ''}`}</div>
   </div>`;
   body.innerHTML = `${pending.length ? pending.map(item).join('') : `<p class="hint" style="padding:12px 18px">No places waiting.</p>`}
     ${reviewed.length ? `<h3 class="list-head fb-head">Reviewed</h3>${reviewed.map(item).join('')}` : ''}`;

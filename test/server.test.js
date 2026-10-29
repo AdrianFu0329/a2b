@@ -635,7 +635,6 @@ test('feedback: anyone can send it, only the owner can read it, close it and reo
 });
 
 test('place suggestions: drivers with an account send them, testers approve, phones download the approved ones', async () => {
-  for (const t of ['place_suggestions', 'driver_places']) await env.DB.prepare(`DELETE FROM ${t}`).run();
   const guest = client('suggest-guest-1');
   assert.equal((await guest('POST', '/api/suggestions', { kind: 'add', name: 'Kedai Ah Seng', lat: 3.1, lng: 101.6 })).status, 401, 'an account is needed');
   const sam = client('suggest-sam-1');
@@ -675,56 +674,6 @@ test('place suggestions: drivers with an account send them, testers approve, pho
     assert.deepEqual(after.map((p) => [p.name, p.removed]), [['Kedai Runcit Ah Seng', 1]], 'taken out: phones are told to drop it');
     const { reviewed } = (await owner('GET', '/api/suggestions')).body;
     assert.deepEqual(reviewed.map((s) => s.status).sort(), ['approved', 'rejected', 'undone']);
-  } finally {
-    delete env.TESTER_EMAILS;
-  }
-});
-
-test('two drivers suggesting the same place approve it without a tester', async () => {
-  for (const t of ['place_suggestions', 'driver_places']) await env.DB.prepare(`DELETE FROM ${t}`).run();
-  const signup = async (name) => {
-    const c = client(`agree-${name}`);
-    await c('POST', '/api/auth/signup', { email: `${name}@agree.test`, password: 'password8', name });
-    return c;
-  };
-  const [ana, ben, cal] = [await signup('ana'), await signup('ben'), await signup('cal')];
-  const add = (c, name, lat, lng, more = {}) => c('POST', '/api/suggestions', { kind: 'add', name, lat, lng, ...more }).then((r) => r.body.suggestion);
-  const places = async () => (await ana('GET', '/api/driver-places?since=0')).body.places.filter((p) => !p.removed);
-
-  assert.equal((await add(ana, 'Kedai Kopi Ah Hock', 3.1, 101.6, { category: 'food', address: 'Jalan Ipoh' })).status, 'pending');
-  assert.equal((await add(ana, 'Kedai Kopi Ah Hock', 3.1, 101.6)).status, 'pending', 'the same driver twice is not two drivers');
-  assert.equal((await add(ben, 'Kedai Kopi Ah Hock', 3.105, 101.6)).status, 'pending', '550 m away: another spot');
-  assert.equal((await add(ben, 'Kopitiam Ah Hock', 3.1, 101.6)).status, 'pending', 'another name');
-  const second = await add(ben, 'kedai kopi  AH HOCK', 3.1006, 101.6);
-  assert.deepEqual([second.status, second.auto, second.name], ['approved', true, 'Kedai Kopi Ah Hock'], 'same name, 67 m apart');
-  let found = await places();
-  assert.equal(found.length, 1);
-  assert.deepEqual([found[0].category, found[0].address, found[0].lat], ['food', 'Jalan Ipoh', 3.1003], "the first one's details, the pin between the two");
-  const points = async (c) => (await c('GET', '/api/me')).body.user.points;
-  assert.deepEqual([await points(ana), await points(ben)], [10, 10]);
-
-  // A fix: two drivers moving the same wrong place to the same spot, or both saying it's gone.
-  const wrong = { name: 'Shell Kepong', lat: 3.2, lng: 101.63 };
-  await ana('POST', '/api/suggestions', { kind: 'move', lat: 3.201, lng: 101.631, was: wrong });
-  const moved = (await cal('POST', '/api/suggestions', { kind: 'move', lat: 3.2012, lng: 101.631, was: { ...wrong, lat: 3.2005 } })).body.suggestion;
-  assert.equal(moved.status, 'approved');
-  await ben('POST', '/api/suggestions', { kind: 'gone', was: { name: 'Petronas Jinjang', lat: 3.21, lng: 101.65 } });
-  assert.equal((await cal('POST', '/api/suggestions', { kind: 'gone', was: { name: 'Petronas Jinjang', lat: 3.2101, lng: 101.65 } })).body.suggestion.status, 'approved');
-  found = await places();
-  assert.deepEqual(found.map((p) => [p.name, p.hides_name, p.lat === null]), [
-    ['Kedai Kopi Ah Hock', null, false], ['Shell Kepong', 'Shell Kepong', false], ['Petronas Jinjang', 'Petronas Jinjang', true],
-  ]);
-
-  // A tester sees them as approved by agreement, and taking one out takes both drivers' points back.
-  const owner = await signup('boss');
-  env.TESTER_EMAILS = 'boss@agree.test';
-  try {
-    const { pending, reviewed } = (await owner('GET', '/api/suggestions')).body;
-    assert.equal(pending.length, 3, "the ones nobody agreed with still wait (ana's second Ah Hock, ben's far one and Kopitiam)");
-    assert.ok(reviewed.every((r) => r.auto));
-    await owner('POST', `/api/suggestions/${second.id}`, { action: 'undo' });
-    assert.deepEqual((await places()).map((p) => p.name), ['Shell Kepong', 'Petronas Jinjang']);
-    assert.deepEqual([await points(ana), await points(ben)], [10, 10], 'ana and ben each lose 10 (Ah Hock), keep 10 (their fixes)');
   } finally {
     delete env.TESTER_EMAILS;
   }
