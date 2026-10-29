@@ -23,6 +23,7 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
+import { DeadReckoner, shouldEstimate, nearTunnel, pointAt, BAD_ACCURACY_M } from './dead-reckoning.js';
 import { matchesWordStarts } from './text.js';
 import { signPlaces } from './signs.js';
 
@@ -823,7 +824,7 @@ function onFix(p) {
     accuracy: p.coords.accuracy,
     time: still ? prev.time : p.timestamp, // so the speed estimate spans the whole stop
   };
-  if (sim) return; // a simulated drive owns the car right now
+  if (sim || gpsBlocked) return; // a simulated drive owns the car right now (or a test is pretending the GPS is gone)
   handleFix(fix, !prev);
 }
 
@@ -833,6 +834,14 @@ function estSpeed(prev, lngLat, t) {
 }
 
 function handleFix(fix, first = false) {
+  if (mode === 'drive' && !sim) {
+    lastFixAt = Date.now();
+    lastFixAccuracy = fix.accuracy;
+    // A vague fix in a tunnel would drag the car off its route: leave it to the estimate (see tunnelTick).
+    if ((fix.accuracy ?? 0) > BAD_ACCURACY_M && (reckoner || tunnelAhead())) return;
+    if (reckoner) stopReckoning();
+    lastGoodSpeed = fix.speed ?? lastGoodSpeed;
+  }
   state.pos = fix;
   // Traffic sharing only buffers real drives: walking, browsing the map, and demo drives never become traffic.
   if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix); // walking speeds would look like a jam
@@ -2305,6 +2314,7 @@ function startDrive() {
   tollsSpoken.clear();
   camerasWarned.clear();
   $('toll-chip').classList.add('hidden');
+  startTunnelWatch();
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
   live = null;
@@ -2388,7 +2398,7 @@ function driveTick(fix) {
     checkCameras();
     checkAlerts();
   }
-  if (share) pushShare();
+  if (share && !fix.estimated) pushShare(); // viewers see the last real position, not a guess
 
   const stopStep = nav.steps.findIndex((st) => st.type === 'stop');
   if (stops.length && stopStep >= 0 && live.stepIndex >= stopStep) {
@@ -2401,6 +2411,58 @@ function driveTick(fix) {
   if (live.offRoute && (!offTrail.length || distance(offTrail.at(-1), fix.lngLat) > 5)) offTrail.push(fix.lngLat);
   if (live.offRoute) reroute(fix);
   if (live.arrived) arrive();
+}
+
+// ---------- Tunnel mode ----------
+// When the GPS goes quiet in a tunnel (or anywhere, while moving), keep the car going along the route at its last
+// speed, so the banner, distances and the turn after the tunnel keep coming. See dead-reckoning.js.
+let reckoner = null, tunnelTimer = null, lastFixAt = 0, lastFixAccuracy = null, lastGoodSpeed = 0, gpsBlocked = false;
+
+function tunnelAhead() {
+  return Boolean(nav && live && nearTunnel(live.along, nav.cum, nav.route.tunnels));
+}
+
+function startTunnelWatch() {
+  stopTunnelWatch();
+  lastFixAt = Date.now();
+  lastFixAccuracy = null;
+  lastGoodSpeed = 0;
+  tunnelTimer = setInterval(tunnelTick, 1000);
+}
+
+function stopTunnelWatch() {
+  clearInterval(tunnelTimer);
+  tunnelTimer = null;
+  stopReckoning();
+}
+
+function stopReckoning() {
+  reckoner = null;
+  $('dr-chip')?.classList.add('hidden');
+}
+
+function tunnelTick() {
+  if (mode !== 'drive' || sim || !nav || !live || live.offRoute) return;
+  const now = Date.now();
+  if (!reckoner) {
+    if (!shouldEstimate({ sinceFixMs: now - lastFixAt, accuracy: lastFixAccuracy, speed: lastGoodSpeed, tunnel: tunnelAhead() })) return;
+    reckoner = new DeadReckoner({ along: live.along, speed: lastGoodSpeed, now: now - 1000 });
+    $('dr-chip').classList.remove('hidden');
+  }
+  const est = reckoner.advance(now, live.limit);
+  if (est.done) return stopReckoning(); // too long without a fix to guess: the car waits where it is, as before
+  const { point, bearing: heading } = pointAt(nav.coords, nav.cum, est.along);
+  updateSpeedo(est.speed);
+  driveTick({ lngLat: point, heading, speed: est.speed, accuracy: 5, time: now, estimated: true });
+}
+
+// For testing on a phone or the Simulator: pretend the GPS has gone, then bring it back.
+if (['localhost', '127.0.0.1'].includes(location.hostname)) {
+  window.__tunnelTest = {
+    loseGps: () => (gpsBlocked = true),
+    restore: () => (gpsBlocked = false),
+    state: () => ({ estimating: Boolean(reckoner), along: live?.along, tunnels: nav?.route.tunnels ?? [] }),
+  };
 }
 
 // Glide the camera into the driving view (start of a drive, Recenter); frames take over from there.
@@ -2692,6 +2754,7 @@ async function arrive() {
 
 async function endDrive(arrived) {
   stopSimulation();
+  stopTunnelWatch();
   discardProbeBuffer(); // fixes buffered on this drive must not leak into a later batch
   parkingFor = null;
   $('parking-label').textContent = 'Parking nearby';
