@@ -237,6 +237,27 @@ test('a trip planned on board starts on the train, even with no GPS', () => {
   assert.equal(r.view.next, 'B', 'a minute after leaving A, by the clock');
 });
 
+test('when you\'ll get there: walking, waiting, riding, then the rest of the trip', () => {
+  const trip = oneRide(); // walk 300 m, ride A to D (6 min), walk 100 m (80 s)
+  const g = new TrainGuide(trip, { now: T0 });
+  const rest = 80_000;
+  let v = g.update({ now: T0, fix: fix(-300, { speed: 1.3 }) }).view;
+  assert.ok(Math.abs(v.arrive - (T0 + (300 * 1.3 / 1.25) * 1000 + (120 + 360) * 1000 + rest)) < 2000, 'walk, the planned wait and ride, the last walk');
+  v = g.update({ now: T0 + 200_000, fix: fix(-20, { speed: 1 }) }).view;
+  assert.equal(v.kind, 'wait');
+  assert.equal(v.arrive, trip.legs[1].depart + 360_000 + rest, 'the train you\'re waiting for');
+  v = g.update({ now: T0 + 400_000, fix: fix(300, { speed: 14 }) }).view;
+  assert.equal(v.kind, 'ride');
+  assert.ok(v.arrive > T0 + 400_000 && v.arrive < T0 + 400_000 + 360_000 + rest, 'by the train you\'re on');
+});
+
+test('picked up again part-way (the app reloaded): from the leg it had reached', () => {
+  const g = new TrainGuide(oneRide(), { now: T0, leg: 2 });
+  const r = g.update({ now: T0, fix: null });
+  assert.equal(r.view.kind, 'walk');
+  assert.equal(g.leg.to.name, 'Destination');
+});
+
 test('the first update says how the trip starts', () => {
   assert.deepEqual(new TrainGuide(oneRide(), { now: T0 }).update({ now: T0, fix: null }).events.map((e) => e.type), ['start']);
 });

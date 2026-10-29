@@ -66,6 +66,7 @@ let dest = null;
 // isn't given footpaths (no cameras, alerts or tolls) next time they're in the car. See resetTravel.
 let travel = 'drive';
 let stops = []; // places to visit on the way, in order, not yet reached
+let origin = null, originMarker = null; // where routes start when it isn't where you are (picked in the preview)
 let routes = [];
 let selected = 0;
 let nav = null;
@@ -272,12 +273,12 @@ async function boot() {
       history.replaceState(null, '', '/');
       openPreview({ name, address: '', lat, lng });
     }
-  }
+  } else setTimeout(offerResume, 600); // a trip the phone cut off (not over a link someone opened)
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   watchUpdates({
     // On the map with nothing open, so a refresh interrupts nothing.
     idle: () => mode === 'browse' && [...OVERLAYS, 'menu', 'watch', 'gate', 'welcome'].every((id) => $(id).classList.contains('hidden')),
-    driving: () => mode === 'drive',
+    driving: () => mode === 'drive' || mode === 'ride',
   });
 }
 
@@ -1031,6 +1032,11 @@ function wireUi() {
 
   // Preview
   $('btn-go').onclick = startDrive;
+  $('btn-from').onclick = () => openSearchFor('from');
+  $('btn-from-clear').onclick = () => {
+    origin = null;
+    openPreview(dest);
+  };
   for (const b of $('travel-seg').querySelectorAll('button')) {
     b.onclick = () => {
       if (b.dataset.travel === travel || !dest) return;
@@ -1040,7 +1046,7 @@ function wireUi() {
     };
   }
   $('btn-transit-maps').onclick = () => {
-    const from = state.pos?.lngLat ?? map.getCenter().toArray();
+    const from = origin ? [origin.lng, origin.lat] : state.pos?.lngLat ?? map.getCenter().toArray();
     const q = `origin=${from[1]},${from[0]}&destination=${dest.lat},${dest.lng}&travelmode=transit`;
     window.open(`https://www.google.com/maps/dir/?api=1&${q}`, '_blank', 'noopener');
   };
@@ -1103,7 +1109,7 @@ function closeScreen(id) {
   if (id === 'report-sheet') reportDraft = null;
 }
 
-const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'preview'];
+const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'resume', 'preview'];
 
 // Closes the top-most screen; returns false when nothing was open.
 function closeTop() {
@@ -1144,7 +1150,7 @@ function openSearchFor(target) {
   $('search').classList.remove('hidden');
   $('search-input').value = '';
   $('search-clear').classList.add('hidden');
-  const label = { home: 'Set your Home address', work: 'Set your Work address', save: 'Search for a place to save', stop: 'Add a stop on your way' }[target];
+  const label = { home: 'Set your Home address', work: 'Set your Work address', save: 'Search for a place to save', stop: 'Add a stop on your way', from: 'Where are you starting from?' }[target];
   $('search-target').textContent = label ?? '';
   $('search-target').classList.toggle('hidden', !label);
   $('search-input').placeholder = target ? 'Search for an address' : 'Where to?';
@@ -1348,6 +1354,12 @@ async function pickPlace(p) {
     closeScreen('search');
     return addStop(p);
   }
+  if (searchTarget === 'from') {
+    searchTarget = null;
+    closeScreen('search');
+    origin = p;
+    return dest && openPreview(dest);
+  }
   closeScreen('search');
   // Search history: kept on this phone without an account (and on the account with one), so it's there next time.
   addPlace('recent', p).then(renderSearchHome).catch(() => {});
@@ -1403,8 +1415,11 @@ async function openPreview(place) {
   destMarker = new maplibregl.Marker({ element: el('div', 'dest-pin', DEST_PIN), anchor: 'bottom' }).setLngLat([place.lng, place.lat]).addTo(map);
   map.easeTo({ center: [place.lng, place.lat], zoom: 15, pitch: 0, bearing: 0, padding: sheetPadding() });
 
-  const from = state.pos?.lngLat;
-  const status = !from
+  renderFrom();
+  const from = origin ? [origin.lng, origin.lat] : state.pos?.lngLat;
+  const status = origin
+    ? `Finding routes from ${origin.name}… Leave later puts the trip in your calendar.`
+    : !from
     ? state.locationDenied
       ? 'Location is off, so routes start from the middle of the map.'
       : 'Waiting for your location… routes start from the middle of the map for now.'
@@ -1425,12 +1440,14 @@ async function openPreview(place) {
     if (mode !== 'preview' || dest !== place || travel !== asked) return;
     routes = found;
     $('route-status').textContent = [from ? '' : status, routeNote(routes)].filter(Boolean).join(' ');
+    if (origin) $('route-status').textContent = `From ${origin.name}. Leave later puts the trip in your calendar.`;
     renderRouteOptions();
     renderPeekSummary();
     drawRoutes();
     fitRoutes();
     $('btn-go').disabled = false;
-    autoGo.restart();
+    if (resuming && !origin) return resumeStart(); // carrying on with a trip the phone cut off
+    if (!origin) autoGo.restart(); // a drive from somewhere else doesn't start by itself
   } catch (e) {
     if (mode !== 'preview' || dest !== place || travel !== asked) return;
     $('route-list').innerHTML = '';
@@ -1442,6 +1459,18 @@ async function openPreview(place) {
 // LRT, MRT, Monorail, BRT and KTM Komuter trips from the server (src/lib/transit.js): each as its walks and rides,
 // with the lines' own colours, and the chosen one drawn on the map. There's no turn-by-turn for these; a link
 // opens Google Maps for live departure times instead.
+// The start of the routes: where you are, or a place picked with Change. From somewhere else there's nothing to
+// start now: the trip goes in the calendar with Leave later instead.
+function renderFrom() {
+  $('from-label').textContent = origin ? `From ${origin.name}` : 'From your location';
+  $('btn-from-clear').classList.toggle('hidden', !origin);
+  $('preview').classList.toggle('elsewhere', Boolean(origin));
+  $('btn-leave-later').classList.toggle('primary', Boolean(origin));
+  $('btn-leave-later').classList.toggle('ghost', !origin);
+  originMarker?.remove();
+  originMarker = origin ? new maplibregl.Marker({ element: el('div', 'drop-pin', DROP_PIN), anchor: 'bottom' }).setLngLat([origin.lng, origin.lat]).addTo(map) : null;
+}
+
 function renderTravel() {
   for (const b of $('travel-seg').querySelectorAll('button')) b.classList.toggle('on', b.dataset.travel === travel);
   $('preview').classList.toggle('transit', travel === 'transit');
@@ -1449,17 +1478,26 @@ function renderTravel() {
 
 async function showTransit(place, from, status) {
   try {
-    const plan = await api('/api/transit', { method: 'POST', body: { from, to: [place.lng, place.lat], moving: movingNow() } });
+    const plan = await api('/api/transit', { method: 'POST', body: { from, to: [place.lng, place.lat], moving: origin ? null : movingNow() } });
     if (mode !== 'preview' || dest !== place || travel !== 'transit') return;
     transit = { place, trips: plan.trips, selected: 0 };
     const night = plan.night ? `${plan.note} The first trains leave around ${formatClock(new Date(plan.firstTrain))}.` : plan.note;
-    $('route-status').textContent = [status, night, plan.trips.length ? 'Times are estimates from the official timetables.' : ''].filter(Boolean).join(' ');
+    const last = plan.trips[0]?.lastTrain ? 'Last train tonight: miss it and there’s no later one this way.' : '';
+    const elsewhere = origin ? `From ${origin.name}. Leave later puts the trip in your calendar.` : '';
+    $('route-status').textContent = [status, elsewhere, last, night, plan.trips.length ? 'Times are estimates from the official timetables.' : ''].filter(Boolean).join(' ');
     renderTransit();
+    if (resuming && !origin && plan.trips.length) return resumeStart();
     const b = new maplibregl.LngLatBounds();
     for (const l of plan.trips[0]?.legs ?? []) for (const c of l.coords) b.extend(c);
     if (!b.isEmpty()) fitTo(b, { padding: sheetPadding(), duration: 700, maxZoom: 16 });
   } catch (e) {
     if (mode !== 'preview' || dest !== place) return;
+    // Carrying on offline: the trip as it was when the phone cut it off.
+    if (resuming?.trip && travel === 'transit') {
+      transit = { place, trips: [resuming.trip], selected: 0 };
+      renderTransit();
+      return resumeStart();
+    }
     $('route-list').innerHTML = '';
     $('route-status').textContent = e.message;
   }
@@ -1486,6 +1524,7 @@ function renderTransit() {
       .map((l) => (l.mode === 'walk' ? `<span class="t-walk">${WALK_ICON}${Math.round(l.duration / 60)}</span>` : lineChip(l)))
       .join('<span class="t-sep">›</span>');
     const facts = [`arrive ${formatClock(new Date(trip.arrive))}`, trip.changes ? `${trip.changes} change${trip.changes > 1 ? 's' : ''}` : 'no changes'];
+    if (trip.lastTrain) facts.push('<span class="t-last">last train</span>');
     const steps = i === transit.selected ? `<ol class="t-steps">${trip.legs.map(stepHtml).join('')}</ol>` : '';
     b.innerHTML = `<span class="r-time">${formatDuration(trip.duration)}</span><span class="r-info"><b>${facts.join(' · ')}</b><br><span class="t-legs">${legs}</span></span>${steps}`;
     b.onclick = () => {
@@ -1495,6 +1534,7 @@ function renderTransit() {
     box.append(b);
   });
   drawTransit();
+  renderPeekSummary();
 }
 
 function stepHtml(l) {
@@ -1503,9 +1543,9 @@ function stepHtml(l) {
     const to = l.to.name === 'Destination' ? (dest?.name ?? 'your destination') : `${l.to.name} station`;
     return `<li><span>Walk to ${esc(to)}<small>${mins(l.duration)} · ${formatDistance(l.distance, units)}</small></span></li>`;
   }
-  const when = l.aboard ? 'You’re on it' : l.every ? `Every ${l.every} min` : `Train at ${formatClock(new Date(l.depart))}`;
+  const when = (l.last ? '<b class="t-last">Last train</b> · ' : '') + (l.aboard ? 'You’re on it' : l.every ? `Every ${l.every} min` : `Train at ${formatClock(new Date(l.depart))}`);
   return `<li class="ride" style="--dot:${esc(l.line.color)}"><span>${lineChip(l)} ${l.aboard ? 'Stay on the ' : ''}${esc(l.line.name)} towards ${esc(l.towards)}
-    <small>${esc(when)} · ${l.stops} stop${l.stops > 1 ? 's' : ''} to ${esc(l.to.name)}, ${mins(l.duration)}</small></span></li>`;
+    <small>${when} · ${l.stops} stop${l.stops > 1 ? 's' : ''} to ${esc(l.to.name)}, ${mins(l.duration)}</small></span></li>`;
 }
 
 // The chosen trip on the map: walks dashed, rides in their line's colour, a dot where you get on and off.
@@ -1519,6 +1559,58 @@ function drawTransit() {
     if (l.mode === 'train') for (const s of [l.from, l.to]) features.push({ type: 'Feature', properties: { mode: 'stop', color: l.line.color, name: s.name }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } });
   }
   src.setData({ type: 'FeatureCollection', features });
+}
+
+// ---------- Picking a trip up again ----------
+// iPhones close a page in the background to save memory, and a trip in progress goes with it. The trip is kept on
+// this phone while it runs; opening A2B again within a few hours offers to carry on, planned again from where you
+// are then (a train trip offline: as it was, from the leg it had reached).
+const RESUME_MS = 3 * 3600_000;
+let resuming = null, resumeLeg = 0, savedLeg = -1;
+
+function saveTrip(kind) {
+  savedLeg = kind === 'ride' && guide ? guide.i : -1;
+  local.set('activeTrip', { kind, travel, dest, at: Date.now(), ...(kind === 'ride' && guide && { trip: guide.trip, leg: guide.i }) });
+}
+
+function forgetTrip() {
+  local.set('activeTrip', null);
+  savedLeg = -1;
+}
+
+function offerResume() {
+  const t = local.get('activeTrip');
+  if (!t?.dest || mode !== 'browse') return;
+  if (Date.now() - t.at > RESUME_MS) return forgetTrip();
+  const what = t.kind === 'ride' ? 'train trip' : t.travel === 'walk' ? 'walk' : 'drive';
+  const mins = Math.round((Date.now() - t.at) / 60_000);
+  $('resume-title').textContent = `Continue to ${t.dest.name}?`;
+  $('resume-sub').textContent = `Your ${what} stopped ${mins < 2 ? 'just now' : `${formatDuration(mins * 60)} ago`} when the app closed. It picks up from where you are now.`;
+  $('resume').classList.remove('hidden');
+  $('btn-resume-no').onclick = () => {
+    forgetTrip();
+    $('resume').classList.add('hidden');
+  };
+  $('btn-resume-go').onclick = () => {
+    $('resume').classList.add('hidden');
+    speak(`Continuing to ${t.dest.name}.`); // inside the tap: phones only allow speech that a tap started
+    resuming = t;
+    resumeLeg = 0;
+    travel = t.kind === 'ride' ? 'transit' : t.travel === 'walk' ? 'walk' : 'drive';
+    syncVehicle();
+    openPreview(t.dest);
+  };
+}
+
+// The routes (or trains) are in: start, as Go or Start would.
+function resumeStart() {
+  const t = resuming;
+  resuming = null;
+  if (travel === 'transit') {
+    if (transit?.trips[0] === t.trip) resumeLeg = t.leg ?? 0; // the saved trip (offline): from its leg
+    return startRide();
+  }
+  startDrive();
 }
 
 // ---------- Riding a train trip ----------
@@ -1543,8 +1635,10 @@ function startRide() {
   autoGo.stop();
   mode = 'ride';
   drawPois(); // off the map while riding
-  guide = new TrainGuide(trip, { now: rideNow() });
+  guide = new TrainGuide(trip, { now: rideNow(), leg: resumeLeg });
+  resumeLeg = 0;
   rideStarted = rideNow();
+  saveTrip('ride');
   carMarker.remove(); // the train or walking marker instead (and the 3D vehicle hides itself in this mode)
   if (vehicle3d) map.triggerRepaint();
   riderMarker ??= new maplibregl.Marker({ element: el('div', 'rider'), rotationAlignment: 'map', pitchAlignment: 'map' });
@@ -1567,6 +1661,7 @@ function rideTick(say = null) {
   const fresh = state.pos && !rideGpsBlocked && Date.now() - lastFixAt < (guide.begun ? 4000 : 120_000);
   const { view, events } = guide.update({ now: rideNow(), fix: fresh ? state.pos : null });
   if (!sayRide(events, say)) return;
+  if (guide.i !== savedLeg) saveTrip('ride'); // a new leg: pick up from here if the phone cuts the trip off
   $('ride-off').classList.toggle('hidden', !view.off);
   if (view.off) replanRide();
   else replanNoted = false;
@@ -1601,6 +1696,7 @@ async function replanRide() {
     transit = { place, trips: plan.trips, selected: 0 };
     drawTransit();
     guide = new TrainGuide(plan.trips[0], { now: rideNow() });
+    saveTrip('ride');
     rideTick('Route recalculated.');
   } catch (e) {
     noteReplan(!navigator.onLine || e.status === 0 ? "You're offline, so the trip can't be planned again. Tap “I'm already here” to say where you are." : e.message);
@@ -1648,12 +1744,15 @@ function renderRide(view) {
     $('ride-sub').textContent = view.alerted ? 'It’s the next stop' : `${view.stopsToGo} stop${view.stopsToGo > 1 ? 's' : ''} to ${leg.to.name}`;
   }
   $('ride-est').classList.toggle('hidden', !view.estimating);
+  // When you'll get there, as driving's arrival time: by the train you're on (or waiting for), then the rest.
+  const arrive = view.arrive ? new Date(view.arrive) : null;
+  $('ride-eta').textContent = arrive ? `Arrive ${formatClock(arrive)} · ${formatDuration(Math.max(60, (view.arrive - rideNow()) / 1000))}` : '';
   // The closed sheet's one line: where you're going next.
   const peek = $('ride-peek');
   peek.style.setProperty('--dot', leg.line?.color ?? '#1c7ed6');
-  peek.textContent = view.kind === 'ride'
+  peek.textContent = (view.kind === 'ride'
     ? (view.alerted ? `Get off at ${leg.to.name}` : `Next: ${view.next}`)
-    : view.kind === 'wait' ? `${leg.line.name} towards ${leg.towards}` : sentence(walkText(leg));
+    : view.kind === 'wait' ? `${leg.line.name} towards ${leg.towards}` : sentence(walkText(leg))) + (arrive ? ` · arrive ${formatClock(arrive)}` : '');
   // The list: this ride's stations, or on foot what's left of the trip.
   const list = $('ride-stops');
   if (leg.mode === 'train') {
@@ -1772,6 +1871,7 @@ function stopCompass() {
 }
 
 function endRide(arrived) {
+  forgetTrip();
   clearInterval(rideTimer);
   rideTimer = null;
   const name = dest?.name ?? '';
@@ -1930,6 +2030,13 @@ function collapsibleSheet(sheet, list, settled) {
 
 // One line for the collapsed sheet: "44 min · 30 km · 3 tolls".
 function renderPeekSummary() {
+  const t = travel === 'transit' ? transit?.trips[transit.selected] : null;
+  if (travel === 'transit') {
+    $('peek-summary').textContent = t
+      ? [formatDuration(t.duration), `arrive ${formatClock(new Date(t.arrive))}`, t.changes ? `${t.changes} change${t.changes > 1 ? 's' : ''}` : 'no changes'].join(' · ')
+      : '';
+    return;
+  }
   const r = routes[selected];
   $('peek-summary').textContent = r
     ? [formatDuration(r.duration), formatDistance(r.distance, state.settings.units), r.tolls?.length ? tollSummary(r.tolls) : r.toll ? 'Toll' : ''].filter(Boolean).join(' · ')
@@ -2046,6 +2153,8 @@ function backToBrowse() {
   schedulePois();
   routes = [];
   dest = null;
+  origin = null; // the next trip starts where you are again
+  originMarker?.remove();
   destMarker?.remove();
   dropMarker?.remove();
   routeLabels.splice(0).forEach((m) => m.remove());
@@ -2064,8 +2173,7 @@ let laterMode = 'leave';
 
 function openLater() {
   autoGo.stop();
-  const r = routes[selected];
-  if (!r) return toast('Wait for the route first.');
+  if (travel === 'transit' ? !transit?.trips.length : !routes[selected]) return toast(travel === 'transit' ? 'Wait for the trains first.' : 'Wait for the route first.');
   $('later').classList.remove('hidden');
   armBack();
   const input = $('later-time');
@@ -2079,8 +2187,13 @@ function openLater() {
       updateLater();
     };
   });
-  input.oninput = updateLater;
+  let t;
+  input.oninput = () => {
+    clearTimeout(t);
+    t = setTimeout(updateLater, travel === 'transit' ? 400 : 0); // trains are asked of the server: not on every key
+  };
   $('btn-later-remind').onclick = downloadCalendar;
+  laterTrip = null;
   updateLater();
 }
 
@@ -2092,24 +2205,58 @@ function laterTimes() {
 }
 
 function updateLater() {
+  if (travel === 'transit') return updateLaterTrains();
   if (!routes[selected] || Number.isNaN(+new Date($('later-time').value))) return;
   const { leave, arrive } = laterTimes();
   $('later-result').innerHTML = `Leave <b>${formatClock(leave)}</b>, arrive around <b>${formatClock(arrive)}</b>.<br><small class="hint">Based on today's typical drive time of ${formatDuration(routes[selected].duration)}.</small>`;
 }
 
+// By train, the trains that run then (the timetable changes through the day and at night), not today's trip moved.
+// "Arrive by" asks for a time that early, then earlier by however late that trip gets in, so it's the last one in time.
+let laterTrip = null, laterSeq = 0;
+async function updateLaterTrains() {
+  const want = +new Date($('later-time').value);
+  if (Number.isNaN(want)) return;
+  const seq = ++laterSeq;
+  laterTrip = null;
+  $('later-result').innerHTML = '<span class="spinner" aria-hidden="true"></span>Finding trains…';
+  const from = origin ? [origin.lng, origin.lat] : state.pos?.lngLat ?? map.getCenter().toArray();
+  const ask = (at) => api('/api/transit', { method: 'POST', body: { from, to: [dest.lng, dest.lat], at } });
+  try {
+    let plan = await ask(laterMode === 'leave' ? want : want - (transit.trips[0]?.duration ?? 1800) * 1000);
+    for (let k = 0; laterMode === 'arrive' && plan.trips[0]?.arrive > want && k < 2; k++) {
+      plan = await ask(plan.trips[0].depart - (plan.trips[0].arrive - want) - 60_000);
+    }
+    if (seq !== laterSeq) return;
+    const trip = plan.trips[0];
+    if (!trip) return void ($('later-result').textContent = plan.note || 'No trains then.');
+    laterTrip = trip;
+    const last = trip.lastTrain ? ' <b class="t-last">Last train</b>' : '';
+    $('later-result').innerHTML = `Leave <b>${formatClock(new Date(trip.depart))}</b>, arrive around <b>${formatClock(new Date(trip.arrive))}</b>.${last}
+      <ol class="t-steps">${trip.legs.map(stepHtml).join('')}</ol><small class="hint">From the official timetables.</small>`;
+  } catch (e) {
+    if (seq === laterSeq) $('later-result').textContent = e.message;
+  }
+}
+
 function downloadCalendar() {
-  const { leave, arrive } = laterTimes();
+  if (travel === 'transit' && !laterTrip) return toast('Wait for the trains first.');
+  const byTrain = travel === 'transit';
+  const { leave, arrive } = byTrain ? { leave: new Date(laterTrip.depart), arrive: new Date(laterTrip.arrive) } : laterTimes();
+  // By train, the steps go in the event: which line, which way, where to change.
+  const steps = byTrain ? laterTrip.legs.map((l) => (l.mode === 'walk' ? sentence(walkText(l)) : `${l.line.name} towards ${l.towards} to ${l.to.name}`)).join('\n') : '';
+  const ical = (t) => t.replace(/[,;\\]/g, (c) => `\\${c}`).replace(/\n/g, '\\n'); // calendar text: escaped, lines as \n
   const stamp = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const link = `${location.origin}/?to=${dest.lat},${dest.lng}&name=${encodeURIComponent(dest.name)}`;
   const ics = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//A2B//Leave later//EN', 'BEGIN:VEVENT',
     `UID:${Date.now()}@a2b`, `DTSTAMP:${stamp(new Date())}`, `DTSTART:${stamp(leave)}`, `DTEND:${stamp(arrive)}`,
-    `SUMMARY:Drive to ${dest.name.replace(/[,;\n]/g, ' ')}`, `DESCRIPTION:Open in A2B: ${link}`, `URL:${link}`,
+    `SUMMARY:${byTrain ? 'Train' : 'Drive'} to ${dest.name.replace(/[,;\n]/g, ' ')}`, `DESCRIPTION:${steps ? `${ical(steps)}\\n` : ''}Open in A2B: ${link}`, `URL:${link}`,
     'BEGIN:VALARM', 'TRIGGER:-PT10M', 'ACTION:DISPLAY', 'DESCRIPTION:Time to leave soon', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR',
   ].join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
-  a.download = 'a2b-drive.ics';
+  a.download = byTrain ? 'a2b-train.ics' : 'a2b-drive.ics';
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   toast('Added: open the file to put it in your calendar.');
@@ -2141,6 +2288,7 @@ function startDrive() {
   renderStopMenu();
   alerted.clear();
   driveStarted = Date.now();
+  saveTrip('drive');
   routeLabels.splice(0).forEach((m) => m.remove());
   $('preview').classList.add('hidden');
   $('later').classList.add('hidden');
@@ -2516,6 +2664,7 @@ async function endDrive(arrived) {
   }
   nav = null;
   live = null;
+  forgetTrip();
   trail = [];
   offTrail = [];
   drawTrail();

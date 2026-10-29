@@ -298,6 +298,8 @@ function toTrip(found, from, to, dayStart) {
         stops: st.j - st.i,
         wait: Math.round(st.wait),
         ...(st.aboard && { aboard: true }), // you're on this train already: stay on
+        // No train after this one today: miss it and there's no other by this line.
+        ...(!st.aboard && !board(p, st.i, st.dep + (st.headway ?? 60)) && { last: true }),
         every: st.headway ? Math.round(st.headway / 60) : null,
         depart: ms(st.dep),
         arrive: ms(st.t),
@@ -321,6 +323,7 @@ function toTrip(found, from, to, dayStart) {
 export function summarise(legs, depart) {
   const duration = legs.reduce((a, l) => a + l.duration + (l.wait ?? 0), 0);
   return {
+    ...(legs.some((l) => l.last) && { lastTrain: true }),
     depart,
     arrive: depart + duration * 1000,
     duration,

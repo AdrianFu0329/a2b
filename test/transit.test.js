@@ -269,3 +269,12 @@ test('the real walks don\'t make you wait for the train you\'re on', async () =>
   assert.equal(plan.trips[0].legs[0].arrive, before);
   assert.equal(plan.trips[0].legs[0].wait, 0);
 });
+
+test('the last train of the night is marked', () => {
+  const late = WEDNESDAY_9AM + 14 * 3600_000 + 20 * 60_000; // 11:20pm
+  const plans = [planTransit(KL_SENTRAL, KLCC, WEDNESDAY_9AM), planTransit(KL_SENTRAL, KLCC, late)];
+  assert.ok(!plans[0].trips.some((t) => t.lastTrain), 'not in the morning');
+  const marked = plans[1].trips.filter((t) => t.lastTrain);
+  assert.ok(marked.length, 'the Monorail ends before midnight');
+  for (const t of marked) assert.ok(t.legs.some((l) => l.last));
+});

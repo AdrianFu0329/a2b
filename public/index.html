@@ -83,6 +83,10 @@
       <button id="btn-save-place" class="icon-btn" aria-label="Save place"><svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6L12 16.7l-5.4 2.9 1.1-6-4.5-4.2 6.1-.8Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
       <button class="icon-btn" data-close="preview" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
     </div>
+    <div id="from-row" class="from-row">
+      <button id="btn-from" class="from-btn"><span class="from-dot" aria-hidden="true"></span><span id="from-label">From your location</span><span class="from-change">Change</span></button>
+      <button id="btn-from-clear" class="icon-btn hidden" aria-label="Start from your location"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    </div>
     <div id="travel-seg" class="seg travel-seg" role="tablist"><button data-travel="drive">Drive</button><button data-travel="walk">Walk</button><button data-travel="transit">Train</button></div>
     <div id="route-list" class="route-list"></div>
     <p id="route-status" class="hint"></p>
@@ -95,7 +99,7 @@
   </section>
 
   <!-- ===== Leave later ===== -->
-  <section id="later" class="sheet hidden" aria-label="Plan a drive">
+  <section id="later" class="sheet hidden" aria-label="Leave later">
     <div class="grabber"></div>
     <div class="dest-head"><div class="dest-text"><h2>Leave later</h2><p>Pick when you want to leave or arrive.</p></div>
       <button class="icon-btn" data-close="later" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
@@ -176,6 +180,7 @@
     <section id="ride-sheet" class="sheet ride-sheet">
       <div class="grabber" aria-hidden="true"></div>
       <button id="ride-peek" class="ride-peek" aria-label="Show the stops"></button>
+      <p id="ride-eta" class="ride-eta"></p>
       <ol id="ride-stops" class="ride-stops"></ol>
       <div class="sheet-actions">
         <button id="btn-ride-stop" class="btn">Stop</button>
@@ -184,6 +189,15 @@
       <p id="ride-here-hint" class="ride-here-hint">GPS lost? Tap where you are, or a station above.</p>
     </section>
   </div>
+
+  <!-- ===== Carry on with a trip the phone cut off (the page was closed in the background) ===== -->
+  <section id="resume" class="sheet hidden" aria-label="Continue your trip">
+    <div class="dest-head"><div class="dest-text"><h2 id="resume-title"></h2><p id="resume-sub" class="hint"></p></div></div>
+    <div class="sheet-actions">
+      <button id="btn-resume-no" class="btn ghost">No thanks</button>
+      <button id="btn-resume-go" class="btn primary">Continue</button>
+    </div>
+  </section>
 
   <!-- ===== Arrived ===== -->
   <section id="arrived" class="sheet hidden" aria-label="Arrived">

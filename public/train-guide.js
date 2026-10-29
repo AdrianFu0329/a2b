@@ -27,6 +27,7 @@ export const OFF_WALK_M = 120; // this far off the walk, and getting further fro
 export const LEFT_STATION_M = 400; // waiting for a train this far from the station: you've left it
 export const OFF_TRAIN_M = 400; // on a ride this far from the line, with good GPS: not on this train
 export const OFF_MS = 15_000; // off for this long, not just a wobble
+const WALK_MPS = 1.25, WALK_DETOUR = 1.3; // as src/lib/transit.js: streets aren't straight lines
 export const HERE_TRUST_MS = 120_000; // after "I'm already here", trust you over GPS this long (it's often wrong indoors)
 
 // ---------- Geometry along a track ----------
@@ -163,9 +164,9 @@ export function markerFor({ mode, legMode, vehicle }) {
 // what to show and anything to announce: { view, events: [{ type, text }] }. The first update says how the trip
 // starts. A view with `off` set means you've left the trip: app.js plans it again from where you are.
 export class TrainGuide {
-  constructor(trip, { now = Date.now() } = {}) {
+  constructor(trip, { now = Date.now(), leg = 0 } = {}) {
     this.trip = trip;
-    this.i = 0;
+    this.i = Math.min(leg, trip.legs.length - 1); // picking a trip up again part-way (after the app reloaded)
     this.started = now;
     this.done = false;
     this.begun = false;
@@ -192,6 +193,7 @@ export class TrainGuide {
     this.approaching = false;
     this.offSince = null;
     this.closest = Infinity; // on a walk: the nearest you've been to where it goes
+    this.walkLeft = null;
     this.track = this.trackFor(this.i);
     if (leg.mode === 'train') {
       this.times = leg.stations.map((s) => s[3]);
@@ -303,8 +305,22 @@ export class TrainGuide {
     return `I’m at ${leg.stations[this.approaching ? 0 : nextStop(this.alongs, this.along)][0]}`;
   }
 
+  // When you'll get there: the end of this leg from where you are (walking pace, the train you're on, or the one
+  // you're waiting for), then the rest of the trip as planned.
+  arrival(now = Date.now()) {
+    if (this.done) return now;
+    const leg = this.leg;
+    let t;
+    if (leg.mode === 'walk') t = now + ((this.walkLeft ?? leg.distance) * WALK_DETOUR / WALK_MPS) * 1000;
+    else if (this.phase === 'wait') t = Math.max(now, leg.depart) + leg.duration * 1000;
+    else t = Math.max(now, this.boardedAt + this.times.at(-1) * 1000);
+    for (const l of this.trip.legs.slice(this.i + 1)) t += ((l.wait ?? 0) + l.duration) * 1000;
+    return t;
+  }
+
   update(o = {}) {
     const r = this.step(o);
+    if (!this.done) r.view.arrive = this.arrival(o.now ?? Date.now());
     if (!this.begun) {
       this.begun = true;
       const leg = this.leg;
@@ -333,6 +349,7 @@ export class TrainGuide {
         return { view: this.done ? { kind: 'done' } : this.step({ now, fix }).view, events };
       }
       if (left != null) this.closest = Math.min(this.closest, left);
+      this.walkLeft = left ?? this.walkLeft;
       const off = this.offFor(now, pos != null && snap(this.track, pos).off > OFF_WALK_M && left > this.closest + 100);
       return { view: { kind: 'walk', leg, left: left ?? leg.distance, pos, heading: pos ? bearing(pos, target) : null, off }, events };
     }
