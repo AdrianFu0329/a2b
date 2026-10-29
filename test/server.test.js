@@ -1115,6 +1115,16 @@ test('Malaysia, roughly: the peninsula, Sabah and Sarawak, not Singapore or Bang
   }
 });
 
+test('the Google key for the last-resort search: only when one is set', async () => {
+  assert.deepEqual((await client()('GET', '/api/google')).body, { key: null });
+  env.GOOGLE_MAPS_KEY = 'AIza-test-key';
+  try {
+    assert.deepEqual((await client()('GET', '/api/google')).body, { key: 'AIza-test-key' });
+  } finally {
+    delete env.GOOGLE_MAPS_KEY;
+  }
+});
+
 test('own places answer without waiting long for a slow public geocoder', async () => {
   await loadLocations([1, 2, 3].map((i) => [`Slowtown Cafe ${i}`, 'Kuala Lumpur', 'cafe', 'place', 3.16 + i / 1000, 101.70, 'overture']));
   env.PHOTON_WAIT_MS = '50';

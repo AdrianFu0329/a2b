@@ -385,6 +385,12 @@ async function route(request, env, url) {
     return json({ ok: true });
   }
 
+  // The Google Maps browser key for the last-resort "Search Google" (public/google-search.html), or null when there's
+  // none. It's a browser key: shown to the page anyway, limited to A2B's sites and APIs in Google Cloud.
+  if (path === '/api/google' && method === 'GET') {
+    return json({ key: env.GOOGLE_MAPS_KEY || null }, 200, { 'cache-control': 'private, max-age=3600' });
+  }
+
   // ---------- Search and routing ----------
   if (path === '/api/search' && method === 'GET') {
     await needSpot();
@@ -437,7 +443,7 @@ async function route(request, env, url) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw httpError('lat and lng are required.', 400);
     // A2B's own streets and places first; the public geocoder only when there's nothing close.
     const own = await locations.nearest([lng, lat]).catch(() => null);
-    return json({ place: own ?? (await reverseGeocode(env, { lat, lng })) });
+    return json({ place: own ? { ...own, country: 'MY' } : await reverseGeocode(env, { lat, lng }) }); // own places: Malaysia's
   }
 
   // Trips by train (LRT, MRT, Monorail, BRT, KTM Komuter): see src/lib/transit.js.
