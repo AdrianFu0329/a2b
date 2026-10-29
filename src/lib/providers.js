@@ -9,6 +9,7 @@ import { normalizeText, matches } from '../../public/text.js';
 
 export { normalizeText, matches };
 import { pointAlong } from '../../public/nav.js';
+import { compactSign, withSign } from '../../public/signs.js';
 import { tollIndexes } from './tolls.js';
 
 const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
@@ -281,15 +282,20 @@ export function normalizeTrip(trip, units = 'metric') {
   };
 }
 
+// Ramps, exits, forks and merges: the turns that have expressway signs worth showing (see public/signs.js).
+const SIGNED = new Set([17, 18, 19, 20, 21, 22, 23, 24, 25, 37, 38]);
+
 function step(m, unit, offset) {
+  const sign = SIGNED.has(m.type) ? compactSign(m.sign) : null;
   return {
     type: MANEUVER[m.type] ?? 'straight',
     instruction: m.instruction,
-    alert: m.verbal_transition_alert_instruction || m.verbal_succinct_transition_instruction || m.instruction,
-    pre: m.verbal_pre_transition_instruction || m.instruction,
+    alert: withSign(m.verbal_transition_alert_instruction || m.verbal_succinct_transition_instruction || m.instruction, sign),
+    pre: withSign(m.verbal_pre_transition_instruction || m.instruction, sign),
     post: m.verbal_post_transition_instruction || null,
     street: (m.street_names ?? m.begin_street_names ?? [])[0] || '',
     exit: m.roundabout_exit_count ?? null,
+    ...(sign && { sign }),
     lanes: lanes(m.lanes),
     begin: m.begin_shape_index + offset,
     end: m.end_shape_index + offset,
