@@ -120,7 +120,7 @@ Everything A2B uses is free and needs no key:
 | --- | --- | --- |
 | Map tiles | [OpenFreeMap](https://openfreemap.org) | Map looks are in `public/map-themes.js`. |
 | Routing, speed limits, toll booths | [Valhalla public server](https://valhalla1.openstreetmap.de) (`ROUTING_URL`) | Community-run, fair use. |
-| Search | A2B's own place index, then [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Shops, landmarks, streets and addresses from Overture Maps and OpenStreetMap, searched in the database (`npm run locations`). Photon fills the gaps; it's community-run, fair use. |
+| Search | A2B's own place index, then [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Shops, landmarks, streets and addresses from Overture Maps and OpenStreetMap, plus places drivers suggest once a tester approves them, searched in the database (`npm run locations`). Photon fills the gaps; it's community-run, fair use. |
 | Live traffic (optional) | [TomTom Routing API](https://developer.tomtom.com) (`TOMTOM_KEY` secret) | Times each route with today's traffic; free up to a monthly quota. Without a key, routes use typical speeds. Answers aren't stored. |
 | Train timetables (LRT, MRT, Monorail, BRT, KTM Komuter) | [data.gov.my GTFS](https://developer.data.gov.my/realtime-api/gtfs-static) (Prasarana, KTMB) | Built with `npm run transit` into `src/lib/transit-data.json`, kept in git. Each feed runs to an end date the build prints; rebuild before then. Walks to and from stations use the routing server's walking routes. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |

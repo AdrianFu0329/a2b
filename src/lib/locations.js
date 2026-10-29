@@ -87,5 +87,16 @@ export function locationsRepo(db) {
       const best = results.map((r) => ({ r, m: distance([lng, lat], [r.lng, r.lat]) })).filter((x) => x.m <= maxM).sort((a, b) => a.m - b.m)[0];
       return best ? toPlace(best.r) : null;
     },
+
+    // A wrong place out of search (testers only, see src/worker.js).
+    async remove(id) {
+      const row = await db.prepare('SELECT id, name, address FROM locations WHERE id = ? AND removed = 0').bind(id).first();
+      if (!row) return false;
+      await db.batch([
+        db.prepare('UPDATE locations SET removed = 1 WHERE id = ?').bind(id),
+        db.prepare(`INSERT INTO locations_fts (locations_fts, rowid, name, address) VALUES ('delete', ?, ?, ?)`).bind(id, row.name, row.address),
+      ]);
+      return true;
+    },
   };
 }

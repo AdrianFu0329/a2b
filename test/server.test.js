@@ -1006,3 +1006,41 @@ test('trips by train need a spot, a start and a destination', async () => {
     assert.ok(l.stations.every(([name, lat, lng, t], i) => typeof name === 'string' && Math.abs(lat) < 90 && Math.abs(lng) < 180 && (!i || t > l.stations[i - 1][3])));
   }
 });
+
+test('drivers suggest places; testers approve (with edits) or reject them; approved ones join search', async () => {
+  assert.equal((await client()('POST', '/api/suggestions', { name: 'Warung Pak Abu', lat: 3.07, lng: 101.52 })).status, 401);
+  assert.equal((await alice('POST', '/api/suggestions', { name: 'x', lat: 3.07, lng: 101.52 })).status, 400);
+  const before = (await alice('GET', '/api/me')).body.user.points;
+  const sent = await alice('POST', '/api/suggestions', { name: 'Warung Pak Abu', category: 'Restaurant', address: 'Jalan Tepi, Shah Alam', note: 'Opposite the mosque', lat: 3.07, lng: 101.52 });
+  assert.equal(sent.status, 201);
+  assert.equal(sent.body.suggestion.status, 'pending');
+  const other = await alice('POST', '/api/suggestions', { name: 'Kedai Tak Wujud', lat: 3.08, lng: 101.53 });
+  assert.equal((await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52')).body.places.length, 0, 'not searchable until approved');
+  assert.equal((await alice('GET', '/api/suggestions')).status, 404, 'the queue is for testers');
+  assert.equal((await alice('POST', `/api/suggestions/${sent.body.suggestion.id}`, { action: 'approve' })).status, 404);
+
+  env.TESTER_EMAILS = 'tess.reviews@test.com';
+  try {
+    const tess = client();
+    await tess('POST', '/api/auth/signup', { email: 'tess.reviews@test.com', password: 'password6', name: 'Tess' });
+    const queue = (await tess('GET', '/api/suggestions')).body.suggestions;
+    assert.deepEqual(queue.map((s) => [s.name, s.by_name, s.note]), [['Warung Pak Abu', 'Alice', 'Opposite the mosque'], ['Kedai Tak Wujud', 'Alice', '']]);
+    const ok = await tess('POST', `/api/suggestions/${sent.body.suggestion.id}`, { action: 'approve', name: 'Warung Pak Abu (Seksyen 7)' });
+    assert.equal(ok.body.status, 'approved');
+    assert.equal((await tess('POST', `/api/suggestions/${sent.body.suggestion.id}`, { action: 'approve' })).status, 404, 'only once');
+    assert.equal((await tess('POST', `/api/suggestions/${other.body.suggestion.id}`, { action: 'reject' })).body.status, 'rejected');
+    assert.equal((await tess('GET', '/api/suggestions')).body.suggestions.length, 0);
+
+    const found = (await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52')).body.places;
+    assert.deepEqual(found.map((p) => [p.name, p.source]), [['Warung Pak Abu (Seksyen 7)', 'driver']]);
+    assert.equal((await alice('GET', '/api/me')).body.user.points, before + 10, 'points for an approved place');
+    assert.deepEqual((await alice('GET', '/api/suggestions/mine')).body.suggestions.map((s) => s.status), ['rejected', 'approved']);
+
+    // A wrong place comes out of search.
+    assert.equal((await alice('DELETE', `/api/locations/${ok.body.location_id}`)).status, 404, 'testers only');
+    assert.equal((await tess('DELETE', `/api/locations/${ok.body.location_id}`)).status, 200);
+    assert.equal((await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52')).body.places.length, 0);
+  } finally {
+    delete env.TESTER_EMAILS;
+  }
+});
