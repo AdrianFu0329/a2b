@@ -588,7 +588,7 @@ test('testing tools are flagged only for accounts in TESTER_EMAILS', async () =>
   }
 });
 
-test('feedback: anyone can send it, only the owner can read it and mark it done', async () => {
+test('feedback: anyone can send it, only the owner can read it, close it and reopen it', async () => {
   const guest = client('feedback-guest-1');
   await guest('POST', '/api/presence');
   assert.equal((await guest('POST', '/api/feedback', { message: ' ' })).status, 400, 'empty feedback is refused');
@@ -610,9 +610,21 @@ test('feedback: anyone can send it, only the owner can read it and mark it done'
       ['Love the speed camera alerts!', 'Fran', 'fran@test.com', null],
       ['Route to KLCC took a closed road', null, null, 'abc123'],
     ]);
-    assert.equal((await fran('DELETE', `/api/feedback/${feedback[0].id}`)).status, 404, 'only the owner marks it done');
-    await owner('DELETE', `/api/feedback/${feedback[0].id}`);
-    assert.equal((await owner('GET', '/api/feedback')).body.feedback.length, 1);
+    assert.equal((await fran('PATCH', `/api/feedback/${feedback[0].id}`, { closed: true })).status, 404, 'only the owner closes it');
+    assert.equal((await fran('DELETE', `/api/feedback/${feedback[0].id}`)).status, 404);
+    await owner('PATCH', `/api/feedback/${feedback[0].id}`, { closed: true });
+    let list = (await owner('GET', '/api/feedback')).body.feedback;
+    assert.equal(list.length, 2, 'closing keeps it');
+    assert.deepEqual(list.map((f) => [f.message, Boolean(f.closed_at)]), [
+      ['Route to KLCC took a closed road', false],
+      ['Love the speed camera alerts!', true],
+    ], 'open first, closed after');
+    await owner('PATCH', `/api/feedback/${feedback[0].id}`, { closed: false });
+    assert.equal((await owner('GET', '/api/feedback')).body.feedback.find((f) => f.id === feedback[0].id).closed_at, null, 'reopened');
+    await owner('DELETE', `/api/feedback/${feedback[1].id}`);
+    list = (await owner('GET', '/api/feedback')).body.feedback;
+    assert.equal(list.length, 2, "an old app's Done closes it rather than deleting it");
+    assert.ok(list.find((f) => f.id === feedback[1].id).closed_at);
   } finally {
     delete env.TESTER_EMAILS;
   }
