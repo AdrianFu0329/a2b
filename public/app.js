@@ -9,7 +9,7 @@ import { TrainGuide, markerFor, walkText } from './train-guide.js';
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
-import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES, addTypeSource } from './places.js';
+import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES, addTypeSource, withoutBaseDuplicates } from './places.js';
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -501,10 +501,22 @@ async function drawPois() {
   const b = map.getBounds();
   const found = await placesOfTypesIn(POI_TYPES, [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]).catch(() => []);
   if (seq !== poiSeq) return;
-  src.setData({
+  const draw = () => src.setData({
     type: 'FeatureCollection',
-    features: found.map((p) => ({ type: 'Feature', properties: { name: p.name, address: p.address || '', type: p.type }, geometry: { type: 'Point', coordinates: [p.lng, p.lat] } })),
+    features: withoutBaseDuplicates(found, basePoisShown()).map((p) => ({ type: 'Feature', properties: { name: p.name, address: p.address || '', type: p.type }, geometry: { type: 'Point', coordinates: [p.lng, p.lat] } })),
   });
+  draw();
+  // The base map may still be drawing this view's tiles: look again at what it shows once it has.
+  map.once('idle', () => seq === poiSeq && draw());
+}
+
+// The base map's own places of our pins' kinds drawn on screen now, as { type, name, lng, lat }.
+const BASE_POI_TYPES = { fuel: 'fuel', charging_station: 'ev', hospital: 'hospital', clinic: 'clinic', doctors: 'clinic', convenience: 'convenience' };
+function basePoisShown() {
+  if (!basePlaceLayers.length) return [];
+  return map.queryRenderedFeatures({ layers: basePlaceLayers })
+    .filter((f) => f.geometry.type === 'Point' && BASE_POI_TYPES[f.properties.subclass])
+    .map((f) => ({ type: BASE_POI_TYPES[f.properties.subclass], name: f.properties['name:latin'] || f.properties.name || '', lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] }));
 }
 
 // A round badge: a petrol pump, a lightning bolt for an EV charger, an H for a hospital, a cross for a clinic.
