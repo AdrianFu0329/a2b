@@ -89,7 +89,8 @@
     <div class="sheet-actions">
       <button id="btn-leave-later" class="btn ghost">Leave later</button>
       <button id="btn-go" class="btn primary" disabled>Go now</button>
-      <button id="btn-transit-maps" class="btn primary transit-only">Live times in Google Maps</button>
+      <button id="btn-ride-start" class="btn primary transit-only">Start</button>
+      <button id="btn-transit-maps" class="btn transit-only">Live times in Google Maps</button>
     </div>
   </section>
 
@@ -150,6 +151,31 @@
         <button id="btn-stop" class="menu-row danger"><span class="m-ic stop"></span>Stop</button>
       </div>
     </div>
+  </div>
+
+  <!-- ===== Riding a train trip (train-guide.js) ===== -->
+  <div id="ride-ui" class="layer hidden">
+    <div class="drive-top">
+      <div id="ride-banner" class="banner ride-banner">
+        <div class="banner-main">
+          <div class="turn" id="ride-icon"></div>
+          <div class="banner-text">
+            <div class="turn-dist" id="ride-title"></div>
+            <div class="turn-street" id="ride-sub"></div>
+          </div>
+        </div>
+      </div>
+      <div id="ride-est" class="toll-chip ride-est hidden" role="status"><b>NO GPS</b><span>Estimating · underground</span></div>
+    </div>
+    <div class="map-tools drive">
+      <button id="btn-recenter-ride" class="round hidden" aria-label="Recenter"><svg viewBox="0 0 24 24"><path d="M12 2.5 19.5 20 12 16l-7.5 4Z" fill="currentColor"/></svg><span>Recenter</span></button>
+    </div>
+    <section id="ride-sheet" class="sheet ride-sheet">
+      <div class="grabber" aria-hidden="true"></div>
+      <button id="ride-peek" class="ride-peek" aria-label="Show the stops"></button>
+      <ol id="ride-stops" class="ride-stops"></ol>
+      <div class="sheet-actions"><button id="btn-ride-stop" class="btn wide">Stop</button></div>
+    </section>
   </div>
 
   <!-- ===== Arrived ===== -->
