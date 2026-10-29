@@ -146,6 +146,37 @@ const tripSheet = (() => {
   return { init, set, isOpen: () => open, justDragged: () => justDragged() };
 })();
 
+// The sheet of stops while riding. Drag it down (or tap the grabber) to close it to one line, the next station;
+// drag it up or tap that line to see the stops again.
+const rideSheet = (() => {
+  const sheet = () => $('ride-sheet');
+  const set = (closed) => {
+    const el = sheet();
+    el.classList.remove('dragging');
+    el.style.transform = '';
+    el.classList.toggle('closed', closed);
+    // Keep you in view above the sheet's new height.
+    if (mode === 'ride' && follow && rideGlide.to) {
+      map.easeTo({ center: rideGlide.at(performance.now())?.pos, padding: ridePadding(), duration: 300 });
+    }
+  };
+  function init() {
+    sheet().querySelector('.grabber').onclick = () => set(!sheet().classList.contains('closed'));
+    $('ride-peek').onclick = () => set(false);
+    sheetGesture(sheet(), {
+      // Not from inside a scrolled list of stops, so it can still be scrolled back up.
+      start: (e) => !(e.target.closest('#ride-stops') && sheet().scrollTop > 0),
+      move: (dy) => {
+        const el = sheet();
+        el.classList.add('dragging');
+        el.style.transform = `translateY(${Math.round(el.classList.contains('closed') ? Math.min(0, dy) / 3 : rubberBand(dy, 0, el.offsetHeight))}px)`;
+      },
+      end: (dy, v) => set(!settle(!sheet().classList.contains('closed'), dy, v, sheet().offsetHeight / 2)),
+    });
+  }
+  return { init, set };
+})();
+
 boot();
 
 async function boot() {
@@ -920,6 +951,7 @@ function wireUi() {
   $('btn-recenter-ride').onclick = recenter;
   $('btn-ride-start').onclick = startRide;
   $('btn-ride-stop').onclick = () => endRide(false);
+  rideSheet.init();
   $('btn-compass').onclick = () => map.easeTo({ bearing: 0, pitch: 0 });
   $('btn-loc-retry').onclick = () => {
     $('loc-banner').classList.add('hidden');
@@ -1417,6 +1449,8 @@ let guide = null, rideTimer = null, riderMarker = null, rideFixAt = 0, rideGpsBl
 // walking dot) and the camera with it, as driving does, so nothing jumps.
 const rideGlide = new Glide();
 let rideFrameId = 0, rideKind = null; // 'train' | 'walker', what the last update showed
+let rideZoom = null, rideFrameAt = 0; // the train camera's zoom, drifting like driving's (followDrive)
+const RIDE_ZOOM = 15.4; // trains are quick: about as far out as driving at speed (driveZoom)
 let compass = null, compassAt = 0; // which way the phone faces (degrees from north), for the walking dot
 const rideNow = () => Date.now() + rideTimeShift;
 
@@ -1483,6 +1517,12 @@ function renderRide(view) {
     $('ride-sub').textContent = view.alerted ? 'It’s the next stop' : `${view.stopsToGo} stop${view.stopsToGo > 1 ? 's' : ''} to ${leg.to.name}`;
   }
   $('ride-est').classList.toggle('hidden', !view.estimating);
+  // The closed sheet's one line: where you're going next.
+  const peek = $('ride-peek');
+  peek.style.setProperty('--dot', leg.line?.color ?? '#1c7ed6');
+  peek.textContent = view.kind === 'ride'
+    ? (view.alerted ? `Get off at ${leg.to.name}` : `Next: ${view.next}`)
+    : view.kind === 'wait' ? `${leg.line.name} towards ${leg.towards}` : sentence(walkText(leg));
   // The list: this ride's stations, or on foot what's left of the trip.
   const list = $('ride-stops');
   if (leg.mode === 'train') {
@@ -1521,10 +1561,8 @@ function renderRide(view) {
   // Getting on or off a train: ease into that view once; after that the frames keep the camera on you.
   if (kind !== rideKind && follow && !userMoving && !touching) {
     const riding = kind === 'train';
-    map.easeTo({
-      center: at, zoom: riding ? 15.5 : 17, bearing: riding ? heading : map.getBearing(), pitch: riding ? 45 : 30,
-      padding: { top: Math.round(innerHeight * 0.25), bottom: Math.round(innerHeight * 0.38), left: 0, right: 0 }, duration: 900,
-    });
+    rideZoom = null;
+    map.easeTo({ center: at, zoom: riding ? RIDE_ZOOM : 17, bearing: riding ? heading : map.getBearing(), pitch: riding ? 55 : 30, padding: ridePadding(), duration: 900 });
   }
   rideKind = kind;
   if (!rideFrameId) rideFrameId = requestAnimationFrame(rideFrame);
@@ -1533,6 +1571,8 @@ function renderRide(view) {
 function rideFrame(now) {
   rideFrameId = 0;
   if (mode !== 'ride') return;
+  const dt = rideFrameAt ? Math.min(now - rideFrameAt, 100) : FRAME_MS;
+  rideFrameAt = now;
   const s = rideGlide.at(now);
   if (!s) return;
   if (rideKind === 'train' && trainPose) {
@@ -1541,9 +1581,25 @@ function rideFrame(now) {
     if (vehicle3d) map.triggerRepaint();
   }
   if (riderMarker._map) riderMarker.setLngLat(s.pos).setRotation(rideKind === 'walker' && compassFresh() ? compass : s.heading);
-  if (follow && !userMoving && !touching && !map.isEasing()) map.jumpTo({ center: s.pos, ...(rideKind === 'train' ? { bearing: s.heading } : {}) });
-  if (!rideGlide.done(now)) rideFrameId = requestAnimationFrame(rideFrame);
+  let settling = false;
+  if (follow && !userMoving && !touching && !map.isEasing()) {
+    if (rideKind === 'train') {
+      // As driving does (followDrive): behind the train, heading up, tilted, the zoom drifting rather than stepping.
+      rideZoom = rideZoom == null ? map.getZoom() : rideZoom + (RIDE_ZOOM - rideZoom) * (1 - Math.exp(-dt / 700));
+      map.jumpTo({ center: s.pos, bearing: s.heading, pitch: 55, zoom: rideZoom, padding: ridePadding() });
+      settling = Math.abs(RIDE_ZOOM - rideZoom) > 0.01;
+    } else map.jumpTo({ center: s.pos });
+  } else rideZoom = null;
+  if (!rideGlide.done(now) || settling) rideFrameId = requestAnimationFrame(rideFrame);
+  else rideFrameAt = 0;
 }
+
+// The map left above the sheet, with you low in it like the car when driving, so more of the line ahead shows.
+function ridePadding() {
+  const bottom = Math.min(Math.round(innerHeight * 0.6), $('ride-sheet').offsetHeight + 10);
+  return { top: Math.round((innerHeight - bottom) * 0.42), bottom, left: 0, right: 0 };
+}
+
 
 // Which way you're heading on foot: the compass when the phone has one, else the way GPS says you're moving, else
 // towards where you're walking to.
@@ -1593,7 +1649,9 @@ function endRide(arrived) {
   cancelAnimationFrame(rideFrameId);
   rideFrameId = 0;
   rideKind = null;
+  rideZoom = null;
   rideGlide.from = rideGlide.to = null; // the next trip starts where you are, not sliding from here
+  rideSheet.set(false); // the next trip opens with its stops showing
   stopCompass();
   $('ride-ui').classList.add('hidden');
   $('btn-recenter-ride').classList.add('hidden');
