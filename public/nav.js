@@ -112,7 +112,7 @@ export class Navigator {
     return 0;
   }
 
-  update({ position, heading = null, speed = null, accuracy = 10 }) {
+  update({ position, heading = null, speed = null, accuracy = 10, estimated = false }) {
     const moving = speed != null && speed > 2;
     // Look near where we were first; fall back to the whole route if that fails (e.g. after a GPS gap).
     let hit = pointAlong(this.coords, this.cum, position, this.seg - 3, this.seg + 80, moving ? heading : null);
@@ -121,8 +121,9 @@ export class Navigator {
       if (wide.score < hit.score) hit = wide;
     }
     const tolerance = Math.max(OFF_ROUTE_M, Math.min(accuracy ?? 0, 80));
-    this.offCount = hit.dist > tolerance ? this.offCount + 1 : 0;
+    if (!estimated) this.offCount = hit.dist > tolerance ? this.offCount + 1 : 0;
     const offRoute = this.offCount >= OFF_ROUTE_FIXES;
+    const confirmedOnRoute = !estimated && !offRoute && hit.dist <= tolerance;
     if (!offRoute && hit.dist <= tolerance) {
       this.seg = hit.seg;
       this.along = hit.along;
@@ -135,12 +136,14 @@ export class Navigator {
     const remaining = Math.max(0, this.total - this.along);
     const remainingTime = this.remainingTime(k);
     const toDest = distance(position, this.coords.at(-1));
-    if (!this.arrived && (remaining < ARRIVE_M || (toDest < ARRIVE_M && remaining < 150))) this.arrived = true;
+    if (confirmedOnRoute && !this.arrived &&
+        (remaining < ARRIVE_M || (toDest < ARRIVE_M && remaining < 150))) this.arrived = true;
 
     return {
       snapped: hit.dist <= tolerance ? hit.point : position,
       along: this.along,
       offRoute,
+      confirmedOnRoute, // never confirm progress from an estimate or a stale on-route segment
       offBy: hit.dist,
       stepIndex: k,
       nextIndex,
@@ -150,7 +153,9 @@ export class Navigator {
       remaining,
       remainingTime,
       arrived: this.arrived,
-      prompt: this.prompt(nextIndex, distToNext, speed ?? 0),
+      // Keep turn guidance during a gap, but never announce an arrival/stop or consume its real GPS cue.
+      prompt: !confirmedOnRoute && (next.type.startsWith('arrive') || next.type === 'stop')
+        ? null : this.prompt(nextIndex, distToNext, speed ?? 0),
       limit: this.limitAt(this.seg - 1),
       routeBearing: bearing(this.coords[this.seg - 1], this.coords[Math.min(this.seg, this.coords.length - 1)]),
     };

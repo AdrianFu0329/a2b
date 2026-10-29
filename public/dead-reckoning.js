@@ -50,6 +50,50 @@ export class DeadReckoner {
   }
 }
 
+// One GPS outage gets one budget. An expired estimate must stay expired until a new, usable GPS measurement
+// arrives; clearing only the reckoner would let the next timer tick start another 90 seconds / 2.5 km.
+export class DeadReckoningEpisode {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.reckoner = null;
+    this.exhausted = false;
+    this.lastFixTime = -Infinity;
+  }
+
+  get active() {
+    return this.reckoner !== null;
+  }
+
+  acceptFix(fix, now) {
+    // `time` can be held at the start of a stationary spell for speed calculation; gpsTime is the measurement.
+    const time = fix.gpsTime ?? fix.time;
+    const [lng, lat] = fix.lngLat ?? [];
+    if (fix.estimated || !Number.isFinite(time) || time <= this.lastFixTime || time > now || now - time > LOST_AFTER_MS ||
+        !Number.isFinite(fix.accuracy) || fix.accuracy < 0 || fix.accuracy > BAD_ACCURACY_M ||
+        !Number.isFinite(lng) || Math.abs(lng) > 180 || !Number.isFinite(lat) || Math.abs(lat) > 90) return false;
+    this.lastFixTime = time;
+    this.reckoner = null;
+    this.exhausted = false;
+    return true;
+  }
+
+  advance({ eligible, along, speed, now, limit }) {
+    if (this.exhausted) return null;
+    if (!this.reckoner) {
+      if (!eligible) return null;
+      this.reckoner = new DeadReckoner({ along, speed, now: now - 1000 });
+    }
+    const estimate = this.reckoner.advance(now, limit);
+    if (!estimate.done) return estimate;
+    this.reckoner = null;
+    this.exhausted = true;
+    return null;
+  }
+}
+
 // The point `along` metres into a line ([lng, lat] coords with cumulative metres `cum`), and the way it runs there.
 export function pointAt(coords, cum, along) {
   const last = coords.length - 1;
