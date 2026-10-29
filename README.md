@@ -40,7 +40,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 
 | Feature | What it does |
 | --- | --- |
-| 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "ev charger", "pengecas", "petrol near klcc") for the nearest ones. Places you pick are kept as your search history, on the phone without an account (Clear wipes it). |
+| 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "ev charger", "pengecas", "petrol near klcc") for the nearest ones. Places you pick are kept as your search history, on the phone without an account (Clear wipes it). Can't find a place, or it's in the wrong spot? With an account, add it or fix it by moving the map under a pin; once a tester approves it, every phone finds it (and the driver gets 10 points). |
 | ⛽ **On the map** | Petrol stations, EV chargers, hospitals, clinics and convenience stores show on the map when zoomed in. Tap one, or any station (LRT, MRT, KTM, monorail), bus stop, car park or landmark the map shows, named or not, for routes there. |
 | 🛣️ **Routes** | Up to three routes with drive time in live traffic (jams coloured on the line), arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
 | 🟩 **Exit signs** | Expressway exits show their overhead sign on the turn banner, green as on the road: the exit number, the road it leads onto and where it goes ("EXIT 218 · 241 · Seremban / Labu"), and the voice names them too. |
@@ -128,6 +128,7 @@ Everything A2B uses is free and needs no key:
 | Train timetables (LRT, MRT, Monorail, BRT, KTM Komuter) | [data.gov.my GTFS](https://developer.data.gov.my/realtime-api/gtfs-static) (Prasarana, KTMB) | Built with `npm run transit` into `src/lib/transit-data.json`, kept in git. Each feed runs to an end date the build prints; rebuild before then. Walks to and from stations use the routing server's walking routes. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
+| Places drivers added or fixed | A2B drivers, approved by a tester | Kept in the database; phones download what changed since they last asked. |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
 | Fixed speed cameras (AES, AWAS) | OpenStreetMap, found through Photon | Built with `npm run cameras` into `public/cameras.json`, kept in git. |
 | R&Rs and lay-bys | OpenStreetMap, through the [Overpass API](https://overpass-api.de) | Built with `npm run rest-stops` into `public/rest-stops.json`, kept in git. |
