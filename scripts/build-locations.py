@@ -168,7 +168,7 @@ def download(args, duckdb, data):
         osm_places, osm_addresses = read_osm(con, step, pbf, w, s, e, n, inside)
         places = osm_places + places
         addresses += osm_addresses
-    places += read_foursquare(con, step, args.fsq_release, args.country, w, s, e, n)
+    places += read_foursquare(con, step, args.fsq_release, args.country, w, s, e, n, inside)
     return places, streets, addresses
 
 
@@ -233,9 +233,9 @@ def read_osm(con, step, pbf, w, s, e, n, inside):
     return places, addresses
 
 
-def read_foursquare(con, step, release, country, w, s, e, n):
-    """Foursquare's open places in the country, still open, not flagged by its users (closed, doesn't exist, …) and
-    seen in the last three years, when HF_TOKEN is set."""
+def read_foursquare(con, step, release, country, w, s, e, n, inside):
+    """Foursquare's open places inside the country's outline (its own country field isn't always right), still open,
+    not flagged by its users (closed, doesn't exist, …) and seen in the last three years, when HF_TOKEN is set."""
     token = os.environ.get('HF_TOKEN')
     if not token:
         print('Foursquare: skipped (set HF_TOKEN to include it)', flush=True)
@@ -250,6 +250,7 @@ def read_foursquare(con, step, release, country, w, s, e, n):
         WHERE country = ? AND date_closed IS NULL AND name IS NOT NULL AND coalesce(len(unresolved_flags), 0) = 0
           AND latitude BETWEEN {s} AND {n} AND longitude BETWEEN {w} AND {e}
           AND CAST(date_refreshed AS DATE) >= current_date - INTERVAL 3 YEAR
+          AND {inside.format(lng='longitude', lat='latitude')}
     """, [country])
 
 

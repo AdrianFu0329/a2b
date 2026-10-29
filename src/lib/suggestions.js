@@ -5,6 +5,7 @@
 // then it becomes a searchable place and the driver gets points. Rejected ones stay, so the driver can see why.
 
 import { httpError } from './providers.js';
+import { inMalaysia } from '../../public/geo.js';
 
 const PER_DAY = 20; // suggestions one account can send a day
 export const APPROVED_POINTS = 10;
@@ -22,6 +23,7 @@ export function suggestionsRepo(db) {
       if (name.length < 2 || name.length > 80) throw httpError('Give the place a name (2 to 80 characters).', 400);
       if (address.length > 120 || category.length > 40 || note.length > 300) throw httpError('That address, category or note is too long.', 400);
       if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) throw httpError('The place needs a position on the map.', 400);
+      if (!inMalaysia([lng, lat])) throw httpError('A2B only has places in Malaysia.', 400);
       const { n } = await db
         .prepare('SELECT count(*) AS n FROM place_suggestions WHERE user_id = ? AND created_at > ?')
         .bind(user.id, Date.now() - 86_400_000)
