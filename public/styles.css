@@ -672,3 +672,21 @@ body.driving .toast { top: calc(140px + var(--safe-top)); }
 .parking-list .on b { color: var(--accent-text); }
 .p-pin { width: 30px; height: 30px; border-radius: 8px; background: #2f6fde; color: #fff; display: grid; place-items: center; font: 900 17px/1 system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); cursor: pointer; }
 .trip-dest { cursor: pointer; }
+
+/* ---------- Suggesting a place (public/suggest.js) ---------- */
+/* The pin stays put and the map moves under it; it lifts while the map moves, its point marked by a small dot. */
+.suggest-pin { position: fixed; z-index: 14; width: 36px; height: 46px; transform: translate(-50%, -100%); pointer-events: none; }
+.suggest-pin svg { display: block; width: 36px; height: 46px; filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.3)); transition: transform 0.15s ease-out; }
+.suggest-pin i { position: absolute; left: 50%; bottom: -3px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); }
+.suggest-pin.moving svg { transform: translateY(-10px); }
+.was-pin { opacity: 0.45; filter: grayscale(1); }
+#suggest { max-height: 55vh; }
+.suggest-kinds { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.suggest-kinds button { height: 36px; padding: 0 14px; border-radius: 18px; background: var(--bg-2); font-size: 14px; font-weight: 600; color: var(--muted); }
+.suggest-kinds button.on { background: var(--primary); color: var(--primary-ink); }
+.suggest-choices { margin: 4px -16px 0; }
+.suggest-by { padding-top: 0; }
+.wrong-place { color: var(--accent-text); font-size: 14px; font-weight: 600; padding: 4px 0; min-height: 32px; }
+.add-missing { display: block; margin: 16px auto 0; }
+.place-list li.add-missing-row { padding: 6px 16px 12px; }
+.fb-tabs { margin: 8px 16px 4px; }
