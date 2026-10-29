@@ -27,6 +27,7 @@ let failWithExcludes = false;
 let lastLocateBody = null;
 const DETOUR = LINE.map(([lng, lat]) => [lng + 0.003, lat]); // a parallel street ~200 m east
 let osmLookups = 0;
+let signedTrip = null; // a route with a signed exit, for the exit-sign test
 let overpassCalls = 0;
 let tomtomDown = false;
 let cameras = null; // the built speed camera list, as in public/cameras.json
@@ -74,10 +75,12 @@ globalThis.fetch = async (url, init = {}) => {
       const a = fakeTrip(LINE.slice(0, 11), 60), b = fakeTrip(LINE.slice(10), 60);
       return Response.json({ trip: { summary: { length: 2, time: 120 }, legs: [a.legs[0], b.legs[0]] } });
     }
+    if (signedTrip) return Response.json({ trip: signedTrip });
     return Response.json({ trip: fakeTrip(LINE, 120), alternates: [{ trip: fakeTrip(LINE.slice(0, 15), 90) }] });
   }
   if (u.includes('/trace_attributes')) {
-    return Response.json({ edges: [{ begin_shape_index: 0, speed_limit: 50 }, { begin_shape_index: 5, end_shape_index: 10, speed_limit: 50, end_node: { type: 'toll_booth' } }, { begin_shape_index: 10, speed_limit: 30 }, { begin_shape_index: 15 }] });
+    // A tunnel from shape index 12 to 15, in two edges (as Valhalla splits a long one).
+    return Response.json({ edges: [{ begin_shape_index: 0, speed_limit: 50 }, { begin_shape_index: 5, end_shape_index: 10, speed_limit: 50, end_node: { type: 'toll_booth' } }, { begin_shape_index: 10, end_shape_index: 12, speed_limit: 30 }, { begin_shape_index: 12, end_shape_index: 13, speed_limit: 30, tunnel: true }, { begin_shape_index: 13, end_shape_index: 15, speed_limit: 30, tunnel: true }, { begin_shape_index: 15 }] });
   }
   if (u.includes('openstreetmap.org/api/0.6/map')) {
     osmLookups++;
@@ -339,6 +342,7 @@ test('routes avoid reported closures and account for reported traffic', async ()
   assert.equal(r.body.routes[0].duration, 90, 'fastest first');
   assert.equal(full.steps[0].street, 'Test Street');
   assert.deepEqual(full.limits, [[0, 50], [10, 30], [15, null]]);
+  assert.deepEqual(full.tunnels, [[12, 15]], 'a tunnel in two edges is one stretch');
   assert.equal(full.shapes, undefined, 'encoded shapes stay on the server');
 });
 
@@ -438,6 +442,7 @@ test('a stop splits the drive into legs but stays one route', async () => {
   assert.deepEqual(route.steps.map((s) => s.begin), [0, 10, 10, 20]);
   // The fake service answers every leg the same way; the second leg's runs are shifted by its offset (10).
   assert.deepEqual(route.limits, [[0, 50], [10, 30], [15, null], [10, 50], [20, 30], [25, null]]);
+  assert.deepEqual(route.tunnels, [[12, 15], [22, 25]], 'each leg’s tunnel, at its offset');
 });
 
 test('polylines round-trip', () => {
@@ -591,7 +596,7 @@ test('testing tools are flagged only for accounts in TESTER_EMAILS', async () =>
   }
 });
 
-test('feedback: anyone can send it, only the owner can read it and mark it done', async () => {
+test('feedback: anyone can send it, only the owner can read it, close it and reopen it', async () => {
   const guest = client('feedback-guest-1');
   await guest('POST', '/api/presence');
   assert.equal((await guest('POST', '/api/feedback', { message: ' ' })).status, 400, 'empty feedback is refused');
@@ -613,9 +618,21 @@ test('feedback: anyone can send it, only the owner can read it and mark it done'
       ['Love the speed camera alerts!', 'Fran', 'fran@test.com', null],
       ['Route to KLCC took a closed road', null, null, 'abc123'],
     ]);
-    assert.equal((await fran('DELETE', `/api/feedback/${feedback[0].id}`)).status, 404, 'only the owner marks it done');
-    await owner('DELETE', `/api/feedback/${feedback[0].id}`);
-    assert.equal((await owner('GET', '/api/feedback')).body.feedback.length, 1);
+    assert.equal((await fran('PATCH', `/api/feedback/${feedback[0].id}`, { closed: true })).status, 404, 'only the owner closes it');
+    assert.equal((await fran('DELETE', `/api/feedback/${feedback[0].id}`)).status, 404);
+    await owner('PATCH', `/api/feedback/${feedback[0].id}`, { closed: true });
+    let list = (await owner('GET', '/api/feedback')).body.feedback;
+    assert.equal(list.length, 2, 'closing keeps it');
+    assert.deepEqual(list.map((f) => [f.message, Boolean(f.closed_at)]), [
+      ['Route to KLCC took a closed road', false],
+      ['Love the speed camera alerts!', true],
+    ], 'open first, closed after');
+    await owner('PATCH', `/api/feedback/${feedback[0].id}`, { closed: false });
+    assert.equal((await owner('GET', '/api/feedback')).body.feedback.find((f) => f.id === feedback[0].id).closed_at, null, 'reopened');
+    await owner('DELETE', `/api/feedback/${feedback[1].id}`);
+    list = (await owner('GET', '/api/feedback')).body.feedback;
+    assert.equal(list.length, 2, "an old app's Done closes it rather than deleting it");
+    assert.ok(list.find((f) => f.id === feedback[1].id).closed_at);
   } finally {
     delete env.TESTER_EMAILS;
   }
@@ -1016,6 +1033,29 @@ test('own places: searched by name, nearest first, and ahead of the public geoco
   assert.equal(deep.body.places[0]?.address.slice(0, 31), 'Lot No. 16, Level 5, Nu Sentral', 'words late in an address count too');
   const narrowed = await client()('GET', '/api/locations?q=nasi%20lemak%20jb&lat=3.16&lng=101.70');
   assert.deepEqual(narrowed.body.places.map((p) => p.address), [], '"jb" must match too');
+});
+
+test('an exit’s sign comes with its step, and the cues name it', async () => {
+  const coords = [[13.4, 52.5], [13.4, 52.505], [13.401, 52.51]];
+  const trip = fakeTrip(coords, 120);
+  trip.legs[0].maneuvers.splice(1, 0, {
+    type: 21, instruction: 'Take exit 218 on the left.', verbal_transition_alert_instruction: 'Take exit 218.', verbal_pre_transition_instruction: 'Take exit 218 onto 241.',
+    street_names: ['241'], begin_shape_index: 1, end_shape_index: 2, length: 0.5, time: 30,
+    sign: { exit_number_elements: [{ text: '218' }], exit_branch_elements: [{ text: '241' }], exit_toward_elements: [{ text: 'Seremban' }, { text: 'Labu' }] },
+  });
+  trip.legs[0].maneuvers[0].end_shape_index = 1;
+  signedTrip = trip;
+  try {
+    const r = await client()('POST', '/api/route', { from: [13.4, 52.5], to: [13.401, 52.51] });
+    assert.equal(r.status, 200);
+    const exit = r.body.routes[0].steps.find((st) => st.sign);
+    assert.deepEqual(exit.sign, { exit: '218', roads: ['241'], toward: ['Seremban', 'Labu'] });
+    assert.equal(exit.alert, 'Take exit 218 towards Seremban and Labu.');
+    assert.equal(exit.pre, 'Take exit 218 onto 241 towards Seremban and Labu.');
+    assert.ok(r.body.routes[0].steps.filter((st) => st !== exit).every((st) => !('sign' in st)), 'only exits carry one');
+  } finally {
+    signedTrip = null;
+  }
 });
 
 test('EV chargers: the whole list, fetched from OpenStreetMap by the nightly job and kept in the database', async () => {

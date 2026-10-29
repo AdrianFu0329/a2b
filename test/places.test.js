@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filesForWord, searchNearby, mergeResults, typeQuery, placesOfType, placesOfTypesIn, addTypeSource } from '../public/places.js';
+import { filesForWord, searchNearby, mergeResults, typeQuery, placesOfType, placesOfTypesIn, addTypeSource, withoutBaseDuplicates } from '../public/places.js';
 import { matchesWordStarts, normalizeText } from '../public/text.js';
 
 const ECO = [101.468, 3.224]; // Eco Grandeur, Puncak Alam
@@ -181,4 +181,24 @@ test('a place named just what was typed comes before nearer ones only starting s
   const p = (name, lng, lat) => ({ name, address: 'Kuala Lumpur', lng, lat });
   const out = mergeResults([p('Bangunan Ming Jalan Ampang', 101.70, 3.15), p('Jalan Ampang', 101.72, 3.16), p('Wisma BSN Jalan Ampang', 101.71, 3.15)], [], 'jalan ampang', near);
   assert.equal(out[0].name, 'Jalan Ampang');
+});
+
+test('a pin the base map already draws, one place from two sources, shows once', () => {
+  const pin = (name, type, lng, lat) => ({ name, type, lng, lat });
+  const ours = [
+    pin('Petronas Jalan Pusara Aman', 'fuel', 101.7, 3.2), // the base map's "Petronas" 70 m away, on its shop
+    pin('Shell', 'fuel', 101.7006, 3.2), // across the road from it: another station
+    pin('Klinik Kesihatan Ampang', 'clinic', 101.75, 3.15),
+    pin('Klinik Kesihatan Pandan', 'clinic', 101.7505, 3.15), // the base map's is Ampang's, not this one
+    pin('Klinik', 'clinic', 101.8, 3.1), // a name with no words of its own: only very close
+    pin('Petronas', 'fuel', 101.9, 3.0), // the base map's here is a convenience store, not a station
+  ];
+  const base = [
+    { name: 'Petronas', type: 'fuel', lng: 101.7, lat: 3.2006 },
+    { name: 'Klinik Kesihatan Ampang', type: 'clinic', lng: 101.7502, lat: 3.1502 },
+    { name: 'Klinik Dr Tan', type: 'clinic', lng: 101.8008, lat: 3.1 },
+    { name: 'Petronas', type: 'convenience', lng: 101.9, lat: 3.0 },
+  ];
+  assert.deepEqual(withoutBaseDuplicates(ours, base).map((p) => p.name), ['Shell', 'Klinik Kesihatan Pandan', 'Klinik', 'Petronas']);
+  assert.equal(withoutBaseDuplicates(ours, []).length, ours.length, 'nothing on the base map: all of ours');
 });

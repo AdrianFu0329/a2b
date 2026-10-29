@@ -4,9 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  TrainGuide, trackOf, snap, pointAt, stationAlongs, alongAtTime, timeAtAlong, nextStop, shouldAlert, alighted, boarded, markerFor, DWELL_S,
+  TrainGuide, trackOf, snap, pointAt, stationAlongs, alongAtTime, timeAtAlong, nextStop, shouldAlert, alighted, boarded, markerFor, alreadyOn, DWELL_S, OFF_MS, HERE_TRUST_MS,
 } from '../public/train-guide.js';
 import { planTransit, feeds } from '../src/lib/transit.js';
+import { canReportFrom } from '../public/report-types.js';
+import { readFile } from 'node:fs/promises';
 
 // A straight line north along 101.7°E: four stations 1 km apart, 2 minutes between each.
 const lat = (m) => 3 + m / 111_195; // metres north, as geo.js measures them
@@ -116,9 +118,155 @@ test('GPS that comes back puts the estimate right', () => {
   assert.ok(later.pos[1] >= lat(1590), 'carries on from there, not back to the timetable');
 });
 
+// A trip from a start 300 m south of A: the walk to A, then the ride A to D, then a short walk at the end.
+const START = { name: 'Start', lat: lat(-300), lng: 101.7 };
+const END = { name: 'Destination', lat: lat(3100), lng: 101.7 };
+const oneRide = (o) => ({ legs: [walk(START, ride().from, 300), ride(o), walk(ride().to, END, 100)] });
+
+test('a trip started on the platform skips the walk to it', () => {
+  const g = new TrainGuide(oneRide(), { now: T0 });
+  const r = g.update({ now: T0, fix: fix(-10, { speed: 0, accuracy: 25 }) });
+  assert.equal(r.view.kind, 'wait');
+  assert.deepEqual(r.events.map((e) => e.type), ['at-station']);
+  // Inside the station GPS is vague: 140 m out at 150 m accuracy is still there.
+  const vague = new TrainGuide(oneRide(), { now: T0 });
+  assert.equal(vague.update({ now: T0, fix: fix(-140, { speed: 0, accuracy: 150 }) }).view.kind, 'wait');
+  // A big station: 100 m from its point is still in it.
+  assert.equal(new TrainGuide(oneRide(), { now: T0 }).update({ now: T0, fix: fix(-100, { speed: 0.5 }) }).view.kind, 'wait');
+  assert.equal(new TrainGuide(oneRide(), { now: T0 }).update({ now: T0, fix: fix(-250, { speed: 0.5 }) }).view.kind, 'walk');
+});
+
+test('a trip started on the train goes straight to the ride, not a walk to the station', () => {
+  const g = new TrainGuide(oneRide(), { now: T0 });
+  const r = g.update({ now: T0, fix: fix(1400, { speed: 14, heading: 0 }) });
+  assert.equal(r.view.kind, 'ride');
+  assert.equal(r.view.next, 'C');
+  assert.equal(r.events[0].type, 'boarded');
+  assert.match(r.events[0].text, /2 stops to D/);
+  // A car beside the line at the same speed is not the train.
+  const car = new TrainGuide(oneRide(), { now: T0 });
+  assert.equal(car.update({ now: T0, fix: { lngLat: [101.703, lat(1400)], speed: 14, accuracy: 10 } }).view.kind, 'walk');
+});
+
+test('on the train coming in to the station you board at: already on it', () => {
+  const approach = [[101.7, lat(-1000)], [101.7, lat(0)]]; // the line in from the stop before A
+  const hit = alreadyOn(ride({ approach }), trackOf(COORDS), fix(-600, { speed: 15, heading: 0 }));
+  assert.deepEqual([hit.phase, hit.along, Math.round(hit.eta)], ['ride', 0, 40], '600 m out at 15 m/s');
+  assert.equal(alreadyOn(ride({ approach }), trackOf(COORDS), fix(-600, { speed: 15, heading: 180 })), null, 'a train the other way');
+  assert.equal(alreadyOn(ride(), trackOf(COORDS), fix(-600, { speed: 15, heading: 0 })), null, 'no track in: not guessed');
+  const g = new TrainGuide(oneRide({ approach }), { now: T0 });
+  let v = g.update({ now: T0, fix: fix(-600, { speed: 15, heading: 0 }) }).view;
+  assert.deepEqual([v.kind, v.next, v.stopsToGo], ['ride', 'A', 4]);
+  assert.ok(!v.off, 'coming in is not off the line');
+  v = g.update({ now: T0 + 20_000, fix: null }).view; // into the tunnel before A
+  assert.equal(v.next, 'A', 'not run on by the timetable before reaching A');
+  v = g.update({ now: T0 + 100_000, fix: null }).view;
+  assert.equal(v.next, 'B', 'past A by the clock');
+});
+
+test('off the trip: on a walk heading away, or off the line on a ride', () => {
+  const g = new TrainGuide(oneRide(), { now: T0 });
+  g.update({ now: T0, fix: fix(-300, { speed: 1.3 }) });
+  const away = (t) => g.update({ now: T0 + t, fix: { lngLat: [101.703, lat(-400)], speed: 1.3, accuracy: 10 } }).view;
+  assert.ok(!away(1000).off, 'not straight away: could be a wobble');
+  assert.ok(away(1000 + OFF_MS).off);
+  assert.equal(away(2000 + OFF_MS).pos[0], 101.703, 'the marker follows you');
+  // Back on the walk: no longer off.
+  assert.ok(!g.update({ now: T0 + 60_000, fix: fix(-200, { speed: 1.3 }) }).view.off);
+
+  const r = new TrainGuide({ legs: [ride(), walk(ride().to, END, 100)] }, { now: T0 });
+  r.update({ now: T0 + 300_000, fix: fix(100, { speed: 12 }) });
+  const offLine = (t) => r.update({ now: T0 + t, fix: { lngLat: [101.71, lat(1000)], speed: 12, accuracy: 10 } }).view;
+  offLine(310_000);
+  const v = offLine(310_000 + OFF_MS);
+  assert.ok(v.off && v.pos[0] === 101.71, 'off, and shown where GPS says');
+  assert.ok(!v.estimating, 'good GPS off the line is not "no GPS"');
+  // Underground with no GPS is never off.
+  assert.ok(!r.update({ now: T0 + 400_000, fix: null }).view.off);
+});
+
+test('leaving the platform before the train comes: off the trip, the marker with you', () => {
+  const g = new TrainGuide({ legs: [ride(), walk(ride().to, END, 100)] }, { now: T0 });
+  const out = (t) => g.update({ now: T0 + t, fix: { lngLat: [101.706, lat(0)], speed: 1.2, accuracy: 10 } }).view;
+  out(0);
+  const v = out(OFF_MS);
+  assert.equal(v.kind, 'wait');
+  assert.ok(v.off);
+  assert.equal(v.pos[0], 101.706);
+});
+
+test('"I\'m already here": at the station, on the train, at a stop', () => {
+  const g = new TrainGuide(oneRide(), { now: T0 });
+  g.update({ now: T0, fix: null });
+  assert.equal(g.hereText(), 'I’m at A');
+  assert.deepEqual(g.here({ now: T0 + 1000 }).map((e) => e.type), ['at-station']);
+  assert.equal(g.update({ now: T0 + 2000, fix: null }).view.kind, 'wait');
+  assert.equal(g.hereText(), 'I’m on the train');
+  assert.deepEqual(g.here({ now: T0 + 3000 }).map((e) => e.type), ['boarded']);
+  let v = g.update({ now: T0 + 4000, fix: null }).view;
+  assert.deepEqual([v.kind, v.next], ['ride', 'B']);
+  assert.equal(g.hereText(), 'I’m at B');
+  // Underground, the train ran late: say you're at B, and the timetable carries on from there.
+  const said = g.here({ now: T0 + 200_000 });
+  assert.equal(said[0].type, 'here');
+  assert.match(said[0].text, /At B\. 2 stops to D/);
+  v = g.update({ now: T0 + 201_000, fix: null }).view;
+  assert.equal(v.next, 'C');
+  assert.ok(!v.estimating, 'just placed by hand');
+  // Tapping the last stop: off the train.
+  assert.ok(g.here({ now: T0 + 300_000, station: 3 }).some((e) => e.type === 'alight'));
+  assert.equal(g.hereText(), 'I’ve arrived');
+  assert.deepEqual(g.here({ now: T0 + 310_000 }).map((e) => e.type), ['arrived']);
+  assert.ok(g.done);
+});
+
+test('after "I\'m already here", GPS that disagrees doesn\'t re-plan straight away', () => {
+  const g = new TrainGuide(oneRide(), { now: T0 });
+  g.update({ now: T0, fix: null });
+  g.here({ now: T0 }); // at A, though GPS (wrong, indoors) puts you 1 km away
+  const far = (t) => g.update({ now: T0 + t, fix: { lngLat: [101.71, lat(0)], speed: 0, accuracy: 30 } }).view;
+  far(1000);
+  assert.ok(!far(1000 + OFF_MS).off, 'you said where you are');
+  far(HERE_TRUST_MS + 1000);
+  assert.ok(far(HERE_TRUST_MS + 1000 + OFF_MS).off, 'but not for ever');
+});
+
+test('a trip planned on board starts on the train, even with no GPS', () => {
+  const g = new TrainGuide({ legs: [ride({ aboard: true, depart: T0 - 60_000 }), walk(ride().to, END, 100)] }, { now: T0 });
+  const r = g.update({ now: T0, fix: null });
+  assert.equal(r.view.kind, 'ride');
+  assert.match(r.events[0].text, /^Stay on the Kelana Jaya Line/);
+  assert.equal(r.view.next, 'B', 'a minute after leaving A, by the clock');
+});
+
+test('when you\'ll get there: walking, waiting, riding, then the rest of the trip', () => {
+  const trip = oneRide(); // walk 300 m, ride A to D (6 min), walk 100 m (80 s)
+  const g = new TrainGuide(trip, { now: T0 });
+  const rest = 80_000;
+  let v = g.update({ now: T0, fix: fix(-300, { speed: 1.3 }) }).view;
+  assert.ok(Math.abs(v.arrive - (T0 + (300 * 1.3 / 1.25) * 1000 + (120 + 360) * 1000 + rest)) < 2000, 'walk, the planned wait and ride, the last walk');
+  v = g.update({ now: T0 + 200_000, fix: fix(-20, { speed: 1 }) }).view;
+  assert.equal(v.kind, 'wait');
+  assert.equal(v.arrive, trip.legs[1].depart + 360_000 + rest, 'the train you\'re waiting for');
+  v = g.update({ now: T0 + 400_000, fix: fix(300, { speed: 14 }) }).view;
+  assert.equal(v.kind, 'ride');
+  assert.ok(v.arrive > T0 + 400_000 && v.arrive < T0 + 400_000 + 360_000 + rest, 'by the train you\'re on');
+});
+
+test('picked up again part-way (the app reloaded): from the leg it had reached', () => {
+  const g = new TrainGuide(oneRide(), { now: T0, leg: 2 });
+  const r = g.update({ now: T0, fix: null });
+  assert.equal(r.view.kind, 'walk');
+  assert.equal(g.leg.to.name, 'Destination');
+});
+
+test('the first update says how the trip starts', () => {
+  assert.deepEqual(new TrainGuide(oneRide(), { now: T0 }).update({ now: T0, fix: null }).events.map((e) => e.type), ['start']);
+});
+
 test('which marker shows where you are', () => {
   assert.equal(markerFor({ mode: 'ride', legMode: 'train', vehicle: 'car' }), 'train');
-  assert.equal(markerFor({ mode: 'ride', legMode: 'walk', vehicle: 'car' }), 'walker');
+  assert.equal(markerFor({ mode: 'ride', legMode: 'walk', vehicle: 'car' }), 'chevron', 'on foot: which way you face');
   assert.equal(markerFor({ mode: 'drive', legMode: null, vehicle: 'car' }), 'car');
   assert.equal(markerFor({ mode: 'browse', legMode: null, vehicle: 'chevron' }), 'chevron');
   assert.equal(markerFor({ mode: 'drive', legMode: null, vehicle: undefined }), 'chevron', 'the chevron by default, as on main');
@@ -131,8 +279,19 @@ test('train legs from the planner carry their stations with times', () => {
   const plan = planTransit([101.6865, 3.134], [101.7116, 3.1579], at);
   const leg = plan.trips[0].legs.find((l) => l.mode === 'train');
   assert.equal(leg.stations.length, leg.stops + 1);
+  if (leg.approach) assert.ok(leg.approach.length > 1 && Math.abs(leg.approach.at(-1)[1] - leg.from.lat) < 1e-4, 'the track in ends at the first station');
   assert.deepEqual([leg.stations[0][0], leg.stations.at(-1)[0]], [leg.from.name, leg.to.name]);
   assert.equal(leg.stations[0][3], 0);
   assert.ok(leg.stations.every((s, i) => !i || s[3] > leg.stations[i - 1][3]), 'times go up');
   assert.ok(Math.abs(leg.stations.at(-1)[3] - leg.duration) <= 1, 'the last is the ride');
+});
+
+test('no road reports from a train trip: no button on its screen, and the menu won\'t open', async () => {
+  assert.equal(canReportFrom('ride'), false, 'a report from a train would sit on the rail line');
+  assert.equal(canReportFrom('drive'), true);
+  assert.equal(canReportFrom('browse'), true);
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const ride = html.slice(html.indexOf('id="ride-ui"'), html.indexOf('<!-- ===== Arrived'));
+  assert.ok(ride.length > 100, 'found the ride screen');
+  assert.doesNotMatch(ride, /report-fab|btn-report/, 'no report button on it');
 });

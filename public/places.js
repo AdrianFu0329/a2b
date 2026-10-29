@@ -223,4 +223,30 @@ export async function placesOfTypesIn(types, [w, s, e, n], max = 300) {
   return lists.flat().sort((a, b) => a.km - b.km).slice(0, max);
 }
 
+// Words that say what kind of place it is, not which one: "Klinik Kesihatan Ampang" and "Klinik Kesihatan Pandan" are
+// two clinics.
+const KIND_WORDS = new Set([
+  'petrol', 'station', 'stesen', 'minyak', 'fuel', 'klinik', 'clinic', 'poliklinik', 'kesihatan', 'hospital', 'medical',
+  'centre', 'center', 'pusat', 'perubatan', 'specialist', 'pakar', 'dental', 'pergigian', 'kedai', 'store', 'mart', 'mini',
+  'charger', 'charging', 'sdn', 'bhd', 'the', 'and', 'dan',
+]);
+
+// The map's pins of these kinds (placesOfTypesIn) less the ones the base map already draws: the same kind of place
+// within 150 m whose name shares a word with ours, so a station listed by both Overture and OpenStreetMap, pinned
+// on its shop in one and on its forecourt in the other, shows once. A name with nothing but kind words ("Klinik")
+// matches within 60 m. base: [{ type, name, lng, lat }], the base map's places drawn on screen.
+export function withoutBaseDuplicates(ours, base) {
+  const own = (name) => new Set(words(name).filter((w) => w.length >= 3 && !KIND_WORDS.has(w)));
+  const drawn = base.map((b) => ({ ...b, w: own(b.name) }));
+  return ours.filter((p) => {
+    const w = own(p.name);
+    return !drawn.some((b) => {
+      if (b.type !== p.type || Math.abs(b.lat - p.lat) > 0.002) return false;
+      const named = b.w.size > 0 && w.size > 0;
+      if (named && ![...w].some((x) => b.w.has(x))) return false;
+      return distance([b.lng, b.lat], [p.lng, p.lat]) < (named ? 150 : 60);
+    });
+  });
+}
+
 export const attribution = 'Places: Overture Maps Foundation';
