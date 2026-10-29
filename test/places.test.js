@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filesForWord, searchNearby, mergeResults, typeQuery, placesOfType, placesOfTypesIn, addTypeSource, withoutBaseDuplicates } from '../public/places.js';
+import { filesForWord, searchNearby, mergeResults, typeQuery, placesOfType, placesOfTypesIn, addTypeSource, withoutBaseDuplicates, setDriverPlaces } from '../public/places.js';
 import { matchesWordStarts, normalizeText } from '../public/text.js';
 
 const ECO = [101.468, 3.224]; // Eco Grandeur, Puncak Alam
@@ -194,4 +194,36 @@ test('a pin the base map already draws, one place from two sources, shows once',
   ];
   assert.deepEqual(withoutBaseDuplicates(ours, base).map((p) => p.name), ['Shell', 'Klinik Kesihatan Pandan', 'Klinik', 'Petronas']);
   assert.equal(withoutBaseDuplicates(ours, []).length, ours.length, 'nothing on the base map: all of ours');
+});
+
+test('places drivers added are searched and ranked like the others, and their fixes hide the wrong place', async () => {
+  try {
+    setDriverPlaces([
+      // Added: a shop nobody had, and a petrol station, found by "petrol" too.
+      { id: 1, name: 'Nanas Hardware', address: 'Jalan Eco 3', category: 'shop', lat: 3.2245, lng: 101.4685 },
+      { id: 2, name: 'BHP Puncak Alam', address: '', category: 'fuel', lat: 3.226, lng: 101.469 },
+      // Moved: the Starbucks is really 200 m east of where Overture has it.
+      { id: 3, name: 'Starbucks', address: 'Jalan Keramat', category: 'food', lat: 3.22737, lng: 101.46, hides_name: 'Starbucks', hides_lat: 3.22737, hides_lng: 101.45806 },
+      // Gone: the Shell station closed.
+      { id: 4, name: 'Shell Puncak Alam', lat: null, lng: null, hides_name: 'Shell Puncak Alam', hides_lat: 3.23, hides_lng: 101.47 },
+      // Taken back out by a tester: not searched.
+      { id: 5, name: 'Nando’s Fake', address: '', category: 'food', lat: 3.224, lng: 101.468, removed: 1 },
+    ]);
+    const nan = await searchNearby('nan', ECO);
+    assert.deepEqual(nan.map((p) => p.name).sort(), ["Nando's", "Nando's", 'Nanas Hardware'].sort());
+    assert.equal(nan.find((p) => p.name === 'Nanas Hardware').source, 'driver');
+
+    const star = await searchNearby('starbucks', ECO);
+    assert.deepEqual(star.map((p) => [p.name, p.lng]), [['Starbucks', 101.46]], 'only the moved one');
+
+    // The other search's copy of the wrong one goes too, and the usual order holds: best match, then nearest.
+    const merged = mergeResults([{ name: 'Starbucks', address: '', lat: 3.2274, lng: 101.4581 }, { name: 'Nanas Cafe', address: '', lat: 3.3, lng: 101.5 }], nan, 'nan', ECO);
+    assert.ok(!merged.some((p) => p.name === 'Starbucks'));
+    assert.deepEqual(merged.map((p) => p.name).slice(0, 2), ['Nanas Hardware', "Nando's"], 'nearest first among equal matches, not driver places first');
+
+    const fuel = await placesOfType('fuel', ECO);
+    assert.deepEqual(fuel.map((p) => p.name), ['Petronas Eco Grandeur', 'BHP Puncak Alam'], 'the closed Shell is gone, the added BHP is in');
+  } finally {
+    setDriverPlaces([]);
+  }
 });
