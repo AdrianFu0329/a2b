@@ -40,13 +40,16 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 
 | Feature | What it does |
 | --- | --- |
-| 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "petrol near klcc") for the nearest ones. |
-| ⛽ **On the map** | Petrol stations, hospitals, clinics and convenience stores show on the map when zoomed in. Tap one, or any station (LRT, MRT, KTM, monorail, bus) or landmark the map shows, for routes there. |
+| 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "ev charger", "pengecas", "petrol near klcc") for the nearest ones. Places you pick are kept as your search history, on the phone without an account (Clear wipes it). Can't find a place, or it's in the wrong spot? With an account, add it or fix it by moving the map under a pin; once a tester approves it, every phone finds it (and the driver gets 10 points). |
+| ⛽ **On the map** | Petrol stations, EV chargers, hospitals, clinics and convenience stores show on the map when zoomed in. Tap one, or any station (LRT, MRT, KTM, monorail), bus stop, car park or landmark the map shows, named or not, for routes there. |
 | 🛣️ **Routes** | Up to three routes with drive time in live traffic (jams coloured on the line), arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
-| 🏍️ **Motorbike** | Switch the route options to Motorbike for routes a motorcycle can take, with the same cameras, limits and reports, and no toll to pay at plazas that are free for motorcycles. While riding, your position shows as a motorbike. |
+| 🏍️ **Motorbike** | Switch the route options to Motorbike for routes a motorcycle can take, with the same cameras, limits and reports, and no toll to pay at plazas that are free for motorcycles. While riding, your position shows as a motorbike and rider in your colour. |
+| 🟩 **Exit signs** | Expressway exits show their overhead sign on the turn banner, green as on the road: the exit number, the road it leads onto and where it goes ("EXIT 218 · 241 · Seremban / Labu"), and the voice names them too. |
 | 🚶 **Walking** | Switch the route options to Walk for footpaths and pedestrian crossings, with the same spoken directions. |
 | 🚆 **By train** | Switch a route to Train for trips on the LRT, MRT, Monorail, BRT and KTM Komuter: the walk to the station, which line (in its colour) and which way, how often trains run, where to change and the walk at the end, drawn on the map. Live departure times open in Google Maps. |
+| 🚇 **Train guidance** | Start a train trip to be guided through it: the walk to the station, which train, the next station as you go (estimated from the timetable underground, where GPS drops out), "Next stop: Masjid Jamek. Get off here." with a buzz, and where to change. A 3D train in the line's colour shows where you are on the line. Works while A2B is open on screen. |
 | 🗣️ **Turn by turn** | Spoken directions, the next turn and the one after, lane guidance, roundabout exits, a turn arrow on the map, and rerouting when you go off route. |
+| 🚇 **Tunnel mode** | When the GPS drops out in a tunnel (SMART Tunnel, Penchala Link, KL's underpasses) or anywhere while moving, the car keeps going along the route at its last speed, so the next turn still comes. "No GPS · Estimating" shows until the signal is back, for up to 90 s or 2.5 km. |
 | 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
 | 🅿️ **Parking** | Car parks near your destination, paid or free, with type and spaces. Pick one and the drive reroutes there. Or search "parking", "parking klcc" or "letak kereta pavilion". |
@@ -104,6 +107,8 @@ The database tables are created on the first request (or run `npm run db:migrate
 - `MAX_ACTIVE` and `MAX_GUESTS`: how many devices can use the app at once, and how many of those can be guests.
 - `TESTER_EMAILS` (a secret: `npx wrangler secret put TESTER_EMAILS`): accounts that get the testing tools and the
   usage dashboard.
+- `OCM_KEY` (a secret, optional): an [Open Charge Map](https://openchargemap.org/site/develop/api) API key, free, for
+  more EV chargers than OpenStreetMap has.
 
 To use your own domain, add it under *Workers & Pages → a2b → Settings → Domains & Routes*.
 
@@ -123,8 +128,10 @@ Everything A2B uses is free and needs no key:
 | Train timetables (LRT, MRT, Monorail, BRT, KTM Komuter) | [data.gov.my GTFS](https://developer.data.gov.my/realtime-api/gtfs-static) (Prasarana, KTMB) | Built with `npm run transit` into `src/lib/transit-data.json`, kept in git. Each feed runs to an end date the build prints; rebuild before then. Walks to and from stations use the routing server's walking routes. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
+| Places drivers added or fixed | A2B drivers, approved by a tester | Kept in the database; phones download what changed since they last asked. |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
 | Fixed speed cameras (AES, AWAS) | OpenStreetMap, found through Photon | Built with `npm run cameras` into `public/cameras.json`, kept in git. |
+| EV chargers | OpenStreetMap ([Overpass API](https://overpass-api.de)), [Open Charge Map](https://openchargemap.org) (`OCM_KEY` secret, optional), Overture Maps | Kept in the database and refreshed weekly by the nightly job (the first list arrives with its first run after deploying). Open Charge Map's openly licensed chargers (CC BY-SA 4.0) are added when a free key is set (`npx wrangler secret put OCM_KEY`). |
 
 The community servers ask for fair use, which is why the beta caps how many people use it at once. For more
 traffic, point `ROUTING_URL` and `GEOCODER_URL` at your own [Valhalla](https://github.com/valhalla/valhalla) and
