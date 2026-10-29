@@ -279,7 +279,14 @@ body.walking #speedo, body.walking #limit, body.walking #toll-chip, body.walking
 .ride-banner .turn svg { width: 34px; height: 34px; }
 .ride-banner.alert { background: #e67700; }
 .ride-est b { background: #5f6b76; color: #fff; }
-.ride-sheet { max-height: 42vh; overflow-y: auto; }
+.ride-sheet { max-height: 42vh; overflow-y: auto; touch-action: pan-y; transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1); }
+.ride-sheet.dragging { transition: none; }
+.ride-sheet .grabber { cursor: pointer; }
+/* Closed: just the next station, one line. Drag up or tap to see the stops again. */
+.ride-peek { display: none; width: 100%; padding: 2px 2px 4px; border: 0; background: none; color: var(--text); font: inherit; font-size: 16px; font-weight: 700; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.ride-peek::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 10px; border-radius: 50%; background: var(--dot, #1c7ed6); vertical-align: 1px; }
+.ride-sheet.closed .ride-peek { display: block; }
+.ride-sheet.closed .ride-stops, .ride-sheet.closed .sheet-actions { display: none; }
 .ride-stops { list-style: none; margin: 4px 0 0; padding: 0; font-size: 15px; }
 .ride-stops li { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: center; padding: 6px 2px; color: var(--muted); }
 .ride-stops li::before { content: ''; width: 12px; height: 12px; margin: 0 3px; border-radius: 50%; border: 3px solid var(--dot, var(--muted)); background: var(--bg); box-sizing: border-box; }
