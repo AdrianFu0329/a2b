@@ -27,4 +27,14 @@ The lifecycle follows the browser's [Geolocation specification](https://www.w3.o
 - Browser harness: `work/m2-gps-browser.mjs` in the review workspace. Screenshots: `outputs/m2-gps/denied-mobile.png` and `outputs/m2-gps/inaccurate-night-mobile.png`. These are local review artifacts, not production changes.
 - The browser smoke bypasses map/app boot and stubs geolocation. Real permission prompts, hardware GPS, device background behavior and an on-road drive have not been tested. Public map/routing services and production data were not called.
 
-No CLA acceptance, push, PR creation, merge or deployment was performed in this implementation subtask.
+## Rendered comparison
+
+The same synthetic timeout (code3) rendered through the actual upstream failure function and current
+controller/status function at375px. Map boot and real geolocation are omitted in both component fixtures.
+The baseline implies permission is off; the new banner says the request timed out and will retry.
+
+| Before | After |
+|---|---|
+| ![Original timeout banner](../images/geolocation/before-timeout.png) | ![Timeout with retry status](../images/geolocation/after-timeout.png) |
+
+Submitted for owner review; no CLA acceptance, merge or deployment.
