@@ -10,7 +10,7 @@ import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
 import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES, addTypeSource, withoutBaseDuplicates } from './places.js';
-import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
+import { start as startVehicle, DEFAULT_COLOR, vehicleFor } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace, renamePlace,
@@ -398,14 +398,14 @@ function addMapLayers() {
 
 // The car as a 3D model (Settings › Vehicle). The flat arrow marker keeps the position either way and shows
 // instead when 3D can't start (no WebGL, three.js didn't load).
-// The 3D model: the vehicle from Settings, or while on the train part of a trip a train in the line's colour (see
-// renderRide). On foot it's always the chevron: it shows which way you're facing, which a car doesn't. Run again
+// The 3D model: the vehicle from Settings, a motorbike while riding in Motorbike mode (see vehicleFor), or while on
+// the train part of a trip a train in the line's colour (see renderRide). On foot it's always the chevron: it shows which way you're facing, which a car doesn't. Run again
 // after a style change, which drops custom layers.
 let trainPose = null; // { pos, heading, color } while on a train
 let vehicleShown = null; // which model the layer has now, e.g. 'car:#e23d9b' or 'train:#e4002b'
 function wantedVehicle() {
   if (mode === 'ride' && trainPose) return ['train', trainPose.color];
-  const kind = travel === 'walk' ? 'chevron' : markerFor({ mode: 'drive', vehicle: local.get('vehicle', 'chevron') });
+  const kind = travel === 'walk' ? 'chevron' : vehicleFor(mode === 'drive' ? travel : null, markerFor({ mode: 'drive', vehicle: local.get('vehicle', 'chevron') }));
   return [kind, local.get('vehicleColor', DEFAULT_COLOR)];
 }
 function syncVehicle() {
@@ -2397,6 +2397,7 @@ function startDrive() {
   $('drive-ui').classList.remove('hidden');
   tripSheet.set(false);
   $('alert').classList.add('hidden');
+  syncVehicle(); // a motorbike while riding
   document.body.classList.add('driving');
   document.body.classList.toggle('walking', travel === 'walk');
   armBack();
