@@ -351,12 +351,6 @@ async function route(request, env, url) {
     return json({ ok: true });
   }
 
-  // The Google Maps browser key for the last-resort "Search Google" (public/google-search.html), or null when there's
-  // none. It's a browser key: shown to the page anyway, limited to A2B's sites and APIs in Google Cloud.
-  if (path === '/api/google' && method === 'GET') {
-    return json({ key: env.GOOGLE_MAPS_KEY || null }, 200, { 'cache-control': 'private, max-age=3600' });
-  }
-
   // ---------- Search and routing ----------
   if (path === '/api/search' && method === 'GET') {
     await needSpot();
