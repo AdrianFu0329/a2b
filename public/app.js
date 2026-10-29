@@ -850,7 +850,10 @@ function recenter() {
   $('btn-recenter-drive').classList.add('hidden');
   $('btn-recenter-ride').classList.add('hidden');
   if (mode === 'drive' && live) return driveCamera();
-  if (mode === 'ride') return rideTick();
+  if (mode === 'ride') {
+    rideKind = null; // ease back into the ride view
+    return rideTick();
+  }
   if (state.pos) map.easeTo({ center: state.pos.lngLat, zoom: Math.max(map.getZoom(), 15), bearing: 0, pitch: 0, duration: 700 });
   else if (state.locationDenied) toast('Location is off. Allow location for this site in your browser settings.');
 }
@@ -1410,6 +1413,11 @@ function drawTransit() {
 // drawn. Nothing from a train trip is shared as traffic or as a live trip. Works while A2B is open on screen.
 const TRAIN_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="15" rx="3.5" fill="currentColor"/><rect x="8" y="5.5" width="8" height="4.5" rx="1" fill="#000" fill-opacity=".35"/><circle cx="9.2" cy="14" r="1.3" fill="#000" fill-opacity=".45"/><circle cx="14.8" cy="14" r="1.3" fill="#000" fill-opacity=".45"/><path d="m8.5 21.5 2-3.5m5 3.5-2-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 let guide = null, rideTimer = null, riderMarker = null, rideFixAt = 0, rideGpsBlocked = false, rideTimeShift = 0, rideStarted = 0;
+// The guide moves you once a second; between those, every animation frame slides the train along the track (or the
+// walking dot) and the camera with it, as driving does, so nothing jumps.
+const rideGlide = new Glide();
+let rideFrameId = 0, rideKind = null; // 'train' | 'walker', what the last update showed
+let compass = null, compassAt = 0; // which way the phone faces (degrees from north), for the walking dot
 const rideNow = () => Date.now() + rideTimeShift;
 
 function startRide() {
@@ -1429,6 +1437,7 @@ function startRide() {
   armBack();
   follow = true;
   requestWakeLock();
+  startCompass(); // inside the tap on Start: iOS only asks for the compass from a tap
   const first = trip.legs[0];
   speak(first.mode === 'walk' ? walkText(first) : boardText(first));
   rideTick();
@@ -1491,8 +1500,10 @@ function renderRide(view) {
   const kind = markerFor({ mode, legMode: view.kind === 'ride' ? 'train' : 'walk' });
   const at = view.kind === 'walk' ? view.pos ?? state.pos?.lngLat : view.pos;
   const node = riderMarker.getElement();
+  const heading = kind === 'train' ? view.heading ?? 0 : walkHeading(view);
   // On a train, the 3D train (vehicle3d.js) in the line's colour; the flat badge only if 3D isn't available.
-  trainPose = kind === 'train' && at ? { pos: at, heading: view.heading ?? 0, color: leg.line.color } : null;
+  // rideFrame keeps its position and heading moving between updates.
+  trainPose = kind === 'train' && at ? { ...(trainPose ?? { pos: at, heading }), color: leg.line.color } : null;
   const want = trainPose ? `train:${trainPose.color}` : null;
   if (want ? vehicleShown !== want : vehicleShown?.startsWith('train:')) setupVehicle();
   const flatTrain = kind === 'train' && !vehicle3d;
@@ -1504,17 +1515,69 @@ function renderRide(view) {
   if (vehicle3d) map.triggerRepaint();
   if (!at) return;
   if (kind === 'train' && vehicle3d) riderMarker.remove();
-  else {
-    riderMarker.setLngLat(at).setRotation(kind === 'train' ? view.heading ?? 0 : 0);
-    if (!riderMarker._map) riderMarker.addTo(map);
-  }
-  if (follow && !userMoving && !touching) {
-    const riding = view.kind === 'ride';
+  else if (!riderMarker._map) riderMarker.setLngLat(at).setRotation(heading).addTo(map);
+  // On the train the glide follows the track; on foot it slides straight between fixes.
+  rideGlide.set(kind === 'train' ? { pos: at, heading, along: guide.along, path: guide.track } : { pos: at, heading }, performance.now());
+  // Getting on or off a train: ease into that view once; after that the frames keep the camera on you.
+  if (kind !== rideKind && follow && !userMoving && !touching) {
+    const riding = kind === 'train';
     map.easeTo({
-      center: at, zoom: riding ? 15.5 : 17, bearing: riding ? view.heading ?? map.getBearing() : map.getBearing(), pitch: riding ? 45 : 30,
+      center: at, zoom: riding ? 15.5 : 17, bearing: riding ? heading : map.getBearing(), pitch: riding ? 45 : 30,
       padding: { top: Math.round(innerHeight * 0.25), bottom: Math.round(innerHeight * 0.38), left: 0, right: 0 }, duration: 900,
     });
   }
+  rideKind = kind;
+  if (!rideFrameId) rideFrameId = requestAnimationFrame(rideFrame);
+}
+
+function rideFrame(now) {
+  rideFrameId = 0;
+  if (mode !== 'ride') return;
+  const s = rideGlide.at(now);
+  if (!s) return;
+  if (rideKind === 'train' && trainPose) {
+    trainPose.pos = s.pos;
+    trainPose.heading = s.heading;
+    if (vehicle3d) map.triggerRepaint();
+  }
+  if (riderMarker._map) riderMarker.setLngLat(s.pos).setRotation(rideKind === 'walker' && compassFresh() ? compass : s.heading);
+  if (follow && !userMoving && !touching && !map.isEasing()) map.jumpTo({ center: s.pos, ...(rideKind === 'train' ? { bearing: s.heading } : {}) });
+  if (!rideGlide.done(now)) rideFrameId = requestAnimationFrame(rideFrame);
+}
+
+// Which way you're heading on foot: the compass when the phone has one, else the way GPS says you're moving, else
+// towards where you're walking to.
+const compassFresh = () => compass != null && Date.now() - compassAt < 3000;
+function walkHeading(view) {
+  if (compassFresh()) return compass;
+  const p = state.pos;
+  if (p && (p.speed ?? 0) > 0.7 && Number.isFinite(p.heading)) return p.heading;
+  return view.heading ?? 0;
+}
+
+function onCompass(e) {
+  // iOS gives a compass heading; Android an absolute alpha, counter-clockwise from north.
+  const h = e.webkitCompassHeading ?? (e.absolute && e.alpha != null ? 360 - e.alpha : null);
+  if (h == null || !Number.isFinite(h)) return;
+  compass = (h + (screen.orientation?.angle ?? 0)) % 360;
+  compassAt = Date.now();
+  if (rideKind === 'walker' && riderMarker?._map) riderMarker.setRotation(compass);
+}
+
+function startCompass() {
+  const listen = () => {
+    addEventListener('deviceorientationabsolute', onCompass);
+    addEventListener('deviceorientation', onCompass);
+  };
+  const ask = globalThis.DeviceOrientationEvent?.requestPermission; // iOS asks once
+  if (ask) ask.call(DeviceOrientationEvent).then((r) => r === 'granted' && listen()).catch(() => {});
+  else listen();
+}
+
+function stopCompass() {
+  removeEventListener('deviceorientationabsolute', onCompass);
+  removeEventListener('deviceorientation', onCompass);
+  compass = null;
 }
 
 function endRide(arrived) {
@@ -1527,6 +1590,11 @@ function endRide(arrived) {
   rideTimeShift = 0;
   riderMarker?.remove();
   trainPose = null;
+  cancelAnimationFrame(rideFrameId);
+  rideFrameId = 0;
+  rideKind = null;
+  rideGlide.from = rideGlide.to = null; // the next trip starts where you are, not sliding from here
+  stopCompass();
   $('ride-ui').classList.add('hidden');
   $('btn-recenter-ride').classList.add('hidden');
   document.body.classList.remove('riding');
