@@ -120,7 +120,7 @@ Everything A2B uses is free and needs no key:
 | --- | --- | --- |
 | Map tiles | [OpenFreeMap](https://openfreemap.org) | Map looks are in `public/map-themes.js`. |
 | Routing, speed limits, toll booths | [Valhalla public server](https://valhalla1.openstreetmap.de) (`ROUTING_URL`) | Community-run, fair use. |
-| Search | A2B's own place index, then [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Shops, landmarks, streets and addresses from Overture Maps and OpenStreetMap, plus places drivers suggest once a tester approves them, searched in the database (`npm run locations`). Photon fills the gaps; it's community-run, fair use. |
+| Search | A2B's own place index, then [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Shops, landmarks, streets and addresses from Overture Maps, OpenStreetMap (Geofabrik's extract) and [Foursquare Open Source Places](https://opensource.foursquare.com/os-places/), one row per place, plus places drivers suggest once a tester approves them, searched in the database (`npm run locations`; Foursquare's part needs `HF_TOKEN`, a Hugging Face token that has accepted the dataset's terms). Photon fills the gaps; it's community-run, fair use. |
 | Live traffic (optional) | [TomTom Routing API](https://developer.tomtom.com) (`TOMTOM_KEY` secret) | Times each route with today's traffic; free up to a monthly quota. Without a key, routes use typical speeds. Answers aren't stored. |
 | Train timetables (LRT, MRT, Monorail, BRT, KTM Komuter) | [data.gov.my GTFS](https://developer.data.gov.my/realtime-api/gtfs-static) (Prasarana, KTMB) | Built with `npm run transit` into `src/lib/transit-data.json`, kept in git. Each feed runs to an end date the build prints; rebuild before then. Walks to and from stations use the routing server's walking routes. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
@@ -255,7 +255,8 @@ over the internet included, you must offer them its source code under the same l
 - use your own name and icon: the A2B name and logo aren't licensed for other versions
 
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL). Places and roads under
-construction from the [Overture Maps Foundation](https://overturemaps.org) (see `public/places/NOTICE.txt` once built).
+construction from the [Overture Maps Foundation](https://overturemaps.org) (see `public/places/NOTICE.txt` once built), and
+places from [Foursquare Open Source Places](https://opensource.foursquare.com/os-places/) (Apache 2.0).
 Map tiles by [OpenFreeMap](https://openfreemap.org), routing by [Valhalla](https://github.com/valhalla/valhalla),
 search by [Photon](https://github.com/komoot/photon), live traffic by [TomTom](https://www.tomtom.com). Train
 timetables from Prasarana and KTMB through [data.gov.my](https://data.gov.my) (CC BY 4.0).
