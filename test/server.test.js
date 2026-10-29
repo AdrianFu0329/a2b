@@ -255,6 +255,24 @@ test('JSON is required for writes (blocks cross-site form posts)', async () => {
   assert.equal(res.status, 415);
 });
 
+test('an unexpected server error reads as a plain apology, not its internals', async () => {
+  const broken = () => {
+    throw new Error('D1_ERROR: table place_suggestions has no column named kind: SQLITE_ERROR');
+  };
+  const DB = new Proxy({}, { get: () => broken });
+  const log = console.error;
+  console.error = () => {};
+  try {
+    const res = await worker.fetch(new Request('https://a2b.test/api/presence', { method: 'POST', headers: { 'x-a2b-device': 'device-unexpected-1' } }), { ...env, DB });
+    assert.equal(res.status, 500);
+    const { error } = await res.json();
+    assert.doesNotMatch(error, /D1_ERROR|SQLITE|column/);
+    assert.match(error, /Something went wrong/);
+  } finally {
+    console.error = log;
+  }
+});
+
 test('profile: home, work and settings', async () => {
   const r = await alice('PATCH', '/api/me', { home: { name: 'Home', address: '1 Road', lat: 52.5, lng: 13.4 }, settings: { units: 'imperial', voice: false, bogus: 1, theme: 'purple' } });
   assert.deepEqual(r.body.user.home, { name: 'Home', address: '1 Road', lat: 52.5, lng: 13.4 });
