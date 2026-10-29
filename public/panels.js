@@ -567,32 +567,45 @@ function openFeedback() {
   setTimeout(() => text.focus(), 300);
 }
 
-// The owner's feedback inbox (GET /api/feedback is only answered for tester accounts). Done removes one.
+// The owner's feedback inbox (GET /api/feedback is only answered for tester accounts). Close marks one handled and
+// moves it under Closed, tagged with when; Reopen brings it back. Nothing is deleted.
 async function openInbox() {
   const body = openPanel('Feedback', '<p class="hint" style="padding:12px 18px">Loading…</p>');
+  let feedback;
   try {
-    const { feedback } = await api('/api/feedback');
-    const device = (ua = '') => (/iphone|ipad/i.test(ua) ? 'iPhone' : /android/i.test(ua) ? 'Android' : /mac/i.test(ua) ? 'Mac' : /windows/i.test(ua) ? 'Windows' : 'Other');
-    const when = (ms) => new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
-    body.innerHTML = feedback.length
-      ? feedback
-        .map((f) => `<div class="fb-item" data-id="${f.id}">
-          <p>${esc(f.message)}</p>
-          <small>${f.email ? `${esc(f.name)} · <a href="mailto:${esc(f.email)}?subject=${encodeURIComponent('Your A2B feedback')}">${esc(f.email)}</a>` : 'Guest'} · ${esc(when(f.created_at))} · ${esc(device(f.ua ?? ''))}${f.app ? ` · ${esc(f.app)}` : ''}</small>
-          <button class="btn ghost" data-done>Done</button>
-        </div>`)
-        .join('')
-      : '<p class="hint" style="padding:12px 18px">No feedback yet.</p>';
-    body.onclick = async (e) => {
-      const item = e.target.closest('[data-done]')?.closest('.fb-item');
-      if (!item) return;
-      try {
-        await api(`/api/feedback/${item.dataset.id}`, { method: 'DELETE' });
-        item.remove();
-        if (!body.querySelector('.fb-item')) body.innerHTML = '<p class="hint" style="padding:12px 18px">All done.</p>';
-      } catch (err) { toast(err.message); }
-    };
-  } catch (e) { body.innerHTML = `<p class="hint" style="padding:12px 18px">${esc(e.message)}</p>`; }
+    ({ feedback } = await api('/api/feedback'));
+  } catch (e) {
+    body.innerHTML = `<p class="hint" style="padding:12px 18px">${esc(e.message)}</p>`;
+    return;
+  }
+  const device = (ua = '') => (/iphone|ipad/i.test(ua) ? 'iPhone' : /android/i.test(ua) ? 'Android' : /mac/i.test(ua) ? 'Mac' : /windows/i.test(ua) ? 'Windows' : 'Other');
+  const when = (ms) => new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  const item = (f) => `<div class="fb-item${f.closed_at ? ' closed' : ''}" data-id="${f.id}">
+    <p>${esc(f.message)}</p>
+    <small>${f.email ? `${esc(f.name)} · <a href="mailto:${esc(f.email)}?subject=${encodeURIComponent('Your A2B feedback')}">${esc(f.email)}</a>` : 'Guest'} · ${esc(when(f.created_at))} · ${esc(device(f.ua ?? ''))}${f.app ? ` · ${esc(f.app)}` : ''}</small>
+    <div class="fb-actions">${f.closed_at ? `<span class="fb-tag">Closed · ${esc(when(f.closed_at))}</span><button class="btn ghost" data-reopen>Reopen</button>` : '<button class="btn ghost" data-close>Close</button>'}</div>
+  </div>`;
+  const render = () => {
+    const open = feedback.filter((f) => !f.closed_at), closed = feedback.filter((f) => f.closed_at);
+    body.innerHTML = `${open.length ? open.map(item).join('') : `<p class="hint" style="padding:12px 18px">${closed.length ? 'All handled. 🎉' : 'No feedback yet.'}</p>`}
+      ${closed.length ? `<h3 class="list-head fb-head">Closed (${closed.length})</h3>${closed.map(item).join('')}` : ''}`;
+  };
+  render();
+  body.onclick = async (e) => {
+    const btn = e.target.closest('[data-close], [data-reopen]');
+    if (!btn) return;
+    const f = feedback.find((x) => String(x.id) === btn.closest('.fb-item').dataset.id);
+    const closed = btn.hasAttribute('data-close');
+    btn.disabled = true;
+    try {
+      await api(`/api/feedback/${f.id}`, { method: 'PATCH', body: { closed } });
+      f.closed_at = closed ? Date.now() : null;
+      render();
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message);
+    }
+  };
 }
 
 // The owner's usage dashboard (GET /api/stats is only answered for tester accounts). Refreshes while open.

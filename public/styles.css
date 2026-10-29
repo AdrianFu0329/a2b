@@ -207,7 +207,11 @@ textarea.field { height: auto; padding: 12px 14px; resize: vertical; font: inher
 .fb-item p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .fb-item small { color: var(--muted); }
 .fb-item small a { color: var(--accent-text); }
-.fb-item .btn { justify-self: end; padding: 6px 16px; min-height: 0; }
+.fb-item .btn { padding: 6px 16px; min-height: 0; }
+.fb-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.fb-item.closed p { color: var(--muted); }
+.fb-tag { margin-right: auto; font-size: 12px; font-weight: 700; color: var(--muted); background: var(--bg-2); border-radius: 10px; padding: 3px 9px; }
+.fb-head { padding: 0 18px; }
 
 /* ---------- Search ---------- */
 .search-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
