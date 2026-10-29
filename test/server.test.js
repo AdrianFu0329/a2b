@@ -11,6 +11,7 @@ import { buildRouteRequest, photonToPlace, lanes, searchPlaces, corridorBox, rou
 import { applyTraffic } from '../src/lib/traffic.js';
 import { camerasAlong } from '../src/lib/cameras.js';
 import { parkingQuery } from '../src/lib/parking.js';
+import { inMalaysia } from '../public/geo.js';
 import { cameraBearing } from '../scripts/build-cameras.mjs';
 import { REPORT_TYPES } from '../public/report-types.js';
 import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
@@ -1005,4 +1006,29 @@ test('trips by train need a spot, a start and a destination', async () => {
     assert.deepEqual([l.stations[0][0], l.stations.at(-1)[0]], [l.from.name, l.to.name]);
     assert.ok(l.stations.every(([name, lat, lng, t], i) => typeof name === 'string' && Math.abs(lat) < 90 && Math.abs(lng) < 180 && (!i || t > l.stations[i - 1][3])));
   }
+});
+
+test('Malaysia, roughly: the peninsula, Sabah and Sarawak, not Singapore or Bangkok', () => {
+  for (const [lng, lat, name] of [[101.6869, 3.1390, 'Kuala Lumpur'], [103.7618, 1.4655, 'JB Sentral'], [116.0735, 5.9804, 'Kota Kinabalu'], [110.3443, 1.5535, 'Kuching'], [100.3327, 5.4141, 'George Town']]) {
+    assert.ok(inMalaysia([lng, lat]), name);
+  }
+  for (const [lng, lat, name] of [[103.8198, 1.3521, 'Singapore'], [100.5018, 13.7563, 'Bangkok'], [106.8456, -6.2088, 'Jakarta']]) {
+    assert.ok(!inMalaysia([lng, lat]), name);
+  }
+});
+
+test('the Google key for the last-resort search: only when one is set', async () => {
+  assert.deepEqual((await client()('GET', '/api/google')).body, { key: null });
+  env.GOOGLE_MAPS_KEY = 'AIza-test-key';
+  try {
+    assert.deepEqual((await client()('GET', '/api/google')).body, { key: 'AIza-test-key' });
+  } finally {
+    delete env.GOOGLE_MAPS_KEY;
+  }
+});
+
+test('what is here says its country, so a place picked on Google can be kept to Malaysia', async () => {
+  const r = await client()('GET', '/api/reverse?lat=3.16&lng=101.70');
+  assert.equal(r.status, 200);
+  assert.equal(typeof r.body.place.country, 'string');
 });

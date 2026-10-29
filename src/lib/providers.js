@@ -129,7 +129,10 @@ export async function reverseGeocode(env, { lat, lng }) {
   u.searchParams.set('limit', '1');
   const data = await getJson(u);
   const f = data.features?.[0];
-  return f ? photonToPlace(f) : { name: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, address: '', lat, lng, category: 'pin' };
+  // country: Photon's ISO code ('MY'), so the app can tell a spot is in Malaysia ('' when unknown).
+  return f
+    ? { ...photonToPlace(f), country: String(f.properties?.countrycode ?? '').toUpperCase() }
+    : { name: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, address: '', lat, lng, category: 'pin', country: '' };
 }
 
 // Well-known places in OpenStreetMap. The app puts the best of these first, ahead of shop listings that

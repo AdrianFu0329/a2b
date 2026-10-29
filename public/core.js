@@ -108,7 +108,14 @@ function slim(p) {
 
 const samePlace = (a, b) => Math.abs(a.lat - b.lat) < 0.0002 && Math.abs(a.lng - b.lng) < 0.0002;
 
+// A place found on Google (public/google-search.js) is for this drive only: Google's terms don't let us keep its name
+// or address, on the phone or on the server.
+const keepable = (place) => {
+  if (place?.google) throw new Error("Places found on Google can't be saved.");
+};
+
 export async function addPlace(kind, place) {
+  keepable(place);
   const p = slim(place);
   if (state.user) {
     const { place: row } = await api('/api/places', { method: 'POST', body: { ...p, kind } });
@@ -142,6 +149,7 @@ export function isSaved(place) {
 }
 
 export async function setHomeWork(which, place) {
+  keepable(place);
   const p = place ? slim(place) : null;
   state[which] = p;
   if (state.user) {

@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE). -->
+<!-- The last-resort "Search Google": Google's Places UI Kit, on a page of its own so only this page relaxes the
+     Content-Security-Policy as Google's script needs (public/_headers). The app shows it in a frame and gets back
+     the place picked (see offerGoogle in public/app.js). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search Google</title>
+  <style>
+    html, body { margin: 0; height: 100%; font: 15px system-ui, -apple-system, sans-serif; background: #fff; color: #1f2933; }
+    @media (prefers-color-scheme: dark) { html, body { background: #161b22; color: #e6edf3; } }
+    #note { padding: 14px 16px; }
+    #note:empty { display: none; }
+    gmp-place-search { display: block; width: 100%; }
+  </style>
+  <script type="module" src="/google-search.js"></script>
+</head>
+<body>
+  <p id="note" role="status">Searching Google…</p>
+  <div id="list"></div>
+</body>
+</html>
