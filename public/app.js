@@ -3246,7 +3246,18 @@ function renderReportGrid() {
     b.onclick = () => pickReportType(key);
     grid.append(b);
   }
+  // A place missing from the map (public/suggest.js), with its pin starting where the report would go. Not while
+  // driving: choosing the spot moves the map, which the drive camera is following.
+  if (mode === 'drive') return;
+  const add = el('button', 'report-tile', `<span class="pin-ic" style="background:#2f9e44">${ADD_PLACE_ICON}</span>Add missing place`);
+  add.onclick = () => {
+    closeScreen('report-sheet');
+    openSuggest({ kind: 'add', onClose: (cancelled) => cancelled && openReportMenu() });
+  };
+  grid.append(add);
 }
+
+const ADD_PLACE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M12 7v6M9 10h6" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
 
 function pickReportType(key) {
   const t = REPORT_TYPES[key];
