@@ -28,6 +28,12 @@ const ONE_AM = WEDNESDAY_9AM + 16 * 3600_000; // Thursday 1am
 
 const trains = (trip) => trip.legs.filter((l) => l.mode === 'train');
 
+const KINRARA_BK5 = [101.644294, 3.050506];
+const Q_SENTRAL = [101.6851, 3.135];
+const MASJID_JAMEK = [101.6963, 3.1496];
+const TRX = [101.7178, 3.1422];
+const ON_KJ = [101.695111, 3.1462]; // on the Kelana Jaya Line between Pasar Seni and Masjid Jamek
+
 test('the service day is in Malaysia time', () => {
   const d = serviceDay(Date.parse('2026-10-28T23:30:00Z')); // Thursday 7:30am in KL
   assert.deepEqual(d, { date: '20261029', dow: 3, secs: 7.5 * 3600 });
@@ -227,4 +233,39 @@ test('trips by train are counted with routes', async () => {
   const src = await import('node:fs/promises').then((fs) => fs.readFile(new URL('../src/worker.js', import.meta.url), 'utf8'));
   const route = src.slice(src.indexOf("path === '/api/transit'"), src.indexOf("path === '/api/route'"));
   assert.match(route, /count\('routes'\)/);
+});
+
+test('other ways there, not three versions of the same one', () => {
+  // Kinrara BK5 to Q Sentral: into town on the Sri Petaling Line, or off it at Sungai Besi for the Putrajaya Line to
+  // TRX and the Kajang Line to Muzium Negara.
+  const plan = planTransit(KINRARA_BK5, Q_SENTRAL, WEDNESDAY_9AM);
+  const lines = plan.trips.map((t) => trains(t).map((l) => l.line.short).join('>'));
+  assert.ok(lines.includes('SPL>PYL>KGL'), lines.join(' | '));
+  assert.equal(new Set(lines).size, lines.length, 'no two on the same lines');
+  // The Ampang and Sri Petaling Lines share their track into town: riding either there is one option, not two.
+  const mj = planTransit(MASJID_JAMEK, TRX, WEDNESDAY_9AM).trips.map((t) => trains(t).map((l) => `${l.from.name}>${l.to.name}`).join('|'));
+  assert.equal(new Set(mj).size, mj.length, mj.join(' / '));
+});
+
+test('planned on a train: the trip starts on it, not with a walk to a station', () => {
+  const plan = planTransit(ON_KJ, KLCC, WEDNESDAY_9AM, { moving: { speed: 14, heading: 10 } });
+  const first = plan.trips[0].legs[0];
+  assert.equal(first.mode, 'train', 'no walk first');
+  assert.ok(first.aboard);
+  assert.equal(first.line.short, 'KJL');
+  assert.equal(first.from.name, 'Pasar Seni', 'from the stop it just left');
+  assert.equal(first.wait, 0);
+  assert.ok(first.arrive - WEDNESDAY_9AM < 20 * 60_000, 'KLCC soon, not after a wait for the next train');
+  // The train the other way, and standing still beside the line, aren't the same.
+  assert.notEqual(planTransit(ON_KJ, KLCC, WEDNESDAY_9AM, { moving: { speed: 14, heading: 190 } }).trips[0].legs[0].towards, first.towards);
+  assert.equal(planTransit(ON_KJ, KLCC, WEDNESDAY_9AM).trips[0].legs[0].mode, 'walk');
+  assert.equal(planTransit(ON_KJ, KLCC, WEDNESDAY_9AM, { moving: { speed: 2, heading: 10 } }).trips[0].legs[0].mode, 'walk', 'walking pace');
+});
+
+test('the real walks don\'t make you wait for the train you\'re on', async () => {
+  const plan = planTransit(ON_KJ, KLCC, WEDNESDAY_9AM, { moving: { speed: 14, heading: 10 } });
+  const before = plan.trips[0].legs[0].arrive;
+  await withRealWalks({}, plan, { now: WEDNESDAY_9AM });
+  assert.equal(plan.trips[0].legs[0].arrive, before);
+  assert.equal(plan.trips[0].legs[0].wait, 0);
 });

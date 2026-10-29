@@ -229,6 +229,14 @@ test('after "I\'m already here", GPS that disagrees doesn\'t re-plan straight aw
   assert.ok(far(HERE_TRUST_MS + 1000 + OFF_MS).off, 'but not for ever');
 });
 
+test('a trip planned on board starts on the train, even with no GPS', () => {
+  const g = new TrainGuide({ legs: [ride({ aboard: true, depart: T0 - 60_000 }), walk(ride().to, END, 100)] }, { now: T0 });
+  const r = g.update({ now: T0, fix: null });
+  assert.equal(r.view.kind, 'ride');
+  assert.match(r.events[0].text, /^Stay on the Kelana Jaya Line/);
+  assert.equal(r.view.next, 'B', 'a minute after leaving A, by the clock');
+});
+
 test('the first update says how the trip starts', () => {
   assert.deepEqual(new TrainGuide(oneRide(), { now: T0 }).update({ now: T0, fix: null }).events.map((e) => e.type), ['start']);
 });

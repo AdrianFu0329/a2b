@@ -196,6 +196,12 @@ export class TrainGuide {
     if (leg.mode === 'train') {
       this.times = leg.stations.map((s) => s[3]);
       this.alongs = stationAlongs(this.track, leg.stations);
+      // Planned from on board (src/lib/transit.js): riding from the start, by the clock from when it left its first
+      // stop until GPS says where.
+      if (leg.aboard) {
+        this.phase = 'ride';
+        this.boardedAt = Math.min(now, leg.depart);
+      }
     }
   }
 
@@ -302,7 +308,8 @@ export class TrainGuide {
     if (!this.begun) {
       this.begun = true;
       const leg = this.leg;
-      if (!r.events.length && !this.done) r.events.unshift({ type: 'start', text: leg.mode === 'walk' ? walkText(leg) : boardText(leg) });
+      const text = leg.mode === 'walk' ? walkText(leg) : leg.aboard ? `Stay on the ${leg.line.name}. ${ridingText(leg, leg.stations.length - nextStop(this.alongs, this.along))}` : boardText(leg);
+      if (!r.events.length && !this.done) r.events.unshift({ type: 'start', text });
     }
     return r;
   }

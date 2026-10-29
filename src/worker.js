@@ -407,7 +407,10 @@ async function route(request, env, url) {
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('A trip needs a start and a destination.', 400);
     const at = Number.isFinite(body.at) && Math.abs(body.at - Date.now()) < 7 * 86400_000 ? body.at : Date.now();
-    const plan = await withRealWalks(env, planTransit(from, to, at));
+    // Moving along a line (a phone on a train): the trip starts on that train.
+    const m = body.moving;
+    const moving = m && Number.isFinite(m.speed) && Number.isFinite(m.heading) ? { speed: m.speed, heading: m.heading } : null;
+    const plan = await withRealWalks(env, planTransit(from, to, at, { moving }));
     await count('routes'); // with driving and walking routes
     return json(plan);
   }

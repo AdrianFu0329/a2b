@@ -1449,7 +1449,7 @@ function renderTravel() {
 
 async function showTransit(place, from, status) {
   try {
-    const plan = await api('/api/transit', { method: 'POST', body: { from, to: [place.lng, place.lat] } });
+    const plan = await api('/api/transit', { method: 'POST', body: { from, to: [place.lng, place.lat], moving: movingNow() } });
     if (mode !== 'preview' || dest !== place || travel !== 'transit') return;
     transit = { place, trips: plan.trips, selected: 0 };
     const night = plan.night ? `${plan.note} The first trains leave around ${formatClock(new Date(plan.firstTrain))}.` : plan.note;
@@ -1463,6 +1463,12 @@ async function showTransit(place, from, status) {
     $('route-list').innerHTML = '';
     $('route-status').textContent = e.message;
   }
+}
+
+// Speed and heading when moving at train speed, so a trip planned on a train starts on it (src/lib/transit.js).
+function movingNow() {
+  const p = state.pos;
+  return p && Date.now() - lastFixAt < 10_000 && (p.speed ?? 0) >= 6 && Number.isFinite(p.heading) ? { speed: p.speed, heading: p.heading } : null;
 }
 
 const WALK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13" cy="4" r="2" fill="currentColor"/><path d="m9 21 2.5-7 2.5 2.5V21M8 11l2-4 4 1 2 4M11.5 14 10 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -1497,8 +1503,8 @@ function stepHtml(l) {
     const to = l.to.name === 'Destination' ? (dest?.name ?? 'your destination') : `${l.to.name} station`;
     return `<li><span>Walk to ${esc(to)}<small>${mins(l.duration)} · ${formatDistance(l.distance, units)}</small></span></li>`;
   }
-  const when = l.every ? `Every ${l.every} min` : `Train at ${formatClock(new Date(l.depart))}`;
-  return `<li class="ride" style="--dot:${esc(l.line.color)}"><span>${lineChip(l)} ${esc(l.line.name)} towards ${esc(l.towards)}
+  const when = l.aboard ? 'You’re on it' : l.every ? `Every ${l.every} min` : `Train at ${formatClock(new Date(l.depart))}`;
+  return `<li class="ride" style="--dot:${esc(l.line.color)}"><span>${lineChip(l)} ${l.aboard ? 'Stay on the ' : ''}${esc(l.line.name)} towards ${esc(l.towards)}
     <small>${esc(when)} · ${l.stops} stop${l.stops > 1 ? 's' : ''} to ${esc(l.to.name)}, ${mins(l.duration)}</small></span></li>`;
 }
 
@@ -1589,7 +1595,7 @@ async function replanRide() {
   replanning = true;
   const place = dest;
   try {
-    const plan = await api('/api/transit', { method: 'POST', body: { from: state.pos.lngLat, to: [place.lng, place.lat] } });
+    const plan = await api('/api/transit', { method: 'POST', body: { from: state.pos.lngLat, to: [place.lng, place.lat], moving: movingNow() } });
     if (mode !== 'ride' || !guide || dest !== place) return;
     if (!plan.trips.length) return noteReplan(plan.note || 'No train trip from here. Stay on the highlighted route.');
     transit = { place, trips: plan.trips, selected: 0 };
