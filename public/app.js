@@ -13,7 +13,7 @@ import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
-  $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace,
+  $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace, renamePlace,
   isSaved, setHomeWork, armBack,
 } from './core.js';
 import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
@@ -1210,15 +1210,46 @@ function renderPlaceList(ul, list, icon, kind) {
     const li = el('li');
     const d = state.pos ? formatDistance(distance(state.pos.lngLat, [p.lng, p.lat]), state.settings.units) : '';
     li.innerHTML = `<button class="place-row"><span class="p-ic">${PLACE_ICONS[icon]}</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address || '')}</small></span><span class="p-dist">${d}</span></button>
-      <button class="icon-btn" aria-label="Remove">${PLACE_ICONS.more}</button>`;
+      <button class="icon-btn" aria-label="More for ${esc(p.name)}">${PLACE_ICONS.more}</button>`;
     li.firstElementChild.onclick = () => pickPlace(p);
-    li.lastElementChild.onclick = async () => {
-      if (!confirm(`Remove "${p.name}" from ${kind === 'saved' ? 'saved places' : 'recent'}?`)) return;
-      await removePlace(kind, p.id).catch((e) => toast(e.message));
-      renderSearchHome();
-    };
+    li.lastElementChild.onclick = (e) => placeMenu(e.currentTarget, p, kind);
     ul.append(li);
   }
+}
+
+// The ⋯ on a saved or recent place: Rename (saved places) and Remove, in the small menu the map's long-press uses.
+function placeMenu(button, p, kind) {
+  const box = $('ctx');
+  const saved = kind === 'saved';
+  box.innerHTML = `${saved ? `<button class="menu-row" data-act="rename"><span class="ctx-ic">${PLACE_ICONS.edit}</span>Rename</button>` : ''}
+    <button class="menu-row danger" data-act="remove"><span class="ctx-ic">${PLACE_ICONS.trash}</span>${saved ? 'Remove from saved' : 'Remove from recent'}</button>`;
+  box.classList.remove('hidden');
+  // Under the ⋯, its right edge lined up with it, kept on screen.
+  const r = button.getBoundingClientRect();
+  box.style.left = `${Math.max(8, Math.min(r.right - box.offsetWidth, innerWidth - box.offsetWidth - 8))}px`;
+  box.style.top = `${Math.min(r.bottom + 4, innerHeight - box.offsetHeight - 8)}px`;
+  // A tap anywhere else closes it.
+  const away = (e) => {
+    if (box.contains(e.target)) return;
+    hideContextMenu();
+    removeEventListener('pointerdown', away, true);
+  };
+  setTimeout(() => addEventListener('pointerdown', away, true));
+  box.onclick = async (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (!act) return;
+    removeEventListener('pointerdown', away, true);
+    hideContextMenu();
+    if (act === 'rename') {
+      const name = prompt('Name', p.name);
+      if (!name?.trim() || name.trim() === p.name) return;
+      await renamePlace('saved', p.id, name.trim()).catch((err) => toast(err.message));
+    } else {
+      if (!confirm(`Remove "${p.name}" from ${saved ? 'saved places' : 'recent'}?`)) return;
+      await removePlace(kind, p.id).catch((err) => toast(err.message));
+    }
+    renderSearchHome();
+  };
 }
 
 // While a search runs: rows that shimmer where its results will be, in place of your recent places.

@@ -4,6 +4,7 @@
 // "My A2B" menu, sign in / sign up, settings, saved places, leaderboard and about.
 
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
+import { PLACE_ICONS } from './icons.js';
 import { stopSharing } from './probe.js';
 import { pickVoice } from './voice.js';
 import { appVersion } from './update.js';
@@ -500,7 +501,7 @@ function openSavedPlaces() {
     ${list.length ? '' : '<p class="hint" style="padding:8px 18px">Tap the star on any destination, or long-press the map, to save it here.</p>'}
     <ul class="place-list">${list
       .map((p) => `<li data-id="${esc(p.id)}"><button class="place-row" data-go><span class="p-ic">⭐</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address || '')}</small></span></button>
-        <button class="icon-btn" data-rename aria-label="Rename">✎</button><button class="icon-btn" data-del aria-label="Delete">✕</button></li>`)
+        <button class="icon-btn" data-rename aria-label="Rename ${esc(p.name)}">${PLACE_ICONS.edit}</button><button class="icon-btn danger" data-del aria-label="Delete ${esc(p.name)}">${PLACE_ICONS.trash}</button></li>`)
       .join('')}</ul>`);
   $('sp-add').onclick = () => {
     $('panel').classList.add('hidden');
