@@ -90,12 +90,11 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--trip-keep
 .report-fab svg { width: 32px; height: 32px; }
 .report-fab:active { transform: scale(0.94); }
 #drive-ui .report-fab { bottom: calc(104px + var(--trip-keep, 0px) + var(--safe-bottom)); }
-/* Riding: the buttons sit just above the sheet of stops, whatever its height (--ride-sheet, set by rideSheet). */
-#ride-ui .report-fab { bottom: calc(var(--ride-sheet, 160px) + 14px); }
-#ride-ui .map-tools { bottom: calc(var(--ride-sheet, 160px) + 92px); }
+/* Riding: the buttons sit just above the sheet of stops, whatever its height (--ride-sheet, set by rideSheet). No
+   report button on a train trip (canReportFrom in report-types.js). */
+#ride-ui .map-tools { bottom: calc(var(--ride-sheet, 160px) + 14px); }
 @media (min-width: 720px) {
-  #ride-ui .report-fab { bottom: calc(96px + var(--safe-bottom)); }
-  #ride-ui .map-tools { bottom: calc(176px + var(--safe-bottom)); }
+  #ride-ui .map-tools { bottom: calc(96px + var(--safe-bottom)); }
 }
 
 .speedo {

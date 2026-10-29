@@ -7,6 +7,8 @@ import {
   TrainGuide, trackOf, snap, pointAt, stationAlongs, alongAtTime, timeAtAlong, nextStop, shouldAlert, alighted, boarded, markerFor, alreadyOn, DWELL_S, OFF_MS, HERE_TRUST_MS,
 } from '../public/train-guide.js';
 import { planTransit, feeds } from '../src/lib/transit.js';
+import { canReportFrom } from '../public/report-types.js';
+import { readFile } from 'node:fs/promises';
 
 // A straight line north along 101.7°E: four stations 1 km apart, 2 minutes between each.
 const lat = (m) => 3 + m / 111_195; // metres north, as geo.js measures them
@@ -282,4 +284,14 @@ test('train legs from the planner carry their stations with times', () => {
   assert.equal(leg.stations[0][3], 0);
   assert.ok(leg.stations.every((s, i) => !i || s[3] > leg.stations[i - 1][3]), 'times go up');
   assert.ok(Math.abs(leg.stations.at(-1)[3] - leg.duration) <= 1, 'the last is the ride');
+});
+
+test('no road reports from a train trip: no button on its screen, and the menu won\'t open', async () => {
+  assert.equal(canReportFrom('ride'), false, 'a report from a train would sit on the rail line');
+  assert.equal(canReportFrom('drive'), true);
+  assert.equal(canReportFrom('browse'), true);
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const ride = html.slice(html.indexOf('id="ride-ui"'), html.indexOf('<!-- ===== Arrived'));
+  assert.ok(ride.length > 100, 'found the ride screen');
+  assert.doesNotMatch(ride, /report-fab|btn-report/, 'no report button on it');
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
 
-import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
+import { REPORT_TYPES, reportLabel, reportIcon, canReportFrom } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { canAutoStartRoute } from './route-preview.js';
@@ -989,7 +989,6 @@ function wireUi() {
   };
   $('btn-report').onclick = openReportMenu;
   $('btn-report-drive').onclick = openReportMenu;
-  $('btn-report-ride').onclick = openReportMenu;
   $('btn-sound').onclick = $('btn-sound-browse').onclick = $('btn-sound-ride').onclick = () => {
     saveSettings({ voice: !state.settings.voice });
     refreshSound();
@@ -3068,6 +3067,7 @@ function showAlert(r, ahead) {
 let reportDraft = null;
 
 function openReportMenu() {
+  if (!canReportFrom(mode)) return; // not from a train trip: see report-types.js
   hideContextMenu();
   if (!state.user) return openAuth('report');
   reportDraft = { at: state.pos?.lngLat ?? map.getCenter().toArray(), heading: state.pos?.heading ?? null };
