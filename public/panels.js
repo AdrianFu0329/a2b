@@ -3,6 +3,7 @@
 
 // "My A2B" menu, sign in / sign up, settings, saved places, leaderboard and about.
 
+import { forgetChanges } from './places.js';
 import { $, state, api, local, toast, esc, initials, saveSettings, setHomeWork, removePlace, renamePlace, armBack, speak } from './core.js';
 import { PLACE_ICONS } from './icons.js';
 import { stopSharing } from './probe.js';
@@ -608,6 +609,7 @@ async function openSuggestionQueue() {
       }
       try {
         await api(`/api/suggestions/${item.dataset.id}`, { method: 'POST', body: { action: act, name } });
+        forgetChanges(); // an approved place is searchable on this phone straight away
         toast(act === 'approve' ? `${name} is now in search.` : 'Rejected.');
         item.remove();
         if (!body.querySelector('.fb-item')) body.innerHTML = empty;

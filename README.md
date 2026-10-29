@@ -122,12 +122,12 @@ Everything A2B uses is free and needs no key:
 | --- | --- | --- |
 | Map tiles | [OpenFreeMap](https://openfreemap.org) | Map looks are in `public/map-themes.js`. |
 | Routing, speed limits, toll booths | [Valhalla public server](https://valhalla1.openstreetmap.de) (`ROUTING_URL`) | Community-run, fair use. |
-| Search | A2B's own place index, then [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Shops, landmarks, streets and addresses from Overture Maps, OpenStreetMap (Geofabrik's extract) and [Foursquare Open Source Places](https://opensource.foursquare.com/os-places/), one row per place, plus places drivers suggest once a tester approves them, searched in the database (`npm run locations`; Foursquare's part needs `HF_TOKEN`, a Hugging Face token that has accepted the dataset's terms). Photon fills the gaps; it's community-run, fair use. Everything is kept to Malaysia (`SEARCH_COUNTRY`, `MY` unless set; empty for anywhere). |
+| Search | A2B's own places, on the phone, then [Photon](https://photon.komoot.io) (`GEOCODER_URL`) | Shops, landmarks and streets from OpenStreetMap (Geofabrik's extract), Overture Maps and [Foursquare Open Source Places](https://opensource.foursquare.com/os-places/), one row per place, built into small files the phone searches and ranks itself, landmarks first (`npm run places && npm run locations`; Foursquare's part needs `HF_TOKEN`, a Hugging Face token that has accepted the dataset's terms). Served as static files: no database or server work per search. Places drivers suggest join once a tester approves them, through a small list of changes from the database (`/api/locations/changes`). Photon fills the gaps; it's community-run, fair use. Everything is kept to Malaysia (`SEARCH_COUNTRY`, `MY` unless set; empty for anywhere). The place files are a database partly from OpenStreetMap, so they're published under the ODbL (`public/places/NOTICE.txt`). |
 | Search, last resort (optional) | [Google Places UI Kit](https://developers.google.com/maps/documentation/javascript/places-ui-kit/overview) (`GOOGLE_MAPS_KEY` secret) | When nothing found is named what was typed, Google's results show under A2B's by themselves (at most 30 a day on a phone) and a place picked is driven to on A2B's map. The UI Kit is the one part of Google Maps Platform its terms allow next to a map that isn't Google's; it runs on its own page (`public/google-search.html`, with Google's Content-Security-Policy there only), and nothing it finds is kept: not on the server, nor in Saved, Home, Work or Recent. Use a browser key limited to A2B's sites and to Maps JavaScript API, Places API (New) and Places UI Kit, with a daily quota so it stays in the free 10,000 searches a month (`npx wrangler secret put GOOGLE_MAPS_KEY`). Without one, there's no Google search. |
 | Live traffic (optional) | [TomTom Routing API](https://developer.tomtom.com) (`TOMTOM_KEY` secret) | Times each route with today's traffic; free up to a monthly quota. Without a key, routes use typical speeds. Answers aren't stored. |
 | Train timetables (LRT, MRT, Monorail, BRT, KTM Komuter) | [data.gov.my GTFS](https://developer.data.gov.my/realtime-api/gtfs-static) (Prasarana, KTMB) | Built with `npm run transit` into `src/lib/transit-data.json`, kept in git. Each feed runs to an end date the build prints; rebuild before then. Walks to and from stations use the routing server's walking routes. |
 | Toll plaza and car park details | [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API) | Looked up once and cached. |
-| Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
+| Kinds of place | [Overture Maps](https://overturemaps.org) | Petrol stations, hospitals, clinics, police, convenience stores and EV chargers by area, for searches like "petrol" and the map's pins (`npm run places`). |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
 | Fixed speed cameras (AES, AWAS) | OpenStreetMap, found through Photon | Built with `npm run cameras` into `public/cameras.json`, kept in git. |
 | EV chargers | OpenStreetMap ([Overpass API](https://overpass-api.de)), [Open Charge Map](https://openchargemap.org) (`OCM_KEY` secret, optional), Overture Maps | Kept in the database and refreshed weekly by the nightly job (the first list arrives with its first run after deploying). Open Charge Map's openly licensed chargers (CC BY-SA 4.0) are added when a free key is set (`npx wrangler secret put OCM_KEY`). |
@@ -140,8 +140,8 @@ Overture publishes new data monthly ([calendar](https://docs.overturemaps.org/re
 
 ```bash
 pip install duckdb
-npm run places          # shop search data (not kept in git)
-npm run locations -- --load remote   # A2B's own place search, into the database
+npm run places          # kinds of place (petrol, hospitals…), not kept in git
+npm run locations       # A2B's own places, merged, into public/places/ (after npm run places)
 npm run construction    # roads under construction
 npm run deploy
 ```

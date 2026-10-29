@@ -77,13 +77,12 @@ export function suggestionsRepo(db) {
         .bind(final.name, final.address, final.category, s.lat, s.lng, s.user_id, now)
         .first();
       await db.batch([
-        db.prepare('INSERT INTO locations_fts (rowid, name, address) VALUES (?, ?, ?)').bind(place.id, final.name, final.address),
         db
           .prepare(`UPDATE place_suggestions SET status = 'approved', reviewed_by = ?, reviewed_at = ?, location_id = ? WHERE id = ?`)
           .bind(reviewer.id, now, place.id, id),
         db.prepare('UPDATE users SET points = points + ? WHERE id = ?').bind(APPROVED_POINTS, s.user_id),
       ]);
-      return { status: 'approved', location_id: place.id };
+      return { status: 'approved', location_id: `d${place.id}` }; // as /api/locations/changes names it
     },
   };
 }

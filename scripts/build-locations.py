@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
-"""Builds A2B's own place search (the locations table, see src/lib/locations.js) from every open source we may keep.
+"""Builds A2B's own place search from every open source we may keep, as files the phone searches (public/places/,
+read by public/places.js), so finding a place takes no server.
 
   - Overture Maps: shops and landmarks (mostly from Meta and Microsoft), named streets (one entry per street per
     neighbourhood) and addresses.
@@ -12,13 +13,17 @@
 
 One place listed by several sources becomes one row: the same name, or one name and the same name with more words
 ("KFC" and "KFC Nu Sentral"), within 100 m (300 m for a landmark), keeping OpenStreetMap's pin, the fullest address
-and every source; a landmark's copies pinned elsewhere by one source are dropped (see without_copies). The rows are written as SQL files that load into D1; places that drivers added stay on a reload.
-OpenStreetMap data comes under the ODbL: A2B credits it in About, and the database itself isn't shared.
+and every source; a landmark's copies pinned elsewhere by one source are dropped (see without_copies).
+
+The places are written into public/places/ next to the kinds of place scripts/build-places.py writes there (@fuel,
+@hospital, …; run it first): one file per area of 0.5 x 0.5 degrees and first letters of a word in a place's name,
+for every word but the very common ones (COMMON, as in public/places.js). The files are a database made partly from
+OpenStreetMap, so they're published under the ODbL (public/places/NOTICE.txt). Places drivers add come from the
+server (see src/lib/suggestions.js), not from here.
 
     pip install duckdb
-    python3 scripts/build-locations.py                     # writes data/locations/*.sql
-    python3 scripts/build-locations.py --load local        # and loads them into `wrangler dev`'s database
-    python3 scripts/build-locations.py --load remote       # the live database (owner only)
+    npm run places && npm run locations                    # public/places/
+    python3 scripts/build-locations.py --reuse             # again from the last downloads, in a minute
 
 Overture publishes a new release monthly: https://docs.overturemaps.org/release-calendar/
 Geofabrik's extract is rebuilt daily; --fresh-osm downloads it again.
@@ -26,22 +31,32 @@ Geofabrik's extract is rebuilt daily; --fresh-osm downloads it again.
 import argparse
 import collections
 import glob
+import json
 import math
 import os
 import pickle
 import re
-import subprocess
 import sys
 import time
 import unicodedata
 import urllib.request
+import zlib
 
 DEFAULT_RELEASE = '2026-10-21.0'
 FSQ_RELEASE = '2026-10-15'  # https://huggingface.co/datasets/foursquare/fsq-os-places/tree/main/release
 OSM_URL = 'https://download.geofabrik.de/asia/malaysia-singapore-brunei-latest.osm.pbf'
 COUNTRY_BOXES = {'MY': (99.5, 0.8, 119.5, 7.5), 'SG': (103.55, 1.15, 104.1, 1.5), 'BN': (114.0, 4.0, 115.4, 5.1)}
-ROWS_PER_INSERT = 300  # keeps each statement well under D1's size limit
-ROWS_PER_FILE = 30_000
+AREA = 0.5  # degrees, as scripts/build-places.py; public/places.js reads it from index.json
+SPLIT_OVER = 3000  # a file with more places than this is split by the next letter ("s" -> "sa", "sh", "st"…)
+MAX_PREFIX = 3
+# Words too common to look a place up by (each in over 15,000 names and addresses): the same list as COMMON in
+# public/places.js. A search of only these ("kuala lumpur") is left to the server's geocoder.
+COMMON = {
+    'jalan', 'jln', 'lorong', 'lrg', 'persiaran', 'taman', 'tmn', 'kampung', 'kg', 'bandar', 'pusat', 'kota', 'bukit',
+    'sungai', 'sg', 'batu', 'baru', 'jaya', 'alam', 'indah', 'perdana', 'sri', 'seri', 'kuala', 'lumpur', 'petaling', 'shah',
+    'johor', 'bahru', 'ipoh', 'klang', 'kinabalu', 'kuching', 'miri', 'malaysia', 'lot', 'floor', 'ground', 'centre', 'mall',
+    'restoran', 'restaurant', 'cafe', 'kedai', 'klinik', 'masjid', 'sdn', 'bhd', 'the', 'and',
+}
 # Categories that read as landmarks (and get found from further away): Overture's, then OpenStreetMap's tag values,
 # then Foursquare's.
 LANDMARKS = {
@@ -57,6 +72,7 @@ SKIP_ROADS = "('footway', 'path', 'steps', 'cycleway', 'pedestrian', 'bridleway'
 OSM_KEYS = ['amenity', 'shop', 'tourism', 'leisure', 'office', 'craft', 'healthcare', 'historic', 'place', 'railway',
             'public_transport', 'aeroway', 'building', 'landuse']
 SOURCE_ORDER = ['osm', 'overture', 'foursquare']  # whose pin and name a merged place keeps
+SOURCE_BITS = {'osm': 1, 'overture': 2, 'foursquare': 4}  # as public/places.js reads them
 NEAR_M = 100
 NEAR_LANDMARK_M = 300
 NEAR_VENUE_M = 500  # a mall or a station is big: its listings can be this far apart
@@ -85,8 +101,8 @@ def main():
     ap.add_argument('--fresh-osm', action='store_true', help='download Geofabrik\'s extract again')
     ap.add_argument('--no-osm', action='store_true', help='leave OpenStreetMap\'s places and addresses out')
     ap.add_argument('--fsq-release', default=FSQ_RELEASE)
-    ap.add_argument('--out', default=os.path.join(os.path.dirname(__file__), '..', 'data', 'locations'))
-    ap.add_argument('--load', choices=['local', 'remote'], help='load the SQL files into D1 with wrangler')
+    ap.add_argument('--out', default=os.path.join(os.path.dirname(__file__), '..', 'public', 'places'))
+    ap.add_argument('--addresses', action='store_true', help='also house addresses (153,000 more rows; the geocoder has them)')
     ap.add_argument('--reuse', action='store_true', help='reuse the last run\'s downloads (data/locations-sources.pickle)')
     args = ap.parse_args()
     try:
@@ -107,11 +123,10 @@ def main():
             pickle.dump((places, streets, addresses), f)
     rows = merge_duplicates([(name, addr, cat, kind_of(name, cat), lat, lng, src) for name, addr, cat, lat, lng, src in places])
     rows += [(name, addr, cat, 'street', lat, lng, src) for name, addr, cat, lat, lng, src in streets]
-    rows += merge_duplicates([(name, addr, cat, 'address', lat, lng, src) for name, addr, cat, lat, lng, src in addresses])
-    write(rows, os.path.abspath(args.out))
+    if args.addresses:
+        rows += merge_duplicates([(name, addr, cat, 'address', lat, lng, src) for name, addr, cat, lat, lng, src in addresses])
+    write_files(rows, os.path.abspath(args.out), f'{args.release}+{time.strftime("%Y%m%d")}')
     common_words(rows)
-    if args.load:
-        load(os.path.abspath(args.out), args.load)
 
 
 def download(args, duckdb, data):
@@ -401,14 +416,14 @@ def without_copies(kept):
 
 
 def common_words(rows, over=15_000):
-    """Prints the words in more names and addresses than `over`: src/lib/locations.js COMMON should hold these."""
+    """Prints the words in more names and addresses than `over`: COMMON (here and in public/places.js) should hold these."""
     counts = {}
     for name, addr, *_ in rows:
         for w in set(name_words(f'{name} {addr}')):
             if len(w) >= 3:
                 counts[w] = counts.get(w, 0) + 1
     top = sorted((c, w) for w, c in counts.items() if c > over)
-    print(f'Words in over {over:,} names and addresses (COMMON in src/lib/locations.js): ' + ', '.join(w for c, w in reversed(top)))
+    print(f'Words in over {over:,} names and addresses (COMMON here and in public/places.js): ' + ', '.join(w for c, w in reversed(top)))
 
 
 def metres(lat1, lng1, lat2, lng2):
@@ -416,39 +431,115 @@ def metres(lat1, lng1, lat2, lng2):
     return 6371000 * math.hypot(x, math.radians(lat2 - lat1))
 
 
-def sql_text(v):
-    return "'" + str(v)[:120].replace("'", "''") + "'"  # cut before escaping, or a cut can split a doubled quote
+def index_words(name):
+    """The words a place is filed under: all but the very common ones, the 1-letter ones and plain numbers."""
+    return sorted({w for w in name_words(name) if len(w) >= 2 and w not in COMMON and not w.isdigit()})
 
 
-def write(rows, out):
-    os.makedirs(out, exist_ok=True)
-    for f in glob.glob(os.path.join(out, '*.sql')):
-        os.remove(f)
-    now = int(time.time() * 1000)
-    files = [rows[i:i + ROWS_PER_FILE] for i in range(0, len(rows), ROWS_PER_FILE)]
-    with open(os.path.join(out, '000-clear.sql'), 'w') as f:
-        f.write("DELETE FROM locations WHERE source != 'driver';\n")  # drivers' places stay
-    for k, chunk in enumerate(files, 1):
-        with open(os.path.join(out, f'{k:03d}-rows.sql'), 'w', encoding='utf-8') as f:
-            for i in range(0, len(chunk), ROWS_PER_INSERT):
-                values = ',\n'.join(
-                    f"({sql_text(n)},{sql_text(a)},{sql_text(c)},'{kind}',{lat:.6f},{lng:.6f},'{src}',{now})"
-                    for n, a, c, kind, lat, lng, src in chunk[i:i + ROWS_PER_INSERT]
-                )
-                f.write(f'INSERT INTO locations (name, address, category, kind, lat, lng, source, created_at) VALUES\n{values};\n')
-    with open(os.path.join(out, f'{len(files) + 1:03d}-index.sql'), 'w') as f:
-        f.write("INSERT INTO locations_fts (locations_fts) VALUES ('rebuild');\n")
-    size = sum(os.path.getsize(p) for p in glob.glob(os.path.join(out, '*.sql')))
-    print(f'Wrote {len(rows):,} locations in {len(files) + 2} files ({size / 1e6:.0f} MB) to {out}', flush=True)
+def place_id(name, lat, lng):
+    """A short ID that stays the same across rebuilds while a place keeps its name and pin, for drivers' corrections."""
+    return format(zlib.crc32(f'{name}|{lat:.4f}|{lng:.4f}'.encode()), 'x')
 
 
-def load(out, where):
-    root = os.path.join(os.path.dirname(__file__), '..')
-    for path in sorted(glob.glob(os.path.join(out, '*.sql'))):
-        print(f'Loading {os.path.basename(path)} into the {where} database…', flush=True)
-        subprocess.run(['npx', 'wrangler', 'd1', 'execute', 'a2b', f'--{where}', '--yes', f'--file={path}'], cwd=root, check=True,
-                       stdout=subprocess.DEVNULL)
-    print('Loaded.')
+def write_files(rows, out, release):
+    """Writes the rows into public/places/ as the phone reads them (see searchNearby in public/places.js), keeping
+    the kinds-of-place files (@fuel, …) scripts/build-places.py put there. A row: [name, lng, lat, address, category,
+    kind ('l' landmark, 's' street, '' other), the sources that list it (SOURCE_BITS added up), id]."""
+    shards = {}
+    for name, addr, cat, kind, lat, lng, src in rows:
+        ws = index_words(name)
+        if not ws:
+            continue
+        area = f'{math.floor(lat / AREA)}_{math.floor(lng / AREA)}'
+        place = [name[:70], round(lng, 5), round(lat, 5), addr[:70], cat or '', {'landmark': 'l', 'street': 's'}.get(kind, ''),
+                 sum(SOURCE_BITS[x] for x in src.split('+')), place_id(name, lat, lng)]
+        for letter in sorted({w[0] if w[0].isascii() and w[0].isalnum() else '_' for w in ws}):
+            shards.setdefault(f'{area}/{letter}', []).append((place, ws))
+    shards = split_big(shards)
+
+    kinds = {}  # area -> {'@fuel': n, …}, from build-places.py
+    for listing in glob.glob(os.path.join(out, '*', 'files.json')):
+        area = os.path.basename(os.path.dirname(listing))
+        with open(listing) as f:
+            kinds[area] = {k: v for k, v in json.load(f).items() if k.startswith('@')}
+        for old in glob.glob(os.path.join(os.path.dirname(listing), '*.json')):
+            if not os.path.basename(old).startswith(('@', 'files.json')):
+                os.remove(old)  # the name files build-places.py wrote: these replace them
+    if not kinds:
+        print('  no kinds of place (@fuel, …) found there: run scripts/build-places.py first', flush=True)
+
+    areas, total = {}, 0
+    for key, entries in shards.items():
+        area, letter = key.split('/')
+        os.makedirs(os.path.join(out, area), exist_ok=True)
+        body = json.dumps({'p': [p for p, _ in entries]}, ensure_ascii=False, separators=(',', ':'))
+        total += len(body.encode())
+        with open(os.path.join(out, area, f'{letter}.json'), 'w', encoding='utf-8') as f:
+            f.write(body)
+        areas.setdefault(area, {})[letter] = len(entries)
+    for area in set(areas) | set(kinds):
+        os.makedirs(os.path.join(out, area), exist_ok=True)
+        with open(os.path.join(out, area, 'files.json'), 'w') as f:
+            json.dump(dict(sorted({**areas.get(area, {}), **kinds.get(area, {})}.items())), f, separators=(',', ':'))
+
+    index_path = os.path.join(out, 'index.json')
+    index = json.load(open(index_path)) if os.path.exists(index_path) else {}
+    index.update({
+        'source': 'A2B places: Overture Maps, OpenStreetMap and Foursquare Open Source Places, merged',
+        'release': release,  # versions every file's URL, so phones fetch the new ones
+        'built': time.strftime('%Y-%m-%d'),
+        'area': AREA,
+        'count': len(rows),
+        'areas': sorted(set(areas) | set(kinds)),
+        'attribution': 'Places: © OpenStreetMap contributors (ODbL), Overture Maps Foundation, Foursquare',
+        'licence': 'ODbL 1.0 (see NOTICE.txt)',
+    })
+    with open(index_path, 'w') as f:
+        json.dump(index, f, separators=(',', ':'))
+    with open(os.path.join(out, 'NOTICE.txt'), 'w') as f:
+        f.write(NOTICE.format(release=release))
+    files = sum(len(v) for v in areas.values())
+    print(f'Wrote {len(rows):,} places into {files:,} name files ({total / 1e6:.0f} MB before compression) in {out}', flush=True)
+
+
+def split_big(shards):
+    """Busy prefixes split by one more letter until each file is small, as in scripts/build-places.py. A place goes in
+    every file matching a word it's filed under; a word shorter than the new prefix stays in the parent file."""
+    done, todo = {}, list(shards.items())
+    while todo:
+        key, entries = todo.pop()
+        area, prefix = key.split('/')
+        if len(entries) <= SPLIT_OVER or len(prefix) >= MAX_PREFIX or prefix == '_':
+            done[key] = entries
+            continue
+        parts, keep = {}, []
+        for place, ws in entries:
+            longer = {w[:len(prefix) + 1] for w in ws if w.startswith(prefix) and len(w) > len(prefix)}
+            longer = {x for x in longer if x.isascii() and x.isalnum()}
+            if not longer:
+                keep.append((place, ws))
+            for x in longer:
+                parts.setdefault(x, []).append((place, ws))
+        if keep:
+            done[key] = keep
+        todo.extend((f'{area}/{x}', e) for x, e in parts.items())
+    return done
+
+
+NOTICE = """A2B's place search data (release {release}): places from OpenStreetMap, Overture Maps and Foursquare, merged
+into one list for A2B (https://github.com/thaqif0709/a2b) by scripts/build-locations.py.
+
+This database is made available under the Open Database License (ODbL) 1.0:
+https://opendatacommons.org/licenses/odbl/1-0/. Any rights in individual contents of the database are licensed
+under the licences of their sources:
+
+- OpenStreetMap: © OpenStreetMap contributors, ODbL 1.0 (https://www.openstreetmap.org/copyright)
+- Overture Maps Foundation places: CDLA Permissive 2.0 (https://cdla.dev/permissive-2-0/), from Meta, Microsoft,
+  Foursquare, AllThePlaces and others (https://docs.overturemaps.org/attribution); its streets are OpenStreetMap's
+- Foursquare Open Source Places: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+
+The kinds-of-place files (@fuel, @hospital, …) are from Overture Maps only (scripts/build-places.py).
+"""
 
 
 if __name__ == '__main__':

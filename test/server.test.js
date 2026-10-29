@@ -11,7 +11,6 @@ import { buildRouteRequest, photonToPlace, lanes, searchPlaces, corridorBox, rou
 import { applyTraffic } from '../src/lib/traffic.js';
 import { camerasAlong } from '../src/lib/cameras.js';
 import { parkingQuery } from '../src/lib/parking.js';
-import { ftsQuery } from '../src/lib/locations.js';
 import { inMalaysia } from '../public/geo.js';
 import { cameraBearing } from '../scripts/build-cameras.mjs';
 import { REPORT_TYPES } from '../public/report-types.js';
@@ -118,10 +117,6 @@ globalThis.fetch = async (url, init = {}) => {
     if (q === 'nandos') return Response.json({ features: [feat("Nando's", 101.518, 3.071), feat("Nando's", -0.12, 51.5, 'restaurant', { country: 'UK', countrycode: 'GB' })] });
     if (q === 'nandos eco grandeur') return Response.json({ features: [] });
   }
-  if (u.includes('/api/') && u.includes('q=slowtown')) {
-    await new Promise((r) => setTimeout(r, 400)); // a busy public geocoder
-    return Response.json({ features: [{ geometry: { coordinates: [101.70, 3.16] }, properties: { name: 'Slowtown Late', countrycode: 'MY', osm_value: 'cafe' } }] });
-  }
   if (u.includes('/api/')) return Response.json({ features: [{ geometry: { coordinates: [13.41, 52.52] }, properties: { name: 'Alexanderplatz', city: 'Berlin', country: 'Germany', countrycode: 'DE', osm_value: 'square' } }] });
   throw new Error(`unexpected fetch ${u}`);
 };
@@ -169,7 +164,6 @@ function client(device) {
 function needsSpot(method, path) {
   if (path === '/api/presence') return false;
   if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/reverse') || path.startsWith('/api/parking') || path.startsWith('/api/chargers'))) return true;
-  if (method === 'GET' && path.startsWith('/api/locations?')) return true;
   return method === 'POST' && (path === '/api/route' || path === '/api/transit');
 }
 
@@ -959,82 +953,6 @@ test('presence check-ins admit new devices without a per-network throttle', asyn
   }
 });
 
-// ---------- A2B's own places ----------
-async function loadLocations(rows) {
-  const db = env.DB;
-  await db.batch(rows.map(([name, address, category, kind, lat, lng, source]) =>
-    db.prepare('INSERT INTO locations (name, address, category, kind, lat, lng, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0)').bind(name, address, category, kind, lat, lng, source)));
-  await db.prepare("INSERT INTO locations_fts (locations_fts) VALUES ('rebuild')").run();
-}
-
-test('own place search matches distinctive word prefixes, ignoring accents, punctuation and common words', () => {
-  assert.equal(ftsQuery("Nando's Bangsar"), '"nando"* "s" "bangsar"*', 'a word under 3 letters as a whole word');
-  assert.equal(ftsQuery('Kopi  Café Ãnggun'), '"kopi"* "cafe" "anggun"*', 'accents off; "cafe", in too many names, as a whole word');
-  assert.equal(ftsQuery('Jalan Ampang'), '"jalan" "ampang"*');
-  assert.equal(ftsQuery('kfc n'), '"kfc"*', 'a half-typed last word only narrows');
-  assert.equal(ftsQuery('e tech it'), '"e" "tech"*');
-  assert.equal(ftsQuery('jalan'), null);
-  assert.equal(ftsQuery('kuala lumpur'), null);
-  assert.equal(ftsQuery(' -- '), null);
-});
-
-test('own places: searched by name, nearest first, and ahead of the public geocoder', async () => {
-  await loadLocations([
-    ['Nasi Lemak Antarabangsa', 'Kampung Baru, Kuala Lumpur', 'restaurant', 'place', 3.165, 101.700, 'overture'],
-    ['Nasi Lemak Antarabangsa', 'Johor Bahru', 'restaurant', 'place', 1.46, 103.76, 'overture'],
-    ['Jalan Ampang', 'Kuala Lumpur', 'street', 'street', 3.1601, 101.7101, 'osm'],
-  ]);
-  await client()('GET', '/api/me'); // creates the tables
-  const r = await client()('GET', '/api/locations?q=nasi%20lem&lat=3.16&lng=101.70');
-  assert.equal(r.status, 200);
-  assert.deepEqual(r.body.places.map((p) => p.address), ['Kampung Baru, Kuala Lumpur', 'Johor Bahru'], 'nearest first');
-  assert.ok(r.body.places[0].km < 1);
-  await loadLocations([
-    ['Mid Valley Starbucks', 'Mid Valley City', 'cafe', 'place', 3.118, 101.677, 'overture'],
-    ['Mid Valley Megamall', 'Mid Valley City', 'shopping_mall', 'landmark', 3.1181, 101.6771, 'overture'],
-  ]);
-  await loadLocations([
-    ['TRX City Park', 'Level 3, The Exchange TRX', 'park', 'landmark', 3.1425, 101.7190, 'osm+foursquare'],
-    ['TRX City Police Station', '', 'police', 'place', 3.1418, 101.7175, 'osm'],
-    ['The Exchange TRX', 'Persiaran TRX, 55188 Kuala Lumpur', 'mall', 'landmark', 3.1420, 101.7185, 'osm+foursquare'],
-  ]);
-  const trx = await client()('GET', '/api/locations?q=trx&lat=3.16&lng=101.70');
-  assert.equal(trx.body.places[0].name, 'The Exchange TRX', 'the mall before a park and a police station named TRX…');
-  await loadLocations([['Trx', 'Kuala Lumpur', 'shopping_mall', 'place', 3.1319, 101.6841, 'foursquare']]);
-  const near = await client()('GET', '/api/locations?q=trx&lat=3.134&lng=101.686');
-  assert.equal(near.body.places[0].name, 'The Exchange TRX', '…and before a check-in page named "Trx" next to you');
-  // The place named just so, though a crowd of shorter rows "… Sunway Pyramid" outscores it in the full-text index.
-  await loadLocations([
-    ...Array.from({ length: 150 }, (_, i) => [`Shop ${i} Sunway Pyramid`, '', 'retail', 'place', 3.073, 101.607, 'foursquare']),
-    ['Sunway Pyramid', '3, Jalan PJS 11/15, Bandar Sunway, 47500 Petaling Jaya, Selangor', 'mall', 'landmark', 3.0726, 101.607, 'osm+overture+foursquare'],
-  ]);
-  const pyramid = await client()('GET', '/api/locations?q=sunway%20pyramid&lat=3.134&lng=101.686');
-  assert.equal(pyramid.body.places[0].name, 'Sunway Pyramid');
-  const app = await client()('GET', '/api/search?q=trx&lat=3.134&lng=101.686');
-  assert.deepEqual(app.body.places.filter((p) => p.landmark).map((p) => [p.name, p.landmark]), [['The Exchange TRX', 'place'], ['TRX City Park', 'place']],
-    'own landmarks tagged for the app, as Photon\'s are');
-  const mall = await client()('GET', '/api/locations?q=mid%20valley&lat=3.16&lng=101.70');
-  assert.equal(mall.body.places[0].name, 'Mid Valley Megamall', 'a landmark ahead of a shop named after it');
-  const s = await client()('GET', '/api/search?q=nasi%20lemak&lat=3.16&lng=101.70');
-  assert.equal(s.body.places[0].name, 'Nasi Lemak Antarabangsa', 'own places come first');
-  assert.ok(s.body.places.some((p) => p.name === 'Alexanderplatz'), 'topped up from the public geocoder');
-  const rev = await client()('GET', '/api/reverse?lat=3.1602&lng=101.7102');
-  assert.equal(rev.body.place.name, 'Jalan Ampang', 'what is here comes from our own streets');
-  // Common and short words: they narrow the other words' matches, and alone they look around the person.
-  await loadLocations([['Jalan Ampang Hilir', 'Kuala Lumpur', 'street', 'street', 3.152, 101.735, 'osm']]);
-  const both = await client()('GET', '/api/locations?q=jalan%20ampang&lat=3.16&lng=101.70');
-  assert.deepEqual(both.body.places.map((p) => p.name), ['Jalan Ampang', 'Jalan Ampang Hilir']);
-  const alone = await client()('GET', '/api/locations?q=jalan%20am&lat=3.16&lng=101.70');
-  assert.deepEqual(alone.body.places.map((p) => p.name), ['Jalan Ampang', 'Jalan Ampang Hilir'], 'names starting so, around the person');
-  const far = await client()('GET', '/api/locations?q=jalan%20am&lat=1.46&lng=103.76');
-  assert.deepEqual(far.body.places, [], 'not 300 km away');
-  await loadLocations([['KFC', 'Lot No. 16, Level 5, Nu Sentral, Jalan Tun Sambanthan', 'fast_food', 'place', 3.1334, 101.6868, 'overture']]);
-  const deep = await client()('GET', '/api/locations?q=kfc%20nu%20sentral&lat=3.134&lng=101.686');
-  assert.equal(deep.body.places[0]?.address.slice(0, 31), 'Lot No. 16, Level 5, Nu Sentral', 'words late in an address count too');
-  const narrowed = await client()('GET', '/api/locations?q=nasi%20lemak%20jb&lat=3.16&lng=101.70');
-  assert.deepEqual(narrowed.body.places.map((p) => p.address), [], '"jb" must match too');
-});
-
 test('an exit’s sign comes with its step, and the cues name it', async () => {
   const coords = [[13.4, 52.5], [13.4, 52.505], [13.401, 52.51]];
   const trip = fakeTrip(coords, 120);
@@ -1101,7 +1019,8 @@ test('drivers suggest places; testers approve (with edits) or reject them; appro
   assert.equal(sent.status, 201);
   assert.equal(sent.body.suggestion.status, 'pending');
   const other = await alice('POST', '/api/suggestions', { name: 'Kedai Tak Wujud', lat: 3.08, lng: 101.53 });
-  assert.equal((await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52')).body.places.length, 0, 'not searchable until approved');
+  const listed = async () => (await client()('GET', '/api/locations/changes')).body;
+  assert.equal((await listed()).places.length, 0, 'not searchable until approved');
   assert.equal((await alice('GET', '/api/suggestions')).status, 404, 'the queue is for testers');
   assert.equal((await alice('POST', `/api/suggestions/${sent.body.suggestion.id}`, { action: 'approve' })).status, 404);
 
@@ -1117,15 +1036,22 @@ test('drivers suggest places; testers approve (with edits) or reject them; appro
     assert.equal((await tess('POST', `/api/suggestions/${other.body.suggestion.id}`, { action: 'reject' })).body.status, 'rejected');
     assert.equal((await tess('GET', '/api/suggestions')).body.suggestions.length, 0);
 
-    const found = (await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52')).body.places;
-    assert.deepEqual(found.map((p) => [p.name, p.source]), [['Warung Pak Abu (Seksyen 7)', 'driver']]);
+    const found = (await listed()).places;
+    assert.deepEqual(found.map(([name, lng, lat, , , , sources, id]) => [name, lng, lat, sources, id]), [['Warung Pak Abu (Seksyen 7)', 101.52, 3.07, 8, ok.body.location_id]],
+      'in the list of changes every phone gets, as a row like the files\' (a driver\'s: sources 8)');
+    const here = await client()('GET', '/api/reverse?lat=3.0701&lng=101.5201');
+    assert.equal(here.body.place.name, 'Warung Pak Abu (Seksyen 7)', 'what is here: a driver\'s place first');
     assert.equal((await alice('GET', '/api/me')).body.user.points, before + 10, 'points for an approved place');
     assert.deepEqual((await alice('GET', '/api/suggestions/mine')).body.suggestions.map((s) => s.status), ['rejected', 'approved']);
 
     // A wrong place comes out of search.
     assert.equal((await alice('DELETE', `/api/locations/${ok.body.location_id}`)).status, 404, 'testers only');
     assert.equal((await tess('DELETE', `/api/locations/${ok.body.location_id}`)).status, 200);
-    assert.equal((await client()('GET', '/api/locations?q=warung%20pak&lat=3.07&lng=101.52')).body.places.length, 0);
+    assert.deepEqual((await listed()).places, [], 'out of search');
+    // One of the files' places (scripts/build-locations.py place_id), taken out of search too.
+    assert.equal((await alice('DELETE', '/api/locations/1f3a9c2b')).status, 404, 'testers only');
+    assert.equal((await tess('DELETE', '/api/locations/1f3a9c2b')).status, 200);
+    assert.deepEqual((await listed()).hidden, ['1f3a9c2b']);
   } finally {
     delete env.TESTER_EMAILS;
   }
@@ -1165,17 +1091,3 @@ test('the Google key for the last-resort search: only when one is set', async ()
   }
 });
 
-test('own places answer without waiting long for a slow public geocoder', async () => {
-  await loadLocations([1, 2, 3].map((i) => [`Slowtown Cafe ${i}`, 'Kuala Lumpur', 'cafe', 'place', 3.16 + i / 1000, 101.70, 'overture']));
-  env.PHOTON_WAIT_MS = '50';
-  try {
-    const t0 = Date.now();
-    const r = await client()('GET', '/api/search?q=slowtown&lat=3.16&lng=101.70');
-    assert.ok(Date.now() - t0 < 350, 'not held up by the 400 ms geocoder');
-    assert.equal(r.body.partial, true);
-    assert.ok(r.body.places.every((p) => p.name !== 'Slowtown Late'));
-    assert.equal(r.body.places.length, 3);
-  } finally {
-    delete env.PHOTON_WAIT_MS;
-  }
-});

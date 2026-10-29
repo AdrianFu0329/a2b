@@ -356,14 +356,16 @@ async function route(request, env, url) {
     return json({ ok: true });
   }
 
-  // ---------- A2B's own place search (src/lib/locations.js) ----------
-  if (path === '/api/locations' && method === 'GET') {
-    await needSpot();
-    const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
-    const lat = num(url, 'lat'), lng = num(url, 'lng');
-    const near = Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null;
-    const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 10, 1), 50);
-    return json({ places: q.length < 2 ? [] : await locations.search(q, near, limit) });
+  // ---------- A2B's own place search: searched on the phone (public/places.js); here, what changed since its files
+  // were built (src/lib/locations.js). One small list for every phone, fetched when the app opens.
+  if (path === '/api/locations/changes' && method === 'GET') {
+    const cache = globalThis.caches?.default;
+    const key = new Request('https://cache.a2b/locations/changes');
+    const hit = cache && (await cache.match(key));
+    if (hit) return hit;
+    const res = json(await locations.changes(), 200, { 'cache-control': `public, max-age=${CHANGES_MAX_AGE}` });
+    if (cache) await cache.put(key, res.clone());
+    return res;
   }
   // ---------- Place suggestions (src/lib/suggestions.js): drivers suggest, testers review ----------
   if (path === '/api/suggestions' && method === 'POST') {
@@ -379,12 +381,15 @@ async function route(request, env, url) {
   const reviewing = path.match(/^\/api\/suggestions\/(\d+)$/);
   if (reviewing && method === 'POST') {
     if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
-    return json(await suggestions.review(user, Number(reviewing[1]), await readJson(request)));
+    const done = await suggestions.review(user, Number(reviewing[1]), await readJson(request));
+    await globalThis.caches?.default?.delete(new Request('https://cache.a2b/locations/changes')); // show it soon
+    return json(done);
   }
-  const wrongPlace = path.match(/^\/api\/locations\/(\d+)$/);
+  const wrongPlace = path.match(/^\/api\/locations\/(d\d+|[0-9a-f]{1,8})$/);
   if (wrongPlace && method === 'DELETE') {
     if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
-    if (!(await locations.remove(Number(wrongPlace[1])))) throw httpError('Place not found.', 404);
+    if (!(await locations.remove(wrongPlace[1], user))) throw httpError('Place not found.', 404);
+    await globalThis.caches?.default?.delete(new Request('https://cache.a2b/locations/changes'));
     return json({ ok: true });
   }
 
@@ -410,8 +415,7 @@ async function route(request, env, url) {
     const cache = globalThis.caches?.default;
     const hit = cache && (await cache.match(key));
     if (hit) return hit;
-    const found = await searchBoth(env, locations, { q, lat, lng, lang });
-    const res = json(found, 200, { 'cache-control': `public, max-age=${found.partial ? 60 : 600}` });
+    const res = json(await searchPlaces(env, { q, lat, lng, lang }), 200, { 'cache-control': 'public, max-age=600' });
     if (cache) await cache.put(key, res.clone());
     return res;
   }
@@ -692,40 +696,10 @@ async function searchParking(env, q, lat, lng, lang) {
 const FEEDBACK_MAX = 2000; // characters
 const FEEDBACK_PER_DAY = 10; // per account, or per device without one
 
-const OWN_AREAS = new Set(['city', 'town', 'suburb', 'village', 'neighbourhood', 'quarter', 'residential']);
-const OWN_STATIONS = new Set(['station', 'train_station', 'metro_station', 'rail_station', 'bus_station', 'ferry_terminal']);
-
-// Search: A2B's own places first, then the public geocoder's for anything they don't already cover. Either one
-// failing still answers with the other. The public one sometimes takes 15 s or more: once our own places found
-// enough, it gets PHOTON_WAIT_MS more, and PHOTON_MAX_MS at most, and is otherwise left out (partial: the answer is
-// cached a minute, not ten, and the app may look on Google instead).
 // Part of the cached searches' key: raise it when search answers differently, so nobody gets the old ones.
-const SEARCH_VERSION = 2;
-const PHOTON_WAIT_MS = 2500;
-const PHOTON_MAX_MS = 6000;
-const ENOUGH_OWN = 3;
-async function searchBoth(env, locations, { q, lat, lng, lang }) {
-  const near = Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null;
-  const photonCall = searchPlaces(env, { q, lat, lng, lang });
-  photonCall.catch(() => {}); // it may be left out below, still running
-  const own = await locations.search(q, near).then((value) => ({ status: 'fulfilled', value }), (reason) => ({ status: 'rejected', reason }));
-  const late = { status: 'late' };
-  const settle = photonCall.then((value) => ({ status: 'fulfilled', value }), (reason) => ({ status: 'rejected', reason }));
-  const enough = own.status === 'fulfilled' && own.value.length >= ENOUGH_OWN;
-  const wait = Number(enough ? env.PHOTON_WAIT_MS ?? PHOTON_WAIT_MS : env.PHOTON_MAX_MS ?? PHOTON_MAX_MS);
-  const photon = await Promise.race([settle, new Promise((r) => setTimeout(() => r(late), wait))]);
-  // Own landmarks say what kind they are, as Photon's do (photonToPlace), so the app's mergeResults puts the best one
-  // first ("trx": The Exchange TRX, not a shop whose name starts with TRX).
-  const tag = (p) => (p.kind !== 'landmark' ? {} : { landmark: OWN_AREAS.has(p.category) ? 'area' : OWN_STATIONS.has(p.category) ? 'station' : 'place' });
-  const mine = own.status === 'fulfilled' ? own.value.map(({ id, kind, source, ...p }) => ({ ...p, ...tag({ kind, ...p }) })) : [];
-  if (photon.status === 'rejected' && !mine.length) throw photon.reason;
-  if (photon === late && !mine.length) return { places: [], partial: true }; // too slow, and nothing of ours
-  const theirs = photon.status === 'fulfilled' ? photon.value : { places: [] };
-  const same = (a, b) => a.name.toLowerCase() === b.name.toLowerCase() && distance([a.lng, a.lat], [b.lng, b.lat]) < 150;
-  const extra = theirs.places.filter((p) => !mine.some((m) => same(m, p)));
-  // ranked: A2B's own places are in it, in the order src/lib/locations.js ranked them; the app keeps that order.
-  return { ...theirs, places: [...mine, ...extra].slice(0, 10), ...(mine.length ? { ranked: true } : {}), ...(photon === late ? { partial: true } : {}) };
-}
+const SEARCH_VERSION = 3;
+// How long phones and Cloudflare keep the list of changes (drivers' places, places taken out): a few minutes.
+const CHANGES_MAX_AGE = 300;
 
 function isTester(env, user) {
   const list = String(env.TESTER_EMAILS ?? '').split(',').map((e) => normalizeEmail(e)).filter(Boolean);

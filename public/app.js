@@ -9,7 +9,7 @@ import { TrainGuide, markerFor, walkText } from './train-guide.js';
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
-import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES, addTypeSource, withoutBaseDuplicates } from './places.js';
+import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES, addTypeSource, withoutBaseDuplicates, loadChanges } from './places.js';
 import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -245,6 +245,7 @@ async function boot() {
   wireUi();
   setupSheetDrag();
   refreshSound();
+  loadChanges(); // what changed in A2B's places since its files were built: ready for the first search
   // A shared-drive link goes straight to the drive; everyone else sees the welcome once, which then asks for location.
   if (/^\/drive\//.test(location.pathname)) startLocation();
   else welcome(startLocation);
@@ -1170,7 +1171,7 @@ let searchAbort = null;
 function searchServer(q, near, { newest = false } = {}) {
   const lang = (navigator.language || 'en').slice(0, 2);
   // v: as the server's SEARCH_VERSION, so the browser's copy of an older answer isn't used after an update.
-  const url = `/api/search?v=2&q=${encodeURIComponent(q.trim().toLowerCase())}&lat=${near[1].toFixed(2)}&lng=${near[0].toFixed(2)}&lang=${lang}`;
+  const url = `/api/search?v=3&q=${encodeURIComponent(q.trim().toLowerCase())}&lat=${near[1].toFixed(2)}&lng=${near[0].toFixed(2)}&lang=${lang}`;
   const hit = searchMemo.get(url);
   if (hit && Date.now() - hit.at < SEARCH_MEMO_MS) return hit.promise;
   if (newest) {
@@ -1314,30 +1315,41 @@ async function runSearch(q, enter = false) {
       if (seq !== searchSeq) return;
       return showResults(q, near, typed.places, typed.note, true, enter);
     }
-    // Two searches at once: the server's (OpenStreetMap) and this phone's own (Overture shops and places).
-    const [server, local] = pasted
-      ? [{ places: [{ name: 'Coordinates', address: q, lat, lng }] }, []]
-      : await Promise.all([
-          searchServer(q, near, { newest: true }),
-          searchNearby(q, near).catch(() => []),
-        ]);
-    // A search for parking is answered with the car parks around the place (or you), nearest first: only those.
-    const places = server.parking ? await withOvertureParking(server) : mergeResults(server.places, local, q, near, server.ranked);
+    if (pasted) return showResults(q, near, [{ name: 'Coordinates', address: q, lat, lng }], null, false, enter);
+    // Two searches at once: this phone's own (A2B's places, see public/places.js), shown as soon as it's done, and the
+    // server's (OpenStreetMap's geocoder), whose answer is added when it comes; the public geocoder can take seconds.
+    const serverCall = searchServer(q, near, { newest: true });
+    serverCall.catch(() => {});
+    const local = await searchNearby(q, near).catch(() => []);
+    if (seq !== searchSeq) return;
+    if (local.length) showResults(q, near, local, null, true, false, false);
+    const server = await serverCall.catch((e) => (local.length ? { places: [] } : Promise.reject(e)));
+    if (seq !== searchSeq) return;
+    // A search for parking is answered with the car parks around the place (or you), nearest first: only those. Else
+    // A2B's places in their order (searchNearby ranked them), and the geocoder's after them.
+    const places = server.parking
+      ? await withOvertureParking(server)
+      : local.length ? mergeResults(local, server.places, q, near, true) : mergeResults(server.places, [], q, near);
     const from = server.parking?.from;
     const note = server.parking
       ? places.length ? `Car parks near ${from ?? 'you'}` : `No car parks mapped near ${from ?? 'you'}.`
-      : local.length ? null : server.note; // "not in the map data" is moot once Overture found it
+      : local.length ? null : server.note; // "not in the map data" is moot once A2B's own places found it
     if (seq !== searchSeq) return;
-    showResults(q, near, places, note, places.some((p) => !server.places.includes(p)), enter);
+    showResults(q, near, places, note, places.some((p) => p.source === 'a2b'), enter);
   } catch (e) {
     if (seq !== searchSeq) return;
     searchMessage(e.message);
   }
 }
 
-function showResults(q, near, places, note, overture, enter) {
+// final: the last answer for q (the server's too), so Google may be asked when nothing found is named so.
+function showResults(q, near, places, note, overture, enter, final = true) {
   $('search-home').classList.add('hidden');
-  if (!places.length) return searchMessage(note || `No results for "${q}".`);
+  if (!places.length) {
+    searchMessage(note || `No results for "${q}".`);
+    if (final) offerGoogle($('results'), q, near, places);
+    return;
+  }
   const ul = $('results');
   ul.classList.remove('hidden');
   ul.removeAttribute('aria-busy');
@@ -1353,7 +1365,7 @@ function showResults(q, near, places, note, overture, enter) {
     ul.append(li);
   }
   if (overture) ul.append(el('li', 'search-note', esc(places.some((p) => p.type === 'ev') ? `${placesAttribution} · ${CHARGERS_ATTRIBUTION}` : placesAttribution)));
-  offerGoogle(ul, q, near, places);
+  if (final) offerGoogle(ul, q, near, places);
   if (enter && places.length === 1) pickPlace(places[0]);
 }
 
@@ -1389,6 +1401,7 @@ function offerGoogle(ul, q, near, places) {
       const li = el('li', 'google-inline');
       li.append(googleFrame(q, near));
       ul.append(li);
+      ul.classList.remove('hidden'); // shown under "No results" too
     }, GOOGLE_PAUSE_MS);
   });
 }
