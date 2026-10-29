@@ -30,4 +30,4 @@ Cloudflare documents that [D1 batches are SQL transactions and roll back on stat
 
 The rate limit is per account, so someone who knows an address can temporarily exhaust its window; it is independent of the password-login window. A response lost after a successful commit cannot reveal the replacement code again: the user can sign in with the new password, but must save the replacement when it is displayed. Recovery codes retain the existing no-expiry policy and format.
 
-Apply the additive migration through the owner's normal release process before deploying. This branch has not been pushed, merged or deployed, and no CLA has been accepted.
+Apply the additive migration through the owner's normal release process before deploying. This change is submitted for review only; it has not been merged or deployed, and no CLA has been accepted.
