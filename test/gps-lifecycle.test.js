@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { Navigator } from '../public/nav.js';
+import { shouldSend } from '../public/follow.js';
 import { distance, bearing } from '../public/geo.js';
 import { DeadReckoningEpisode, isFreshGpsFix, shouldEstimate, nearTunnel, pointAt } from '../public/dead-reckoning.js';
 
@@ -84,12 +85,23 @@ function drive({ speed = 8, count, stop = false } = {}) {
 // while it is pending. The request-ownership stubs also allow this GPS fixture to run with the separate M2 fix.
 function pendingReroute(d) {
   let resolve;
+  let task = null;
   const result = new Promise((done) => { resolve = done; });
   Object.assign(d.context, {
     rerouting: false, lastReroute: 0, REROUTE_GAP_MS: 8000, navigator: { onLine: true }, tripId: 1,
     requestRoutes: () => result, keepTrail() {}, computeOnRoute() {}, loadReports() {}, startSimulation() {},
     routeRequest: (from, to, heading, stops) => ({ from, to, heading, stops, units: 'metric' }),
-    rerouteRequests: { pending: false, start: (input) => ({ input }), owns: () => true, finish() {} },
+    rerouteRequests: {
+      get pending() { return task !== null; },
+      start(input) {
+        task?.controller.abort();
+        const controller = new AbortController();
+        return task = { input, controller, signal: controller.signal };
+      },
+      owns: (candidate) => candidate === task,
+      finish(candidate) { if (candidate === task) task = null; },
+      cancel() { task?.controller.abort(); task = null; },
+    },
   });
   vm.runInContext(appFunction('reroute'), d.context);
   return { promise: d.context.reroute(d.context.state.pos, { force: true }), resolve: (r) => resolve([r]) };
@@ -300,8 +312,8 @@ test('a replacement route is shared with the first fresh recovery fix, after wai
 });
 
 test('a failed route update is retried until acknowledged, without requiring new movement', async () => {
-  const d = drive();
-  d.context.shouldSend = () => false;
+  const d = drive({ speed: 0 });
+  d.context.shouldSend = shouldSend;
   let attempts = 0;
   d.context.api = async (url, options) => {
     d.calls.patches.push({ url, ...options });
@@ -311,14 +323,54 @@ test('a failed route update is retried until acknowledged, without requiring new
   d.context.pushShare();
   await Promise.resolve();
   assert.equal(d.context.share.route, undefined);
+  for (let i = 0; i < 3; i++) {
+    d.clock.now += 1000;
+    d.fix();
+    assert.equal(d.calls.patches.length, 1, 'per-second GPS fixes cannot bypass the send minimum');
+  }
   d.clock.now += 1000;
-  d.context.pushShare();
+  d.fix();
   await Promise.resolve();
   assert.equal(d.calls.patches.length, 2);
   assert.equal(d.calls.patches[1].body.route, d.context.nav.coords);
   assert.equal(d.context.share.route, d.context.nav);
   d.context.pushShare();
   assert.equal(d.calls.patches.length, 2, 'acknowledged route respects ordinary heartbeat throttling');
+});
+
+test('slow and failed route PATCHes keep retries bounded across GPS ticks; a new route sends promptly', async () => {
+  const d = drive({ speed: 0 });
+  d.context.shouldSend = shouldSend;
+  const pending = [];
+  d.context.api = (url, options) => {
+    d.calls.patches.push({ url, ...options, at: d.clock.now });
+    return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+  };
+  vm.runInContext(appFunction('pushShare'), d.context);
+  const start = d.clock.now;
+  d.context.pushShare(true);
+  for (let second = 1; second <= 64; second++) {
+    d.clock.now += 1000;
+    d.fix();
+    if (second === 10) { pending[0].reject(new Error('slow network failure')); await Promise.resolve(); }
+  }
+  assert.deepEqual(d.calls.patches.map((p) => p.at - start), [0, 4000, 34000, 64000], 'existing second-update/heartbeat cadence bounds attempts');
+  assert.ok(d.calls.patches.every((p) => p.body.route === d.route.coords), 'unacknowledged route remains attached to bounded retries');
+  const replacement = route(5);
+  d.context.nav = new Navigator(replacement);
+  d.clock.now += 1000;
+  d.fix();
+  assert.equal(d.calls.patches.length, 5, 'new route is sent one second later, without waiting for the old attempt');
+  assert.equal(d.calls.patches[4].body.route, replacement.coords);
+  pending[1].resolve();
+  await Promise.resolve();
+  assert.equal(d.context.share.route, undefined, 'late acknowledgement for the old route cannot acknowledge the new route');
+  pending[4].resolve();
+  await Promise.resolve();
+  assert.equal(d.context.share.route, d.context.nav);
+  d.clock.now += 1000;
+  d.fix();
+  assert.equal(d.calls.patches.length, 5);
 });
 
 test('a late route acknowledgement cannot mark a different sharing session as updated', async () => {

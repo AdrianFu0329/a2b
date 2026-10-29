@@ -2913,8 +2913,9 @@ function pushShare(withRoute = false) {
   if (!isFreshGpsFix(state.pos, now) || tunnelEpisode.active || tunnelEpisode.exhausted || tunnelEpisode.suspended) return;
   withRoute ||= share.route !== nav; // keep sending a held/replaced route until the server acknowledges it
   const eta = now + live.remainingTime * 1000;
-  if (!withRoute && !shouldSend(share.last, { now, pos: live.snapped, eta })) return;
-  share.last = { at: now, pos: live.snapped, eta, count: (share.last?.count ?? 0) + 1 };
+  // A new route goes out promptly; retrying the same unacknowledged route still follows the normal cadence.
+  if (share.last?.route === nav && !shouldSend(share.last, { now, pos: live.snapped, eta })) return;
+  share.last = { at: now, pos: live.snapped, eta, count: (share.last?.count ?? 0) + 1, route: nav };
   const sentShare = share, sentRoute = nav;
   api(`/api/trips/${share.token}`, {
     method: 'PATCH',
