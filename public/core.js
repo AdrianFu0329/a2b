@@ -133,7 +133,7 @@ export async function renamePlace(kind, id, name) {
   const p = state.places[kind].find((x) => x.id === id);
   if (!p) return;
   p.name = name;
-  if (state.user) await api(`/api/places/${id}`, { method: 'PATCH', body: { name } });
+  if (state.user && !String(id).startsWith('local-')) await api(`/api/places/${id}`, { method: 'PATCH', body: { name } });
   else local.set(kind, state.places[kind]);
 }
 
