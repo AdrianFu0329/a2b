@@ -5,7 +5,7 @@ import { REPORT_TYPES, reportLabel, reportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { canAutoStartRoute } from './route-preview.js';
-import { TrainGuide, markerFor, walkText, boardText } from './train-guide.js';
+import { TrainGuide, markerFor, walkText } from './train-guide.js';
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
@@ -82,6 +82,7 @@ let shareTimer = null; // phones send no GPS while standing still, so the heartb
 let recenterTimer = null;
 const glide = new Glide(); // slides the car between GPS fixes
 let shown = null; // where the car is drawn this frame
+let lastFixAt = 0; // when the last GPS fix came
 let frameId = 0, lastFrame = 0;
 let camZoom = null;
 let userMoving = false;
@@ -164,6 +165,8 @@ const rideSheet = (() => {
     }
   };
   function init() {
+    // The ride's buttons sit above the sheet (styles.css), so they follow its height.
+    new ResizeObserver(() => document.body.style.setProperty('--ride-sheet', `${sheet().offsetHeight}px`)).observe(sheet());
     sheet().querySelector('.grabber').onclick = () => set(!sheet().classList.contains('closed'));
     $('ride-peek').onclick = () => set(false);
     sheetGesture(sheet(), {
@@ -821,7 +824,8 @@ function handleFix(fix, first = false) {
   if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix); // walking speeds would look like a jam
   local.set('lastPos', fix.lngLat.map((v) => Math.round(v * 1e4) / 1e4));
   if (mode === 'watch') return; // the viewer's own position isn't part of someone else's drive
-  if (mode === 'ride') return void (rideFixAt = Date.now()); // the train trip reads it each second (rideTick)
+  lastFixAt = Date.now(); // a train trip reads state.pos each second (rideTick), while it's fresh
+  if (mode === 'ride') return;
   if (!carMarker._map) carMarker.setLngLat(fix.lngLat).addTo(map);
   updateSpeedo(fix.speed);
   if (mode === 'drive') return driveTick(fix);
@@ -968,6 +972,21 @@ function wireUi() {
   $('btn-recenter-ride').onclick = recenter;
   $('btn-ride-start').onclick = startRide;
   $('btn-ride-stop').onclick = () => endRide(false);
+  $('btn-ride-here').onclick = () => rideHere();
+  // On a ride, tap a station to say you're there, and again to be sure: a stray tap while scrolling the list mustn't
+  // move you (tapping your stop gets you off the train).
+  $('ride-stops').onclick = (e) => {
+    const li = e.target.closest('li[data-k]');
+    if (!li) return;
+    const k = Number(li.dataset.k);
+    if (hereAsk?.k === k && Date.now() - hereAsk.at < 5000) {
+      hereAsk = null;
+      return rideHere(k);
+    }
+    hereAsk = { k, at: Date.now() };
+    for (const x of $('ride-stops').querySelectorAll('li.ask')) x.classList.remove('ask');
+    li.classList.add('ask');
+  };
   rideSheet.init();
   $('btn-compass').onclick = () => map.easeTo({ bearing: 0, pitch: 0 });
   $('btn-loc-retry').onclick = () => {
@@ -976,7 +995,8 @@ function wireUi() {
   };
   $('btn-report').onclick = openReportMenu;
   $('btn-report-drive').onclick = openReportMenu;
-  $('btn-sound').onclick = $('btn-sound-browse').onclick = () => {
+  $('btn-report-ride').onclick = openReportMenu;
+  $('btn-sound').onclick = $('btn-sound-browse').onclick = $('btn-sound-ride').onclick = () => {
     saveSettings({ voice: !state.settings.voice });
     refreshSound();
     toast(state.settings.voice ? 'Sound on' : 'Sound off');
@@ -1072,6 +1092,7 @@ function wireUi() {
 function refreshSound() {
   $('btn-sound').innerHTML = soundIcon(state.settings.voice);
   $('btn-sound-browse').innerHTML = soundIcon(state.settings.voice);
+  $('btn-sound-ride').innerHTML = soundIcon(state.settings.voice);
 }
 
 function closeScreen(id) {
@@ -1473,10 +1494,10 @@ function drawTransit() {
 // ---------- Riding a train trip ----------
 // "Start" on a train trip follows it (train-guide.js): the walk to the station, which train, the next station as the
 // train goes (estimated underground from the timetable), "get off at the next stop", any change, and the walk at the
-// end. A train marker in the line's colour shows where you are on a ride, a walking dot on foot. The trip line stays
+// end. A train marker in the line's colour shows where you are on a ride, the chevron on foot. The trip line stays
 // drawn. Nothing from a train trip is shared as traffic or as a live trip. Works while A2B is open on screen.
 const TRAIN_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="15" rx="3.5" fill="currentColor"/><rect x="8" y="5.5" width="8" height="4.5" rx="1" fill="#000" fill-opacity=".35"/><circle cx="9.2" cy="14" r="1.3" fill="#000" fill-opacity=".45"/><circle cx="14.8" cy="14" r="1.3" fill="#000" fill-opacity=".45"/><path d="m8.5 21.5 2-3.5m5 3.5-2-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
-let guide = null, rideTimer = null, riderMarker = null, rideFixAt = 0, rideGpsBlocked = false, rideTimeShift = 0, rideStarted = 0;
+let guide = null, rideTimer = null, riderMarker = null, rideGpsBlocked = false, rideTimeShift = 0, rideStarted = 0;
 // The guide moves you once a second; between those, every animation frame slides the train along the track (or the
 // walking dot) and the camera with it, as driving does, so nothing jumps.
 const rideGlide = new Glide();
@@ -1504,23 +1525,71 @@ function startRide() {
   follow = true;
   requestWakeLock();
   startCompass(); // inside the tap on Start: iOS only asks for the compass from a tap
-  const first = trip.legs[0];
-  speak(first.mode === 'walk' ? walkText(first) : boardText(first));
-  rideTick();
+  rideTick(); // its first update says how the trip starts: the walk, the train, or that you're already on it
   clearInterval(rideTimer);
   rideTimer = setInterval(rideTick, 1000);
 }
 
-function rideTick() {
+function rideTick(say = null) {
   if (mode !== 'ride' || !guide) return;
-  const fresh = state.pos && !rideGpsBlocked && Date.now() - rideFixAt < 4000;
+  // Fresh: the last few seconds. Starting, the fix the trip was planned from will do: a phone standing still on the
+  // platform may not send another for a while, and without one the trip can't see you're already there.
+  const fresh = state.pos && !rideGpsBlocked && Date.now() - lastFixAt < (guide.begun ? 4000 : 120_000);
   const { view, events } = guide.update({ now: rideNow(), fix: fresh ? state.pos : null });
-  for (const e of events) {
-    if (e.type === 'arrived') return endRide(true);
-    speak(e.text);
-    if (e.type === 'alert' || e.type === 'alight' || e.type === 'change') navigator.vibrate?.([300, 150, 300]);
-  }
+  if (!sayRide(events, say)) return;
+  $('ride-off').classList.toggle('hidden', !view.off);
+  if (view.off) replanRide();
+  else replanNoted = false;
   renderRide(view);
+}
+
+// What the guide says, as one sentence (each speak cuts off the one before). False once you've arrived.
+function sayRide(events, before = null) {
+  if (events.some((e) => e.type === 'arrived')) {
+    endRide(true);
+    return false;
+  }
+  speak([before, ...events.map((e) => e.text)].filter(Boolean).join(' '));
+  if (events.some((e) => e.type === 'alert' || e.type === 'alight' || e.type === 'change')) navigator.vibrate?.([300, 150, 300]);
+  return true;
+}
+
+// Off the trip (another way on foot, off the platform, on another train): plan it again from where you are, as
+// driving reroutes. The marker follows you meanwhile. Needs signal; offline, "I'm already here" still works.
+const REPLAN_MS = 20_000;
+let replanning = false, replanAt = 0, replanNoted = false;
+async function replanRide() {
+  if (replanning || !state.pos || !dest || Date.now() - replanAt < REPLAN_MS) return;
+  replanAt = Date.now();
+  if (!navigator.onLine) return noteReplan("You're offline, so the trip can't be planned again. Tap “I'm already here” to say where you are.");
+  replanning = true;
+  const place = dest;
+  try {
+    const plan = await api('/api/transit', { method: 'POST', body: { from: state.pos.lngLat, to: [place.lng, place.lat] } });
+    if (mode !== 'ride' || !guide || dest !== place) return;
+    if (!plan.trips.length) return noteReplan(plan.note || 'No train trip from here. Stay on the highlighted route.');
+    transit = { place, trips: plan.trips, selected: 0 };
+    drawTransit();
+    guide = new TrainGuide(plan.trips[0], { now: rideNow() });
+    rideTick('Route recalculated.');
+  } catch (e) {
+    noteReplan(!navigator.onLine || e.status === 0 ? "You're offline, so the trip can't be planned again. Tap “I'm already here” to say where you are." : e.message);
+  } finally {
+    replanning = false;
+  }
+}
+// Said once while off, not every try.
+function noteReplan(msg) {
+  if (!replanNoted) toast(msg, 4000);
+  replanNoted = true;
+}
+
+// "I'm already here": you say where you are when GPS can't (underground, inside a station, no signal).
+let hereAsk = null; // a station tapped once in the list, waiting for the second tap: { k, at }
+function rideHere(station = null) {
+  if (mode !== 'ride' || !guide) return;
+  if (!sayRide(guide.here({ now: rideNow(), station }))) return;
+  rideTick();
 }
 
 const sentence = (t) => t.replace(/\.$/, '');
@@ -1561,15 +1630,18 @@ function renderRide(view) {
     const last = leg.stations.length - 1;
     const states = view.stations ?? leg.stations.map(([name], k) => ({ name, state: k === last ? 'alight' : k === 0 ? 'next' : 'later' }));
     list.style.setProperty('--dot', leg.line.color);
-    list.innerHTML = states.map((x) => `<li class="${x.state}">${esc(x.name)}${x.state === 'alight' ? ' · get off' : ''}</li>`).join('');
+    const ask = hereAsk && Date.now() - hereAsk.at < 5000 ? hereAsk.k : null;
+    list.innerHTML = states.map((x, k) => `<li class="${x.state}${k === ask ? ' ask' : ''}" data-k="${k}" aria-label="I'm at ${esc(x.name)}">${esc(x.name)}${x.state === 'alight' ? ' · get off' : ''}</li>`).join('');
   } else {
     list.style.removeProperty('--dot');
     list.innerHTML = guide.trip.legs.slice(guide.i).map((l) => (l.mode === 'walk'
       ? `<li class="walk">${esc(sentence(walkText(l)))}</li>`
       : `<li style="--dot:${esc(l.line.color)}">${esc(l.line.name)} to ${esc(l.to.name)}</li>`)).join('');
   }
-  // Where you are: a train on the track, or on foot the chevron, turned the way you're going.
-  const kind = markerFor({ mode, legMode: view.kind === 'ride' ? 'train' : 'walk' });
+  $('btn-ride-here').textContent = guide.hereText() ?? '';
+  // Where you are: a train on the track, or on foot the chevron, turned the way you're going (also off the line,
+  // following GPS while the trip is planned again).
+  const kind = markerFor({ mode, legMode: view.kind === 'ride' && !view.off ? 'train' : 'walk' });
   const at = view.kind === 'walk' ? view.pos ?? state.pos?.lngLat : view.pos;
   const node = riderMarker.getElement();
   const heading = kind === 'train' ? view.heading ?? 0 : walkHeading(view);
@@ -1693,8 +1765,18 @@ function endRide(arrived) {
   wakeLock = null;
   mode = 'browse';
   if (vehicleShown?.startsWith('train:')) setupVehicle();
-  // Back to the vehicle from Settings (the chevron, unless the car was picked).
-  if (state.pos) carMarker.setLngLat(state.pos.lngLat).setRotation(state.pos.heading ?? 0).addTo(map);
+  $('ride-off').classList.add('hidden');
+  replanning = false;
+  replanNoted = false;
+  // Back to the vehicle from Settings (the chevron, unless the car was picked), where you are now. The 3D model
+  // draws where the car's glide says, and fixes didn't move that during the trip: start it afresh from here, or
+  // it stays where the trip began (often off screen) and you see no chevron at all.
+  if (state.pos) {
+    carMarker.setLngLat(state.pos.lngLat).setRotation(state.pos.heading ?? 0).addTo(map);
+    glide.from = glide.to = null;
+    moveCar({ pos: state.pos.lngLat, heading: state.pos.heading ?? 0 });
+  }
+  updateSpeedo(state.pos?.speed); // still showing the speed from before the trip
   if (vehicle3d) map.triggerRepaint();
   if (!arrived) return backToBrowse();
   speak('You have arrived.');
@@ -1715,6 +1797,9 @@ if (typeof location !== 'undefined' && ['localhost', '127.0.0.1'].includes(locat
     },
     loseGps: () => (rideGpsBlocked = true),
     restore: () => (rideGpsBlocked = false),
+    // A GPS fix from the console, as the phone would give it: gps(101.71, 3.15, { speed: 14, accuracy: 10 }).
+    gps: (lng, lat, { speed = null, accuracy = 10, heading = null } = {}) =>
+      onFix({ coords: { longitude: lng, latitude: lat, speed, accuracy, heading }, timestamp: Date.now() }),
   };
 }
 

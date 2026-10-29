@@ -201,6 +201,8 @@ function toTrip(found, from, to, dayStart) {
         arrive: ms(st.t),
         duration: st.t - st.dep,
         coords: rideLine(p, st.i, st.j),
+        // The track in from the stop before, so the phone can tell you're already on this train as it comes in.
+        approach: st.i > 0 ? rideLine(p, st.i - 1, st.i) : null,
         stations: rideStations(p, st.i, st.j, st.dep),
       };
       rides.set(leg, { p, i: st.i, j: st.j, dayStart });

@@ -166,15 +166,22 @@
         </div>
       </div>
       <div id="ride-est" class="toll-chip ride-est hidden" role="status"><b>NO GPS</b><span>Estimating · underground</span></div>
+      <div id="ride-off" class="offroute hidden" role="status"><span class="spinner" aria-hidden="true"></span>Recalculating…</div>
     </div>
     <div class="map-tools drive">
+      <button id="btn-sound-ride" class="round small" aria-label="Sound"></button>
       <button id="btn-recenter-ride" class="round hidden" aria-label="Recenter"><svg viewBox="0 0 24 24"><path d="M12 2.5 19.5 20 12 16l-7.5 4Z" fill="currentColor"/></svg><span>Recenter</span></button>
     </div>
+    <button id="btn-report-ride" class="report-fab" aria-label="Report"><svg viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4Z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M12 9.5v4.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="12" cy="17" r="1.4" fill="#fff"/></svg></button>
     <section id="ride-sheet" class="sheet ride-sheet">
       <div class="grabber" aria-hidden="true"></div>
       <button id="ride-peek" class="ride-peek" aria-label="Show the stops"></button>
       <ol id="ride-stops" class="ride-stops"></ol>
-      <div class="sheet-actions"><button id="btn-ride-stop" class="btn wide">Stop</button></div>
+      <div class="sheet-actions">
+        <button id="btn-ride-stop" class="btn">Stop</button>
+        <button id="btn-ride-here" class="btn primary" aria-describedby="ride-here-hint"></button>
+      </div>
+      <p id="ride-here-hint" class="ride-here-hint">GPS lost? Tap where you are, or a station above.</p>
     </section>
   </div>
 

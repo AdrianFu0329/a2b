@@ -11,7 +11,7 @@
 // This works while A2B is open. With the phone locked in a pocket a web page doesn't keep running: that needs the
 // native app's background location and notifications.
 
-import { distance, bearing, cumulative } from './geo.js';
+import { distance, bearing, cumulative, angleDiff } from './geo.js';
 
 export const ARRIVE_M = 60; // this close to the station (or the destination), the walk is done
 export const BOARD_MPS = 6; // faster than walking, along the line: on the train
@@ -21,6 +21,12 @@ export const LOST_MS = 2500; // no good fix for this long: estimating
 export const ALERT_BEFORE_S = 90;
 export const DWELL_S = 25; // a train stands at each station for about this long
 const PAST_M = 40; // past a station by this much, it's behind you
+const LOOSE_ACCURACY_M = 150; // indoors and in stations GPS is vague: still good enough to say you've got there
+export const STATION_M = 120; // within this of a station's point you're in it: big stations (KL Sentral) spread out
+export const OFF_WALK_M = 120; // this far off the walk, and getting further from where it goes: off the trip
+export const LEFT_STATION_M = 400; // waiting for a train this far from the station: you've left it
+export const OFF_TRAIN_M = 400; // on a ride this far from the line, with good GPS: not on this train
+export const OFF_MS = 15_000; // off for this long, not just a wobble
 
 // ---------- Geometry along a track ----------
 export function trackOf(coords) {
@@ -116,6 +122,25 @@ export function boarded({ speed, off, now, departAt, atStation }) {
   return ((speed ?? 0) >= BOARD_MPS && off <= NEAR_TRACK_M) || (atStation && now >= departAt + 30_000);
 }
 
+// Where a fix says you already are on a train leg, when it's further on than the trip thinks (a trip started on
+// the platform or on the train): 'ride' on its track at train speed, or on the track in from the stop before
+// (`approach`), heading for the first station (`eta` seconds out); 'wait' at its first station; else null.
+export function alreadyOn(leg, track, fix, approach = leg.approach?.length > 1 ? trackOf(leg.approach) : null) {
+  if (!fix) return null;
+  const pos = fix.lngLat;
+  const toStation = distance(pos, [leg.from.lng, leg.from.lat]);
+  if ((fix.speed ?? 0) >= BOARD_MPS && (fix.accuracy ?? 0) <= GOOD_ACCURACY_M) {
+    const s = snap(track, pos);
+    if (s.off <= NEAR_TRACK_M && s.along > PAST_M) return { phase: 'ride', along: s.along };
+    if (toStation <= PAST_M) return { phase: 'ride', along: 0 };
+    const a = approach && snap(approach, pos);
+    // On the line into the station, going the way the line runs (not on a train the other way, leaving it).
+    const ahead = a && a.off <= NEAR_TRACK_M && (!Number.isFinite(fix.heading) || Math.abs(angleDiff(fix.heading, pointAt(approach, a.along).heading)) <= 90);
+    return ahead ? { phase: 'ride', along: 0, eta: toStation / fix.speed } : null;
+  }
+  return (fix.accuracy ?? 0) <= LOOSE_ACCURACY_M && toStation <= Math.max(STATION_M, fix.accuracy ?? 0) ? { phase: 'wait', along: 0 } : null;
+}
+
 // ---------- What to say ----------
 const stationName = (s) => (s.name === 'Destination' ? 'your destination' : `${s.name} station`);
 export const boardText = (leg) => `Take the ${leg.line.name} towards ${leg.towards}.`;
@@ -133,19 +158,27 @@ export function markerFor({ mode, legMode, vehicle }) {
 }
 
 // ---------- Following a whole trip ----------
-// update({ now, fix }) once a second (fix: { lngLat, speed, accuracy } or null when there's none); returns what to
-// show and anything to announce: { view, events: [{ type, text }] }.
+// update({ now, fix }) once a second (fix: { lngLat, speed, accuracy, heading } or null when there's none); returns
+// what to show and anything to announce: { view, events: [{ type, text }] }. The first update says how the trip
+// starts. A view with `off` set means you've left the trip: app.js plans it again from where you are.
 export class TrainGuide {
   constructor(trip, { now = Date.now() } = {}) {
     this.trip = trip;
     this.i = 0;
     this.started = now;
     this.done = false;
+    this.begun = false;
+    this.tracks = new Map(); // each train leg's track, worked out once
     this.enterLeg(now);
   }
 
   get leg() {
     return this.trip.legs[this.i];
+  }
+
+  trackFor(k) {
+    if (!this.tracks.has(k)) this.tracks.set(k, trackOf(this.trip.legs[k].coords));
+    return this.tracks.get(k);
   }
 
   enterLeg(now) {
@@ -155,8 +188,11 @@ export class TrainGuide {
     this.boardedAt = null;
     this.lastGood = now;
     this.alerted = false;
+    this.approaching = false;
+    this.offSince = null;
+    this.closest = Infinity; // on a walk: the nearest you've been to where it goes
+    this.track = this.trackFor(this.i);
     if (leg.mode === 'train') {
-      this.track = trackOf(leg.coords);
       this.times = leg.stations.map((s) => s[3]);
       this.alongs = stationAlongs(this.track, leg.stations);
     }
@@ -179,64 +215,177 @@ export class TrainGuide {
     else if (was.mode === 'train') events.push({ type: 'alight', text: `Get off here. ${walkText(leg)}` });
   }
 
-  update({ now = Date.now(), fix = null } = {}) {
+  // On the train, from `along` metres along this leg's track (0 and `eta` seconds out when still heading for its
+  // first station).
+  board(now, { along = 0, eta = 0 } = {}) {
+    this.phase = 'ride';
+    this.along = along;
+    this.approaching = eta > 0 && this.leg.approach?.length > 1;
+    this.approachTrack = this.approaching ? trackOf(this.leg.approach) : null;
+    this.boardedAt = this.approaching ? now + eta * 1000 : now - timeAtAlong(this.times, this.alongs, along) * 1000;
+    this.lastGood = now;
+  }
+
+  boardedText(leg) {
+    const n = this.alongs.length;
+    return `On the ${leg.line.name}. ${ridingText(leg, this.approaching ? n : n - nextStop(this.alongs, this.along))}`;
+  }
+
+  // Already further on than the trip thinks: on the platform, or on the train, of a later leg (a trip started on
+  // the train, or GPS that only just caught up). Jumps there, the furthest such leg first.
+  catchUp(now, fix, events) {
+    for (let k = this.trip.legs.length - 1; k > this.i; k--) {
+      const leg = this.trip.legs[k];
+      if (leg.mode !== 'train') continue;
+      const hit = alreadyOn(leg, this.trackFor(k), fix);
+      if (!hit) continue;
+      this.i = k;
+      this.enterLeg(now);
+      if (hit.phase === 'ride') {
+        this.board(now, hit);
+        events.push({ type: 'boarded', text: this.boardedText(leg) });
+      } else events.push({ type: 'at-station', text: boardText(leg) });
+      return true;
+    }
+    return false;
+  }
+
+  // Off the trip for a while (not just a GPS wobble).
+  offFor(now, off) {
+    if (!off) this.offSince = null;
+    else this.offSince ??= now;
+    return this.offSince != null && now - this.offSince >= OFF_MS;
+  }
+
+  // "I'm already here", for when GPS can't say (underground, indoors, no signal): on foot, at the end of this walk;
+  // waiting, on the train; on a ride, at `station` (index into the ride's stations; the next one by default).
+  here({ now = Date.now(), station = null } = {}) {
+    const events = [];
+    if (this.done) return events;
+    this.offSince = null;
+    const leg = this.leg;
+    if (leg.mode === 'walk') {
+      this.advance(now, events);
+      return events;
+    }
+    const n = this.alongs.length;
+    if (this.phase === 'wait') {
+      this.board(now);
+      if (station == null || station === 0) {
+        events.push({ type: 'boarded', text: this.boardedText(leg) });
+        return events;
+      }
+    }
+    const k = Math.max(0, Math.min(n - 1, station ?? (this.approaching ? 0 : nextStop(this.alongs, this.along))));
+    this.approaching = false;
+    this.along = this.alongs[k];
+    this.boardedAt = now - this.times[k] * 1000; // standing at k: the timetable carries on from there
+    this.lastGood = now;
+    if (k === n - 1) this.advance(now, events);
+    else events.push({ type: 'here', text: `At ${leg.stations[k][0]}. ${ridingText(leg, n - 1 - k)}` });
+    return events;
+  }
+
+  // What "I'm already here" would say you've reached.
+  hereText() {
+    if (this.done) return null;
+    const leg = this.leg;
+    if (leg.mode === 'walk') return leg.to.name === 'Destination' ? 'I’ve arrived' : `I’m at ${leg.to.name}`;
+    if (this.phase === 'wait') return 'I’m on the train';
+    return `I’m at ${leg.stations[this.approaching ? 0 : nextStop(this.alongs, this.along)][0]}`;
+  }
+
+  update(o = {}) {
+    const r = this.step(o);
+    if (!this.begun) {
+      this.begun = true;
+      const leg = this.leg;
+      if (!r.events.length && !this.done) r.events.unshift({ type: 'start', text: leg.mode === 'walk' ? walkText(leg) : boardText(leg) });
+    }
+    return r;
+  }
+
+  step({ now = Date.now(), fix = null } = {}) {
     const events = [];
     if (this.done) return { view: { kind: 'done' }, events };
-    const leg = this.leg;
     const good = fix && (fix.accuracy ?? 0) <= GOOD_ACCURACY_M ? fix : null;
+    // Walking or waiting, but the GPS says you're already on a later platform or train.
+    if (this.phase !== 'ride' && fix && this.catchUp(now, fix, events)) return { view: this.step({ now, fix }).view, events };
+    const leg = this.leg;
 
     if (leg.mode === 'walk') {
       const target = [leg.to.lng, leg.to.lat];
       const pos = good?.lngLat ?? null;
       const left = pos ? distance(pos, target) : null;
-      if ((left != null && left <= ARRIVE_M) || leg.distance < ARRIVE_M / 2) {
+      // A vague fix still counts for getting there: stations are big, and GPS inside them is poor.
+      const loose = fix && (fix.accuracy ?? 0) <= LOOSE_ACCURACY_M ? distance(fix.lngLat, target) <= Math.max(ARRIVE_M, fix.accuracy ?? 0) : false;
+      if ((left != null && left <= ARRIVE_M) || loose || leg.distance < ARRIVE_M / 2) {
         this.advance(now, events);
-        return { view: this.done ? { kind: 'done' } : this.update({ now, fix }).view, events };
+        return { view: this.done ? { kind: 'done' } : this.step({ now, fix }).view, events };
       }
-      return { view: { kind: 'walk', leg, left: left ?? leg.distance, pos, heading: pos ? bearing(pos, target) : null }, events };
+      if (left != null) this.closest = Math.min(this.closest, left);
+      const off = this.offFor(now, pos != null && snap(this.track, pos).off > OFF_WALK_M && left > this.closest + 100);
+      return { view: { kind: 'walk', leg, left: left ?? leg.distance, pos, heading: pos ? bearing(pos, target) : null, off }, events };
     }
 
     const n = this.alongs.length;
     if (this.phase === 'wait') {
       const s = good ? snap(this.track, good.lngLat) : null;
-      const atStation = !good || distance(good.lngLat, [leg.from.lng, leg.from.lat]) <= 150;
+      const fromStation = good ? distance(good.lngLat, [leg.from.lng, leg.from.lat]) : 0;
+      const atStation = !good || fromStation <= 150;
       if (boarded({ speed: good?.speed, off: s?.off ?? Infinity, now, departAt: leg.depart, atStation })) {
-        this.phase = 'ride';
         // Boarded seen from GPS part-way along: start the clock from there; otherwise from the train's time.
-        this.boardedAt = s && s.along > PAST_M ? now - timeAtAlong(this.times, this.alongs, s.along) * 1000 : Math.min(now, leg.depart + 30_000);
-        this.along = s ? Math.max(0, s.along) : 0;
+        this.board(now, { along: s && s.along > PAST_M ? s.along : 0 });
+        if (!(s && s.along > PAST_M)) this.boardedAt = Math.min(now, leg.depart + 30_000);
         events.push({ type: 'boarded', text: `On the ${leg.line.name}. ${ridingText(leg, n - 1)}` });
       } else {
-        return { view: { kind: 'wait', leg, pos: [leg.from.lng, leg.from.lat], heading: pointAt(this.track, 0).heading, departAt: leg.depart }, events };
+        const off = this.offFor(now, fromStation > LEFT_STATION_M);
+        // Wandering off from the platform: the marker goes with you, not left at the station.
+        const pos = good && fromStation > ARRIVE_M ? good.lngLat : [leg.from.lng, leg.from.lat];
+        return { view: { kind: 'wait', leg, pos, heading: pointAt(this.track, 0).heading, departAt: leg.depart, off }, events };
       }
     }
 
     // Riding: from GPS when it's good and on the line, else from the timetable.
     const s = good ? snap(this.track, good.lngLat) : null;
     let estimating = false;
-    if (s && s.off <= NEAR_TRACK_M * 1.5) {
+    let wayOff = s != null && s.off > OFF_TRAIN_M;
+    if (this.approaching) {
+      // Still heading for the first station: wait there until GPS (or the clock) says the train has reached it.
+      const toStation = good ? distance(good.lngLat, [leg.from.lng, leg.from.lat]) : null;
+      wayOff = good != null && snap(this.approachTrack, good.lngLat).off > OFF_TRAIN_M && s.off > OFF_TRAIN_M;
+      if (toStation != null && toStation > PAST_M && !(s.off <= NEAR_TRACK_M && s.along > PAST_M)) {
+        if ((good.speed ?? 0) > 1) this.boardedAt = now + (toStation / good.speed) * 1000;
+        this.lastGood = now;
+      } else if (good || now >= this.boardedAt) {
+        this.approaching = false;
+        if (good) this.boardedAt = now - timeAtAlong(this.times, this.alongs, Math.max(0, s.along)) * 1000;
+      }
+    }
+    if (!this.approaching && s && s.off <= NEAR_TRACK_M * 1.5) {
       this.along = Math.max(this.along - 20, s.along); // GPS wobble can't send the train backwards far
       this.boardedAt = now - timeAtAlong(this.times, this.alongs, this.along) * 1000; // put the estimate right
       this.lastGood = now;
-    } else {
+    } else if (!this.approaching) {
       const sinceBoard = (now - this.boardedAt) / 1000;
       this.along = Math.max(this.along, alongAtTime(this.times, this.alongs, sinceBoard));
       estimating = now - this.lastGood > LOST_MS;
     }
+    const off = this.offFor(now, wayOff);
     const sinceBoard = (now - this.boardedAt) / 1000;
-    if (!this.alerted && shouldAlert({ alongs: this.alongs, times: this.times, along: this.along, sinceBoard })) {
+    if (!this.approaching && !this.alerted && shouldAlert({ alongs: this.alongs, times: this.times, along: this.along, sinceBoard })) {
       this.alerted = true;
       events.push({ type: 'alert', text: alertText(leg) });
     }
-    if (alighted({ alongs: this.alongs, times: this.times, along: this.along, sinceBoard })) {
+    if (!this.approaching && alighted({ alongs: this.alongs, times: this.times, along: this.along, sinceBoard })) {
       this.advance(now, events);
-      return { view: this.done ? { kind: 'done' } : this.update({ now, fix }).view, events };
+      return { view: this.done ? { kind: 'done' } : this.step({ now, fix }).view, events };
     }
-    const next = nextStop(this.alongs, this.along);
-    const { pos, heading } = pointAt(this.track, this.along);
+    const next = this.approaching ? 0 : nextStop(this.alongs, this.along);
+    const at = pointAt(this.track, this.along);
     return {
       view: {
-        kind: 'ride', leg, pos, heading, estimating, alerted: this.alerted,
+        kind: 'ride', leg, pos: off ? good.lngLat : at.pos, heading: at.heading, estimating, alerted: this.alerted, off,
         next: leg.stations[next][0], stopsToGo: n - next,
         stations: leg.stations.map(([name], k) => ({ name, state: k < next ? 'past' : k === n - 1 ? 'alight' : k === next ? 'next' : 'later' })),
       },
