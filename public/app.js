@@ -10,7 +10,7 @@ import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
 import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES, addTypeSource, withoutBaseDuplicates } from './places.js';
-import { start as startVehicle, DEFAULT_COLOR } from './vehicle3d.js';
+import { start as startVehicle, DEFAULT_COLOR, vehicleFor } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace, renamePlace,
@@ -23,6 +23,7 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
+import { isSchoolTime, schoolAhead, schoolLimit } from './school-zones.js';
 import { DeadReckoner, shouldEstimate, nearTunnel, pointAt, BAD_ACCURACY_M } from './dead-reckoning.js';
 import { matchesWordStarts } from './text.js';
 import { shouldCheck as shouldCheckFaster, pickFaster, offerText, checkBody, OFFER_FOR_MS, KEEP_FOR_MS } from './faster-route.js';
@@ -67,7 +68,7 @@ let themeNow = null;
 
 // Preview / drive state
 let dest = null;
-// How to get there: 'drive' | 'walk' | 'transit'. Not remembered: every trip starts on Drive, so someone who walked once
+// How to get there: 'drive' | 'motorcycle' | 'walk' | 'transit'. Not remembered: every trip starts on Drive, so someone who walked once
 // isn't given footpaths (no cameras, alerts or tolls) next time they're in the car. See resetTravel.
 let travel = 'drive';
 let stops = []; // places to visit on the way, in order, not yet reached
@@ -101,6 +102,7 @@ let trail = []; // lines driven earlier in this drive: parts of routes replaced 
 let offTrail = []; // where the car has been since it left the current route
 const tollsSpoken = new Set(); // toll plazas (route + index) already announced this drive
 const camerasWarned = new Set(); // fixed speed cameras (route + index) already announced this drive
+const schoolsWarned = new Set(); // school zones (route + index) already announced this drive
 const cameraPins = [];
 
 // ================= Boot =================
@@ -340,6 +342,10 @@ function addMapLayers() {
     // A walk: the same route as dots (a line with a gradient can't be dotted), shown instead of the line above.
     map.addLayer({ id: 'routes-walk', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' }, paint: { 'line-color': WALK_DOTS[themeNow], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 10], 'line-dasharray': [0.1, 2.4] } }, before);
     // Toll plazas on the route, as small amber "TOLL" tags.
+    // The school a school-zone warning is about, pinned while the warning shows (see checkSchools).
+    map.addSource('school-pin', { type: 'geojson', data: emptyFc() });
+    if (!map.hasImage('school-pin')) map.addImage('school-pin', schoolPinImage(), { pixelRatio: 2 });
+    map.addLayer({ id: 'school-pin', type: 'symbol', source: 'school-pin', layout: { 'icon-image': 'school-pin', 'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
     map.addSource('tolls', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('toll-tag')) map.addImage('toll-tag', tollTagImage(), { pixelRatio: 2 });
     map.addLayer({ id: 'tolls', type: 'symbol', source: 'tolls', layout: { 'icon-image': 'toll-tag', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 1] } });
@@ -399,14 +405,14 @@ function addMapLayers() {
 
 // The car as a 3D model (Settings › Vehicle). The flat arrow marker keeps the position either way and shows
 // instead when 3D can't start (no WebGL, three.js didn't load).
-// The 3D model: the vehicle from Settings, or while on the train part of a trip a train in the line's colour (see
-// renderRide). On foot it's always the chevron: it shows which way you're facing, which a car doesn't. Run again
+// The 3D model: the vehicle from Settings, a motorbike while riding in Motorbike mode (see vehicleFor), or while on
+// the train part of a trip a train in the line's colour (see renderRide). On foot it's always the chevron: it shows which way you're facing, which a car doesn't. Run again
 // after a style change, which drops custom layers.
 let trainPose = null; // { pos, heading, color } while on a train
 let vehicleShown = null; // which model the layer has now, e.g. 'car:#e23d9b' or 'train:#e4002b'
 function wantedVehicle() {
   if (mode === 'ride' && trainPose) return ['train', trainPose.color];
-  const kind = travel === 'walk' ? 'chevron' : markerFor({ mode: 'drive', vehicle: local.get('vehicle', 'chevron') });
+  const kind = travel === 'walk' ? 'chevron' : vehicleFor(mode === 'drive' ? travel : null, markerFor({ mode: 'drive', vehicle: local.get('vehicle', 'chevron') }));
   return [kind, local.get('vehicleColor', DEFAULT_COLOR)];
 }
 function syncVehicle() {
@@ -685,6 +691,61 @@ function checkCameras() {
   card.querySelector('[data-a]').onclick = () => card.classList.add('hidden');
 }
 
+// While driving at school times: a spoken "School zone ahead" and a chip from about 300 m before each school on the
+// route until just past it. Nothing outside the school runs. See school-zones.js.
+function checkSchools() {
+  const chip = $('school-chip');
+  const next = state.settings.alerts && isSchoolTime(Date.now(), live.snapped) && schoolAhead(live.along, nav.route.schools, nav.cum);
+  if (!next) {
+    if (!chip.classList.contains('hidden')) map.getSource('school-pin')?.setData(emptyFc());
+    return chip.classList.add('hidden');
+  }
+  const { school, ahead } = next;
+  const units = state.settings.units;
+  const limit = schoolLimit(units);
+  chip.innerHTML = `<b>SCHOOL</b><span>${ahead > 0 ? formatDistance(ahead, units) : 'Now'} · ${limit.chip}${school.name ? `<small>${esc(school.name)}</small>` : ''}</span>`;
+  chip.classList.remove('hidden');
+  const key = `${nav.total}:${school.at}`;
+  if (pinnedSchool !== key) {
+    pinnedSchool = key;
+    map.getSource('school-pin')?.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: school.pos ?? nav.coords[school.at] } }] });
+  }
+  if (ahead > 0 && !schoolsWarned.has(key)) {
+    schoolsWarned.add(key);
+    speak(`School zone ahead. ${limit.spoken}`);
+  }
+}
+let pinnedSchool = null;
+
+// A yellow pin with a little school (a roof over a door), for the school a warning is about.
+function schoolPinImage() {
+  const w = 48, h = 60, c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d');
+  g.beginPath();
+  g.moveTo(w / 2, h - 3);
+  g.bezierCurveTo(w / 2 - 6, h - 16, 4, h - 26, 4, 22);
+  g.arc(w / 2, 22, w / 2 - 4, Math.PI, 0);
+  g.bezierCurveTo(w - 4, h - 26, w / 2 + 6, h - 16, w / 2, h - 3);
+  g.fillStyle = '#f5c400';
+  g.fill();
+  g.lineWidth = 3;
+  g.strokeStyle = '#1b1b1f';
+  g.stroke();
+  g.fillStyle = '#1b1b1f';
+  g.beginPath(); // the roof
+  g.moveTo(w / 2, 9);
+  g.lineTo(w / 2 + 13, 19);
+  g.lineTo(w / 2 - 13, 19);
+  g.closePath();
+  g.fill();
+  g.fillRect(w / 2 - 10, 19, 20, 14); // the walls
+  g.fillStyle = '#f5c400';
+  g.fillRect(w / 2 - 3, 25, 6, 8); // the door
+  return g.getImageData(0, 0, w, h);
+}
+
 // Turn arrow on the map for the next maneuver: from just before the turn to just after it
 // (for a roundabout, all the way round to the exit).
 const NO_ARROW = new Set(['straight', 'depart', 'arrive', 'arrive_left', 'arrive_right', 'stop', 'ferry']);
@@ -850,7 +911,8 @@ function handleFix(fix, first = false) {
   }
   state.pos = fix;
   // Traffic sharing only buffers real drives: walking, browsing the map, and demo drives never become traffic.
-  if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix); // walking speeds would look like a jam
+  // Only cars' speeds are shared: walking speeds would look like a jam, and motorcycles filter past jams.
+  if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix);
   local.set('lastPos', fix.lngLat.map((v) => Math.round(v * 1e4) / 1e4));
   if (mode === 'watch') return; // the viewer's own position isn't part of someone else's drive
   lastFixAt = Date.now(); // a train trip reads state.pos each second (rideTick), while it's fresh
@@ -1665,7 +1727,7 @@ function offerResume() {
   const t = local.get('activeTrip');
   if (!t?.dest || mode !== 'browse') return;
   if (Date.now() - t.at > RESUME_MS) return forgetTrip();
-  const what = t.kind === 'ride' ? 'train trip' : t.travel === 'walk' ? 'walk' : 'drive';
+  const what = t.kind === 'ride' ? 'train trip' : t.travel === 'walk' ? 'walk' : t.travel === 'motorcycle' ? 'ride' : 'drive';
   const mins = Math.round((Date.now() - t.at) / 60_000);
   $('resume-title').textContent = `Continue to ${t.dest.name}?`;
   $('resume-sub').textContent = `Your ${what} stopped ${mins < 2 ? 'just now' : `${formatDuration(mins * 60)} ago`} when the app closed. It picks up from where you are now.`;
@@ -1679,7 +1741,7 @@ function offerResume() {
     speak(`Continuing to ${t.dest.name}.`); // inside the tap: phones only allow speech that a tap started
     resuming = t;
     resumeLeg = 0;
-    travel = t.kind === 'ride' ? 'transit' : t.travel === 'walk' ? 'walk' : 'drive';
+    travel = t.kind === 'ride' ? 'transit' : ['walk', 'motorcycle'].includes(t.travel) ? t.travel : 'drive';
     syncVehicle();
     openPreview(t.dest);
   };
@@ -2179,6 +2241,7 @@ function renderRouteOptions() {
     if (r.duration === fastest && routes.length > 1) badges.push('<span class="badge best">Fastest</span>');
     if (r.tolls?.length) badges.push(`<span class="badge warn">${esc(tollSummary(r.tolls))}</span>`);
     else if (r.toll) badges.push('<span class="badge warn">Toll</span>');
+    else if (r.toll_free_bike) badges.push('<span class="badge">No toll for motorcycles</span>');
     if (r.ferry) badges.push('<span class="badge warn">Ferry</span>');
     const reps = (r.reports ?? []).length;
     if (reps) badges.push(`<span class="badge">${reps} report${reps > 1 ? 's' : ''}</span>`);
@@ -2384,8 +2447,12 @@ function startDrive() {
   drawTrail();
   tollsSpoken.clear();
   camerasWarned.clear();
+  schoolsWarned.clear();
   $('toll-chip').classList.add('hidden');
   resetFaster();
+  $('school-chip').classList.add('hidden');
+  map.getSource('school-pin')?.setData(emptyFc());
+  pinnedSchool = null;
   startTunnelWatch();
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
@@ -2401,6 +2468,7 @@ function startDrive() {
   $('drive-ui').classList.remove('hidden');
   tripSheet.set(false);
   $('alert').classList.add('hidden');
+  syncVehicle(); // a motorbike while riding
   document.body.classList.add('driving');
   document.body.classList.toggle('walking', travel === 'walk');
   armBack();
@@ -2464,10 +2532,11 @@ function driveTick(fix) {
   drawDriveLine();
   drawManeuverArrow();
   if (live.prompt) speak(live.prompt);
-  // Tolls, speed cameras, road reports ahead and faster routes in traffic are for drivers.
+  // Tolls, speed cameras, school zones, road reports ahead and faster routes in traffic are for drivers.
   if (travel !== 'walk') {
     checkTolls();
     checkCameras();
+    checkSchools();
     checkAlerts();
     checkFaster();
   }
@@ -2927,6 +2996,9 @@ async function endDrive(arrived) {
   drawTrail();
   resetFaster();
   $('toll-chip').classList.add('hidden');
+  $('school-chip').classList.add('hidden');
+  map.getSource('school-pin')?.setData(emptyFc());
+  pinnedSchool = null;
   onRoute = [];
   stops = [];
   renderStopMenu();

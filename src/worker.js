@@ -11,6 +11,7 @@ import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annota
 import { constructionTwins } from './lib/construction.js';
 import { liveTraffic, applyTraffic } from './lib/traffic.js';
 import { loadCameras, camerasAlong } from './lib/cameras.js';
+import { loadSchools, schoolsAlong } from './lib/schools.js';
 import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { refreshChargers, allChargers } from './lib/chargers.js';
@@ -449,8 +450,10 @@ async function route(request, env, url) {
     const body = await readJson(request);
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('Route needs a start and a destination.', 400);
-    // On foot, the driving extras (closures, roadworks, speed limits, tolls, traffic, cameras) don't apply.
-    const walk = body.travel === 'walk';
+    // On foot, the driving extras (closures, roadworks, speed limits, tolls, traffic, cameras) don't apply. On a
+    // motorcycle they all do, except tolls: most Malaysian plazas are free for motorcycles.
+    const travel = ['walk', 'motorcycle'].includes(body.travel) ? body.travel : 'drive';
+    const walk = travel === 'walk';
     const via = (Array.isArray(body.via) ? body.via : []).slice(0, 3).map(lngLat).filter(Boolean);
     const area = corridorBox([from, ...via, to]);
     const exclude = walk || body.avoid_closures === false ? [] : await reports.closuresNear(area);
@@ -460,7 +463,7 @@ async function route(request, env, url) {
       units: body.units === 'imperial' ? 'imperial' : 'metric',
       lang: typeof body.lang === 'string' && /^[a-z]{2}(-[A-Z]{2})?$/.test(body.lang) ? body.lang : 'en-US',
       heading: Number(body.heading),
-      travel: walk ? 'walk' : 'drive',
+      travel,
     };
     const first = await fetchRoutes(env, opts);
     if (walk) {
@@ -482,15 +485,21 @@ async function route(request, env, url) {
       r.limits = a?.limits ?? null;
       r.tolls = (a?.tolls ?? []).map((at) => ({ at }));
       r.tunnels = a?.tunnels ?? [];
+      if (travel === 'motorcycle') {
+        // The route passes plazas, but a motorcycle rides through free: say so instead of listing them.
+        Object.assign(r, { travel, toll_free_bike: Boolean(r.tolls.length || r.toll), tolls: [], toll: false });
+      }
     };
     // Live traffic, when TomTom is set up: the route's time with today's traffic, and where the jams are.
     const traffic = async (r) => {
       if (!env.TOMTOM_KEY) return;
-      const [, t] = await Promise.all([count('tomtom'), liveTraffic(env, r).catch(() => null)]);
+      const [, t] = await Promise.all([count('tomtom'), liveTraffic(env, r, travel).catch(() => null)]);
       applyTraffic(r, t);
     };
     // Fixed speed cameras on each route, from the built list.
     const cameras = (rs) => loadCameras(env.ASSETS).catch(() => []).then((cams) => rs.forEach((r) => (r.cameras = camerasAlong(r.coords, cams))));
+    // Schools beside each route, for the school zone warning at school times.
+    const schools = (rs) => loadSchools(env.ASSETS).catch(() => ({ grid: new Map() })).then((s) => rs.forEach((r) => (r.schools = schoolsAlong(r.coords, s))));
     const plazas = async (rs) => {
       const list = rs.flatMap((r) => r.tolls.map((t) => [t, r.coords[t.at]]));
       const details = await plazaDetails(db, list.map(([, p]) => p)).catch(() => []);
@@ -529,7 +538,7 @@ async function route(request, env, url) {
         return json({ routes: [], closures_avoided: 0, closures_ignored: closuresIgnored, construction_avoided: 0 });
       }
       const same = routes.filter((r) => !other.includes(r));
-      await Promise.all([...same.map(traffic), ...offer.map(attributes), cameras(offer)]);
+      await Promise.all([...same.map(traffic), ...offer.map(attributes), cameras(offer), schools(offer)]);
       annotate(same);
       await plazas(offer);
       for (const r of routes) delete r.shapes;
@@ -556,7 +565,7 @@ async function route(request, env, url) {
       if (twins[i]?.length) r.warning = 'construction';
     });
     const routeArea = routeReportBox(routes, [from, to]);
-    const [annotate] = await Promise.all([reportsAndProbes(routes, routeArea), ...routes.map(attributes), ...routes.map(traffic), cameras(routes)]);
+    const [annotate] = await Promise.all([reportsAndProbes(routes, routeArea), ...routes.map(attributes), ...routes.map(traffic), cameras(routes), schools(routes)]);
     for (const r of routes) delete r.shapes;
     await plazas(routes);
     annotate();
