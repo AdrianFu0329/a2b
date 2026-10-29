@@ -36,4 +36,8 @@ Actual component captures from the same fixture:
 
 ![Waiting for GPS after suspension or exhaustion](../screenshots/gps-waiting-chip.png)
 
+Remaining sharing boundary: the late-acknowledgement guard protects client bookkeeping, not ordering of
+overlapping PATCH writes at the server. Ordered/versioned outbound sharing is a separate follow-up;
+these tests do not claim to solve that existing race.
+
 Submitted for owner review. No CLA acceptance, merge or deployment was performed.
