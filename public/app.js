@@ -66,7 +66,7 @@ let themeNow = null;
 
 // Preview / drive state
 let dest = null;
-// How to get there: 'drive' | 'walk' | 'transit'. Not remembered: every trip starts on Drive, so someone who walked once
+// How to get there: 'drive' | 'motorcycle' | 'walk' | 'transit'. Not remembered: every trip starts on Drive, so someone who walked once
 // isn't given footpaths (no cameras, alerts or tolls) next time they're in the car. See resetTravel.
 let travel = 'drive';
 let stops = []; // places to visit on the way, in order, not yet reached
@@ -849,7 +849,8 @@ function handleFix(fix, first = false) {
   }
   state.pos = fix;
   // Traffic sharing only buffers real drives: walking, browsing the map, and demo drives never become traffic.
-  if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix); // walking speeds would look like a jam
+  // Only cars' speeds are shared: walking speeds would look like a jam, and motorcycles filter past jams.
+  if (mode === 'drive' && travel === 'drive' && !sim) noteProbeFix(fix);
   local.set('lastPos', fix.lngLat.map((v) => Math.round(v * 1e4) / 1e4));
   if (mode === 'watch') return; // the viewer's own position isn't part of someone else's drive
   lastFixAt = Date.now(); // a train trip reads state.pos each second (rideTick), while it's fresh
@@ -1662,7 +1663,7 @@ function offerResume() {
   const t = local.get('activeTrip');
   if (!t?.dest || mode !== 'browse') return;
   if (Date.now() - t.at > RESUME_MS) return forgetTrip();
-  const what = t.kind === 'ride' ? 'train trip' : t.travel === 'walk' ? 'walk' : 'drive';
+  const what = t.kind === 'ride' ? 'train trip' : t.travel === 'walk' ? 'walk' : t.travel === 'motorcycle' ? 'ride' : 'drive';
   const mins = Math.round((Date.now() - t.at) / 60_000);
   $('resume-title').textContent = `Continue to ${t.dest.name}?`;
   $('resume-sub').textContent = `Your ${what} stopped ${mins < 2 ? 'just now' : `${formatDuration(mins * 60)} ago`} when the app closed. It picks up from where you are now.`;
@@ -1676,7 +1677,7 @@ function offerResume() {
     speak(`Continuing to ${t.dest.name}.`); // inside the tap: phones only allow speech that a tap started
     resuming = t;
     resumeLeg = 0;
-    travel = t.kind === 'ride' ? 'transit' : t.travel === 'walk' ? 'walk' : 'drive';
+    travel = t.kind === 'ride' ? 'transit' : ['walk', 'motorcycle'].includes(t.travel) ? t.travel : 'drive';
     syncVehicle();
     openPreview(t.dest);
   };
@@ -2174,6 +2175,7 @@ function renderRouteOptions() {
     if (r.duration === fastest && routes.length > 1) badges.push('<span class="badge best">Fastest</span>');
     if (r.tolls?.length) badges.push(`<span class="badge warn">${esc(tollSummary(r.tolls))}</span>`);
     else if (r.toll) badges.push('<span class="badge warn">Toll</span>');
+    else if (r.toll_free_bike) badges.push('<span class="badge">No toll for motorcycles</span>');
     if (r.ferry) badges.push('<span class="badge warn">Ferry</span>');
     const reps = (r.reports ?? []).length;
     if (reps) badges.push(`<span class="badge">${reps} report${reps > 1 ? 's' : ''}</span>`);
