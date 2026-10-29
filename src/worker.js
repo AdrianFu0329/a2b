@@ -473,6 +473,7 @@ async function route(request, env, url) {
         const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
         r.limits = a?.limits ?? null;
         r.tolls = (a?.tolls ?? []).map((at) => ({ at }));
+        r.tunnels = a?.tunnels ?? [];
       }),
       // Live traffic, when TomTom is set up: the route's time with today's traffic, and where the jams are.
       ...routes.map(async (r) => {
