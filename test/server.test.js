@@ -1080,14 +1080,3 @@ test('Malaysia, roughly: the peninsula, Sabah and Sarawak, not Singapore or Bang
     assert.ok(!inMalaysia([lng, lat]), name);
   }
 });
-
-test('the Google key for the last-resort search: only when one is set', async () => {
-  assert.deepEqual((await client()('GET', '/api/google')).body, { key: null });
-  env.GOOGLE_MAPS_KEY = 'AIza-test-key';
-  try {
-    assert.deepEqual((await client()('GET', '/api/google')).body, { key: 'AIza-test-key' });
-  } finally {
-    delete env.GOOGLE_MAPS_KEY;
-  }
-});
-

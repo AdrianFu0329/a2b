@@ -1322,7 +1322,7 @@ async function runSearch(q, enter = false) {
     serverCall.catch(() => {});
     const local = await searchNearby(q, near).catch(() => []);
     if (seq !== searchSeq) return;
-    if (local.length) showResults(q, near, local, null, true, false, false);
+    if (local.length) showResults(q, near, local, null, true, false);
     const server = await serverCall.catch((e) => (local.length ? { places: [] } : Promise.reject(e)));
     if (seq !== searchSeq) return;
     // A search for parking is answered with the car parks around the place (or you), nearest first: only those. Else
@@ -1342,14 +1342,9 @@ async function runSearch(q, enter = false) {
   }
 }
 
-// final: the last answer for q (the server's too), so Google may be asked when nothing found is named so.
-function showResults(q, near, places, note, overture, enter, final = true) {
+function showResults(q, near, places, note, overture, enter) {
   $('search-home').classList.add('hidden');
-  if (!places.length) {
-    searchMessage(note || `No results for "${q}".`);
-    if (final) offerGoogle($('results'), q, near, places);
-    return;
-  }
+  if (!places.length) return searchMessage(note || `No results for "${q}".`);
   const ul = $('results');
   ul.classList.remove('hidden');
   ul.removeAttribute('aria-busy');
@@ -1365,71 +1360,8 @@ function showResults(q, near, places, note, overture, enter, final = true) {
     ul.append(li);
   }
   if (overture) ul.append(el('li', 'search-note', esc(places.some((p) => p.type === 'ev') ? `${placesAttribution} · ${CHARGERS_ATTRIBUTION}` : placesAttribution)));
-  if (final) offerGoogle(ul, q, near, places);
   if (enter && places.length === 1) pickPlace(places[0]);
 }
-
-// ================= Last resort: Google =================
-// When nothing A2B or OpenStreetMap found is named what was typed, Google's results show under ours by themselves
-// (Places UI Kit, on public/google-search.html in a frame; its terms are the ones that allow it next to our map).
-// Only once typing has stopped for a second, and at most GOOGLE_PER_DAY a day on a phone: each one counts against the
-// Google key's free monthly searches. Only for a place to drive to or stop at: what Google finds can't be kept.
-const GOOGLE_PER_DAY = 30;
-const GOOGLE_PAUSE_MS = 1000;
-let googleOn = null; // Promise<boolean>: is a Google key set?
-const googleFrames = new Set();
-
-function googleToday(add = 0) {
-  const day = new Date().toISOString().slice(0, 10);
-  const seen = local.get('google-searches', {});
-  const n = (seen.day === day ? seen.n : 0) + add;
-  if (add) local.set('google-searches', { day, n });
-  return n;
-}
-
-function offerGoogle(ul, q, near, places) {
-  if (q.trim().length < 3 || !(searchTarget === null || searchTarget === 'stop')) return;
-  if (places.some((p) => matchesWordStarts(p.name, q))) return; // found it ourselves
-  googleOn ??= fetch('/api/google').then((r) => r.json()).then((d) => Boolean(d.key)).catch(() => ((googleOn = null), false));
-  const shown = (ul.dataset.q = q);
-  const still = () => ul.dataset.q === shown && !ul.classList.contains('hidden') && $('search-input').value.trim() === q.trim();
-  googleOn.then((on) => {
-    if (!on || googleToday() >= GOOGLE_PER_DAY) return;
-    setTimeout(() => {
-      if (!still()) return;
-      googleToday(1);
-      const li = el('li', 'google-inline');
-      li.append(googleFrame(q, near));
-      ul.append(li);
-      ul.classList.remove('hidden'); // shown under "No results" too
-    }, GOOGLE_PAUSE_MS);
-  });
-}
-
-function googleFrame(q, near) {
-  for (const f of googleFrames) if (!f.isConnected) googleFrames.delete(f);
-  const frame = document.createElement('iframe');
-  frame.title = 'Results from Google Maps';
-  frame.dataset.q = q;
-  frame.src = `/google-search?${new URLSearchParams({ q, lat: near[1].toFixed(2), lng: near[0].toFixed(2) })}`;
-  googleFrames.add(frame);
-  return frame;
-}
-
-// Google's widget gives us only the place picked: its ID and position. Its name is what was searched, and the address
-// comes from what's at that spot in A2B's own data or OpenStreetMap, which also says whether it's in Malaysia.
-addEventListener('message', async (e) => {
-  if (e.origin !== location.origin || e.data?.source !== 'a2b-google' || e.data.type !== 'place') return;
-  const frame = [...googleFrames].find((f) => f.contentWindow === e.source);
-  if (!frame) return;
-  const { id, lat, lng } = e.data.place;
-  // At most 2.5 s for what's there (the public geocoder can be slow): Google's page already checked the spot is in
-  // Malaysia's outline, so the drive needn't wait for the address.
-  const here = (await Promise.race([api(`/api/reverse?lat=${lat}&lng=${lng}`).catch(() => null), new Promise((r) => setTimeout(r, 2500))]))?.place;
-  if (here?.country && here.country !== 'MY') return toast('A2B only goes to places in Malaysia.');
-  const near = here && here.name !== 'Dropped pin' ? [here.name, here.address].filter(Boolean).join(', ') : '';
-  pickPlace({ name: frame.dataset.q, address: near ? `Near ${near} · position from Google Maps` : 'Position from Google Maps', lat, lng, google: { id } });
-});
 
 // A search naming a kind of place ("petrol", "hospital", "balai polis", "convenience store"): its nearest
 // places, from this phone's Overture files. With more words, they're either a name ("shell petrol station",
