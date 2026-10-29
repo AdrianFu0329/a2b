@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { Navigator } from '../public/nav.js';
 import { distance, bearing } from '../public/geo.js';
-import { DeadReckoningEpisode, shouldEstimate, nearTunnel, pointAt } from '../public/dead-reckoning.js';
+import { DeadReckoningEpisode, isFreshGpsFix, shouldEstimate, nearTunnel, pointAt } from '../public/dead-reckoning.js';
 
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 // Run the real browser functions with a synthetic clock, GPS and DOM. No map servers or GPS hardware are used.
@@ -49,7 +49,7 @@ function drive({ speed = 8, count, stop = false } = {}) {
   const r = route(count, stop);
   const context = vm.createContext({
     Date: { now: () => clock.now }, setInterval: () => 1, clearInterval() {},
-    DeadReckoningEpisode, shouldEstimate, nearTunnel, pointAt, distance, bearing,
+    DeadReckoningEpisode, isFreshGpsFix, shouldEstimate, nearTunnel, pointAt, distance, bearing, Navigator,
     tunnelEpisode: new DeadReckoningEpisode(), tunnelTimer: null, tunnelFixAt: 0, lastFixAccuracy: null, lastGoodSpeed: 0,
     mode: 'drive', sim: null, gpsBlocked: false, nav: new Navigator(r), live: null, travel: 'drive',
     state: { pos: null, settings: { units: 'metric' } }, local: { set() {} },
@@ -66,9 +66,9 @@ function drive({ speed = 8, count, stop = false } = {}) {
   for (const name of ['renderBanner', 'renderEta', 'renderLimit', 'drawDriveLine', 'drawManeuverArrow',
     'checkTolls', 'checkCameras', 'checkAlerts', 'renderStopMenu', 'setOffrouteNote', 'stopSimulation',
     'discardProbeBuffer', 'clearParkingPins', 'renderShareMenu', 'forgetTrip', 'drawTrail',
-    'backToBrowse', 'resetTravel', 'drawRoutes', 'updateCheckpoint']) context[name] = () => {};
+    'backToBrowse', 'resetTravel', 'resetTripRequests', 'drawRoutes', 'updateCheckpoint']) context[name] = () => {};
   vm.runInContext(['onFix', 'estSpeed', 'handleFix', 'driveTick', 'tunnelAhead', 'startTunnelWatch',
-    'stopTunnelWatch', 'stopReckoning', 'tunnelTick', 'arrive', 'endDrive'].map(appFunction).join('\n'), context);
+    'stopTunnelWatch', 'stopReckoning', 'renderTunnelStatus', 'tunnelTick', 'arrive', 'endDrive'].map(appFunction).join('\n'), context);
   const fix = (point = r.coords[0], extra = {}) => context.onFix({
     timestamp: clock.now,
     coords: { longitude: point[0], latitude: point[1], speed, heading: 90, accuracy: 10, ...extra },
@@ -78,6 +78,21 @@ function drive({ speed = 8, count, stop = false } = {}) {
   return { context, clock, calls, node, route: r, fix, tick(seconds = 1) {
     for (let i = 0; i < seconds; i++) { clock.now += 1000; context.tunnelTick(); }
   } };
+}
+
+// Run the actual async reroute function; the API response is deferred so real fixes or an outage can happen
+// while it is pending. The request-ownership stubs also allow this GPS fixture to run with the separate M2 fix.
+function pendingReroute(d) {
+  let resolve;
+  const result = new Promise((done) => { resolve = done; });
+  Object.assign(d.context, {
+    rerouting: false, lastReroute: 0, REROUTE_GAP_MS: 8000, navigator: { onLine: true }, tripId: 1,
+    requestRoutes: () => result, keepTrail() {}, computeOnRoute() {}, loadReports() {}, startSimulation() {},
+    routeRequest: (from, to, heading, stops) => ({ from, to, heading, stops, units: 'metric' }),
+    rerouteRequests: { pending: false, start: (input) => ({ input }), owns: () => true, finish() {} },
+  });
+  vm.runInContext(appFunction('reroute'), d.context);
+  return { promise: d.context.reroute(d.context.state.pos, { force: true }), resolve: (r) => resolve([r]) };
 }
 
 for (const speed of [8, 70]) test(`app timer cannot restart exhausted ${speed} m/s GPS estimates`, () => {
@@ -168,4 +183,153 @@ test('fresh stationary onFix measurements recover GPS even when movement time is
   assert.equal(d.context.tunnelEpisode.exhausted, false);
   d.tick(100);
   assert.equal(d.context.tunnelEpisode.active, false, 'stationary car stays still');
+});
+
+for (const exhausted of [false, true]) test(`reroute ${exhausted ? 'after exhaustion' : 'during an estimate'} waits for a new fix without renewing the outage budget`, async () => {
+  const d = drive({ speed: 20 });
+  d.clock.now += 1000;
+  d.fix(d.route.coords[50]); // already 5.5 km into the old route
+  const request = pendingReroute(d);
+  d.tick(exhausted ? 100 : 10);
+  assert.ok(d.context.live.along > 5000);
+  assert.equal(d.context.tunnelEpisode.exhausted, exhausted);
+  const original = d.context.tunnelEpisode.reckoner;
+  const lastFixTime = d.context.tunnelEpisode.lastFixTime;
+  const moves = d.calls.moves.length, shares = d.calls.shares;
+  const short = route(3); // only 222 m long: the old along would jump straight to its destination
+  request.resolve(short);
+  await request.promise;
+  assert.equal(d.context.live, null, 'old route progress is discarded');
+  assert.equal(d.context.tunnelEpisode.suspended, true);
+  assert.equal(d.context.tunnelEpisode.exhausted, exhausted);
+  assert.equal(d.context.tunnelEpisode.reckoner, original, 'route replacement does not reset or renew the budget');
+  assert.equal(d.context.tunnelEpisode.lastFixTime, lastFixTime);
+  assert.equal(d.node('dr-chip').querySelector('span').textContent, 'Waiting for GPS');
+  d.tick(180);
+  assert.equal(d.calls.moves.length, moves, 'timer cannot move the marker on the replacement route');
+  assert.equal(d.calls.shares, shares, 'reroute cannot publish stale progress');
+  assert.equal(d.calls.patches.length, 0);
+  assert.equal(d.context.mode, 'drive');
+  d.fix(short.coords[0], { accuracy: 150 });
+  assert.equal(d.context.tunnelEpisode.suspended, true);
+  d.clock.now += 1000;
+  d.fix(short.coords[0]);
+  assert.equal(d.context.tunnelEpisode.suspended, false);
+  assert.equal(d.context.live.along, 0);
+  assert.equal(d.context.nav.arrived, false);
+  d.tick(3);
+  assert.ok(d.context.live.along > 0 && d.context.live.along < 100, 'a new outage starts from the new route position');
+});
+
+test('delayed reroute uses the latest fresh real fix instead of the captured destination fix', async () => {
+  const d = drive({ speed: 10 });
+  d.clock.now += 1000;
+  d.fix(d.route.coords[2]); // request position will be the replacement route's destination
+  const request = pendingReroute(d);
+  d.clock.now += 5000;
+  d.fix(d.route.coords[0]); // later real measurement, before the request resolves
+  request.resolve(route(3));
+  await request.promise;
+  assert.equal(d.context.live.along, 0);
+  assert.equal(d.context.nav.arrived, false);
+  assert.equal(d.context.mode, 'drive');
+  assert.equal(d.calls.patches.length, 0);
+  assert.equal(d.context.tunnelEpisode.suspended, false);
+  d.clock.now += 1000;
+  d.fix(d.route.coords[2], { speed: 0 });
+  await Promise.resolve();
+  assert.equal(d.context.mode, 'browse');
+  assert.equal(d.calls.patches.at(-1).body.ended, 'arrived');
+});
+
+test('a stale captured fix cannot confirm a stop or arrival when a route response resolves before the next timer', async () => {
+  const d = drive({ speed: 10, stop: true });
+  d.clock.now += 1000;
+  d.fix(d.route.coords[2]);
+  const request = pendingReroute(d);
+  const moves = d.calls.moves.length, shares = d.calls.shares;
+  d.clock.now += 30_000; // delayed route response, and no timer tick to mark an active estimate yet
+  request.resolve(route(3));
+  await request.promise;
+  assert.equal(d.context.tunnelEpisode.suspended, true);
+  assert.equal(d.context.live, null);
+  assert.equal(d.context.stops.length, 1);
+  assert.equal(d.calls.moves.length, moves);
+  assert.equal(d.calls.shares, shares);
+  assert.equal(d.calls.patches.length, 0);
+  assert.equal(d.calls.spoken.some((s) => /arrived|reached your stop/i.test(s)), false);
+  d.tick(120);
+  assert.equal(d.calls.moves.length, moves);
+});
+
+test('sharing heartbeat cannot publish estimated, stale or suspended route progress', () => {
+  const d = drive({ speed: 20 });
+  d.context.shouldSend = () => true;
+  vm.runInContext(appFunction('pushShare'), d.context);
+  d.context.pushShare(true);
+  assert.equal(d.calls.patches.length, 1, 'fresh real position can be shared');
+  d.tick(5);
+  d.context.pushShare(true);
+  assert.equal(d.calls.patches.length, 1, 'periodic sharing does not leak an estimated position');
+  d.context.tunnelEpisode.suspend();
+  d.context.pushShare(true);
+  assert.equal(d.calls.patches.length, 1);
+  d.clock.now += 1000;
+  d.fix(d.route.coords[1]);
+  assert.equal(d.calls.patches.length, 2, 'real recovery resumes sharing');
+  d.clock.now += 3000; // still no timer tick: stale age alone must block sharing
+  d.context.pushShare(true);
+  assert.equal(d.calls.patches.length, 2);
+});
+
+test('a replacement route is shared with the first fresh recovery fix, after waiting through the outage', async () => {
+  const d = drive({ speed: 20 });
+  d.context.shouldSend = () => true;
+  vm.runInContext(appFunction('pushShare'), d.context);
+  d.context.pushShare(true);
+  const request = pendingReroute(d);
+  d.tick(10);
+  const replacement = route(3);
+  request.resolve(replacement);
+  await request.promise;
+  assert.equal(d.calls.patches.length, 1, 'no stale position or route update is published');
+  d.clock.now += 1000;
+  d.fix(replacement.coords[0]);
+  assert.equal(d.calls.patches.length, 2);
+  assert.equal(d.calls.patches[1].body.route, replacement.coords, 'viewer receives the held route with real progress');
+});
+
+test('a failed route update is retried until acknowledged, without requiring new movement', async () => {
+  const d = drive();
+  d.context.shouldSend = () => false;
+  let attempts = 0;
+  d.context.api = async (url, options) => {
+    d.calls.patches.push({ url, ...options });
+    if (++attempts === 1) throw new Error('temporary network failure');
+  };
+  vm.runInContext(appFunction('pushShare'), d.context);
+  d.context.pushShare();
+  await Promise.resolve();
+  assert.equal(d.context.share.route, undefined);
+  d.clock.now += 1000;
+  d.context.pushShare();
+  await Promise.resolve();
+  assert.equal(d.calls.patches.length, 2);
+  assert.equal(d.calls.patches[1].body.route, d.context.nav.coords);
+  assert.equal(d.context.share.route, d.context.nav);
+  d.context.pushShare();
+  assert.equal(d.calls.patches.length, 2, 'acknowledged route respects ordinary heartbeat throttling');
+});
+
+test('a late route acknowledgement cannot mark a different sharing session as updated', async () => {
+  const d = drive();
+  d.context.shouldSend = () => true;
+  let resolve;
+  d.context.api = () => new Promise((done) => { resolve = done; });
+  vm.runInContext(appFunction('pushShare'), d.context);
+  d.context.pushShare(true);
+  d.context.share = { token: 'new-synthetic-trip' };
+  resolve();
+  await Promise.resolve();
+  assert.equal(d.context.share.route, undefined);
 });

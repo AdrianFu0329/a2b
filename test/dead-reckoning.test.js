@@ -100,6 +100,23 @@ test('stationary GPS uses measurement time, and duplicate measurements cannot re
   assert.equal(episode.exhausted, false);
 });
 
+test('route replacement suspends the same outage until a newer accurate measurement', () => {
+  const episode = new DeadReckoningEpisode();
+  const fix = { lngLat: LINE[0], speed: 10, accuracy: 10, time: 1000 };
+  episode.acceptFix(fix, 1000);
+  episode.advance({ eligible: true, along: 5000, speed: 10, now: 2000 });
+  const budget = episode.reckoner;
+  episode.suspend();
+  assert.equal(episode.active, false);
+  assert.equal(episode.acceptFix(fix, 2000), false, 'a duplicate remains unusable even while its age is fresh');
+  assert.equal(episode.suspended, true);
+  assert.equal(episode.advance({ eligible: true, along: 0, speed: 10, now: 200_000 }), null);
+  assert.equal(episode.reckoner, budget, 'the old outage budget was not replaced');
+  assert.ok(episode.acceptFix({ ...fix, time: 200_000 }, 200_000));
+  assert.equal(episode.suspended, false);
+  assert.equal(episode.reckoner, null);
+});
+
 test('a point along the route, and the way the road runs there', () => {
   const { point, bearing } = pointAt(LINE, CUM, CUM[3] + (CUM[4] - CUM[3]) / 2);
   assert.ok(Math.abs(point[0] - 101.6035) < 1e-9 && point[1] === 3.1);
