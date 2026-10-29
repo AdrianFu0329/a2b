@@ -213,7 +213,19 @@ textarea.field { height: auto; padding: 12px 14px; resize: vertical; font: inher
 .search-box input { flex: 1; border: 0; background: none; outline: none; font-size: 17px; min-width: 0; }
 .search-box input::-webkit-search-cancel-button { display: none; }
 .search-target { margin: 10px 14px 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-2); font-weight: 600; font-size: 14px; }
-#search-empty-hint, #search-status { padding: 10px 16px; }
+#search-empty-hint { padding: 10px 16px; }
+/* "No results", "busy", offline: in the middle of the screen, not tucked in a corner. */
+#search-status { padding: 18vh 32px 0; text-align: center; font-size: 16px; text-wrap: balance; }
+/* While searching: grey rows shaped like results, with the routes' shimmer passing over them. */
+.place-list li.place-skeleton { gap: 14px; padding: 12px 16px; }
+.place-skeleton > span:last-child { flex: 1; display: grid; gap: 8px; }
+.place-skeleton i { display: block; height: 12px; width: 70%; border-radius: 6px; background: var(--bg-2); }
+.place-skeleton i:first-child { height: 15px; width: 45%; }
+.place-skeleton i, .place-skeleton .p-ic { position: relative; overflow: hidden; }
+.place-skeleton i::after, .place-skeleton .p-ic::after {
+  content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg) 55%, transparent), transparent); animation: shimmer 1.2s ease-in-out infinite;
+}
 #search-home, #results { overflow: auto; flex: 1; padding-bottom: calc(20px + var(--safe-bottom)); }
 .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px; }
 .quick-tile { display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: 14px; background: var(--bg-2); text-align: left; min-width: 0; }
@@ -261,7 +273,7 @@ textarea.field { height: auto; padding: 12px 14px; resize: vertical; font: inher
   border: 2px solid var(--bg-3); border-top-color: var(--accent-text); animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spinner, .route-opt.skeleton::after { animation-duration: 2.4s; } }
+@media (prefers-reduced-motion: reduce) { .spinner, .route-opt.skeleton::after, .place-skeleton i::after, .place-skeleton .p-ic::after { animation-duration: 2.4s; } }
 .route-opt.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--bg)); }
 .route-opt .r-time { font-size: 20px; font-weight: 800; min-width: 76px; flex: none; }
 .route-opt .r-info { flex: 1; min-width: 0; font-size: 14px; color: var(--muted); }

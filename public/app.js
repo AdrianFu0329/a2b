@@ -1010,6 +1010,7 @@ function wireUi() {
     const q = $('search-input').value.trim();
     $('search-clear').classList.toggle('hidden', !q);
     if (q.length < 2) return showSearchHome();
+    showSearching(); // straight away, not after the pause: your recent places go, the results' placeholders come
     t = setTimeout(() => runSearch(q), 280);
   };
   $('search-input').onkeydown = (e) => {
@@ -1156,6 +1157,7 @@ function openSearchFor(target) {
 
 function showSearchHome() {
   $('results').classList.add('hidden');
+  $('results').removeAttribute('aria-busy');
   $('search-status').classList.add('hidden');
   $('search-home').classList.remove('hidden');
   renderSearchHome();
@@ -1198,10 +1200,31 @@ function renderPlaceList(ul, list, icon, kind) {
   }
 }
 
+// While a search runs: rows that shimmer where its results will be, in place of your recent places.
+function showSearching() {
+  $('search-home').classList.add('hidden');
+  $('search-status').classList.add('hidden');
+  const ul = $('results');
+  ul.classList.remove('hidden');
+  if (ul.getAttribute('aria-busy')) return; // already showing them: don't restart the shimmer on every key
+  ul.setAttribute('aria-busy', 'true');
+  ul.innerHTML = '<li class="place-skeleton" aria-hidden="true"><span class="p-ic"></span><span><i></i><i></i></span></li>'.repeat(5);
+}
+
+// Nothing to show, only a message ("No results", "busy", offline): in the middle of the screen.
+function searchMessage(text) {
+  const ul = $('results');
+  ul.classList.add('hidden');
+  ul.removeAttribute('aria-busy');
+  ul.innerHTML = '';
+  $('search-home').classList.add('hidden');
+  $('search-status').textContent = text;
+  $('search-status').classList.remove('hidden');
+}
+
 async function runSearch(q, enter = false) {
   const seq = ++searchSeq;
-  $('search-status').textContent = 'Searching…';
-  $('search-status').classList.remove('hidden');
+  showSearching();
   const near = state.pos?.lngLat ?? map.getCenter().toArray();
   try {
     const coord = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
@@ -1231,17 +1254,18 @@ async function runSearch(q, enter = false) {
     showResults(q, near, places, note, places.some((p) => !server.places.includes(p)), enter);
   } catch (e) {
     if (seq !== searchSeq) return;
-    $('search-status').textContent = e.message;
+    searchMessage(e.message);
   }
 }
 
 function showResults(q, near, places, note, overture, enter) {
   $('search-home').classList.add('hidden');
+  if (!places.length) return searchMessage(note || `No results for "${q}".`);
   const ul = $('results');
   ul.classList.remove('hidden');
+  ul.removeAttribute('aria-busy');
   ul.innerHTML = '';
-  $('search-status').classList.toggle('hidden', places.length > 0);
-  $('search-status').textContent = places.length ? '' : note || `No results for "${q}".`;
+  $('search-status').classList.add('hidden');
   // e.g. "No "nandos" found near Eco Grandeur in the map data." above the nearest other matches
   if (note && places.length) ul.append(el('li', 'search-note', esc(note)));
   for (const p of places) {
