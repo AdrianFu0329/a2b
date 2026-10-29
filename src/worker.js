@@ -15,6 +15,7 @@ import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { refreshChargers, allChargers } from './lib/chargers.js';
 import { reportsRepo } from './lib/reports.js';
+import { suggestionsRepo } from './lib/suggestions.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
 import { planTransit, withRealWalks } from './lib/transit.js';
@@ -137,6 +138,27 @@ async function route(request, env, url) {
     return json({ ok: true, closed });
   }
 
+  // ---------- Place suggestions (src/lib/suggestions.js): drivers with an account suggest, testers review ----------
+  const suggestions = suggestionsRepo(db);
+  if (path === '/api/suggestions' && method === 'POST') {
+    return json({ suggestion: await suggestions.create(needUser(), await readJson(request)) }, 201);
+  }
+  if (path === '/api/suggestions' && method === 'GET') {
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
+    return json(await suggestions.forReview());
+  }
+  const oneSuggestion = path.match(/^\/api\/suggestions\/(\d+)$/);
+  if (oneSuggestion && method === 'POST') {
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
+    const body = await readJson(request);
+    const id = Number(oneSuggestion[1]);
+    return json(body.action === 'undo' ? await suggestions.undo(user, id) : await suggestions.review(user, id, body));
+  }
+  // Approved places for the phone's own search: only what changed since the phone last asked.
+  if (path === '/api/driver-places' && method === 'GET') {
+    return json(await suggestions.changes(url.searchParams.get('since')), 200, { 'cache-control': 'no-store' });
+  }
+
   // ---------- Accounts ----------
   if (path === '/api/auth/signup' && method === 'POST') {
     if (!validDevice(device)) throw httpError('Missing device id. Update the app to the latest version.', 400);
@@ -257,6 +279,8 @@ async function route(request, env, url) {
       db.prepare('DELETE FROM trips WHERE user_id = ?').bind(u.id),
       db.prepare('DELETE FROM votes WHERE user_id = ?').bind(u.id),
       db.prepare('DELETE FROM feedback WHERE user_id = ?').bind(u.id),
+      db.prepare('DELETE FROM place_suggestions WHERE user_id = ?').bind(u.id),
+      db.prepare('UPDATE driver_places SET user_id = NULL WHERE user_id = ?').bind(u.id),
       db.prepare('UPDATE reports SET removed = 1 WHERE user_id = ?').bind(u.id),
       db.prepare("UPDATE users SET email = 'deleted-' || id || '@invalid', name = 'Former driver', pass_hash = '', pass_salt = '', home = NULL, work = NULL WHERE id = ?").bind(u.id),
     ]);

@@ -680,6 +680,51 @@ test('feedback: anyone can send it, only the owner can read it, close it and reo
   assert.equal(more.status, 429, 'ten a day per device');
 });
 
+test('place suggestions: drivers with an account send them, testers approve, phones download the approved ones', async () => {
+  const guest = client('suggest-guest-1');
+  assert.equal((await guest('POST', '/api/suggestions', { kind: 'add', name: 'Kedai Ah Seng', lat: 3.1, lng: 101.6 })).status, 401, 'an account is needed');
+  const sam = client('suggest-sam-1');
+  await sam('POST', '/api/auth/signup', { email: 'sam@test.com', password: 'password8', name: 'Sam' });
+  assert.equal((await sam('POST', '/api/suggestions', { kind: 'add', name: 'K', lat: 3.1, lng: 101.6 })).status, 400, 'a name');
+  assert.equal((await sam('POST', '/api/suggestions', { kind: 'add', name: 'Kedai Ah Seng', lat: 52.5, lng: 13.4 })).status, 400, 'in Malaysia');
+  assert.equal((await sam('POST', '/api/suggestions', { kind: 'move', name: 'X', lat: 3.1, lng: 101.6 })).status, 400, 'a fix says which place');
+  assert.equal((await sam('POST', '/api/suggestions', { kind: 'add', name: 'Kedai Ah Seng', category: 'shop', lat: 3.1, lng: 101.6, address: 'Jalan Ipoh', note: 'Opened last month' })).status, 201);
+  assert.equal((await sam('POST', '/api/suggestions', { kind: 'move', name: 'Starbucks', category: 'food', lat: 3.2, lng: 101.5, was: { name: 'Starbucks', lat: 3.21, lng: 101.5 } })).status, 201);
+  assert.equal((await sam('POST', '/api/suggestions', { kind: 'gone', was: { name: 'Shell Kepong', lat: 3.2, lng: 101.63 } })).status, 201);
+
+  const owner = client();
+  await owner('POST', '/api/auth/signup', { email: 'places@test.com', password: 'password9', name: 'Owner' });
+  assert.equal((await owner('GET', '/api/suggestions')).status, 404, 'testers only');
+  env.TESTER_EMAILS = 'places@test.com';
+  try {
+    assert.equal((await sam('GET', '/api/suggestions')).status, 404);
+    const { pending } = (await owner('GET', '/api/suggestions')).body;
+    assert.deepEqual(pending.map((s) => [s.kind, s.name, s.by_name]), [['add', 'Kedai Ah Seng', 'Sam'], ['move', 'Starbucks', 'Sam'], ['gone', 'Shell Kepong', 'Sam']]);
+    const [add, move, gone] = pending;
+    assert.equal((await sam('POST', `/api/suggestions/${add.id}`, { action: 'approve' })).status, 404, 'only testers review');
+    assert.equal((await owner('GET', '/api/driver-places?since=0')).body.places.length, 0, 'nothing until approved');
+
+    await owner('POST', `/api/suggestions/${add.id}`, { action: 'approve', name: 'Kedai Runcit Ah Seng', lat: 3.1001, lng: 101.6001 });
+    await owner('POST', `/api/suggestions/${move.id}`, { action: 'approve' });
+    await owner('POST', `/api/suggestions/${gone.id}`, { action: 'reject' });
+    assert.equal((await owner('POST', `/api/suggestions/${gone.id}`, { action: 'approve' })).status, 404, 'reviewed once');
+
+    const first = (await guest('GET', '/api/driver-places?since=0')).body;
+    assert.deepEqual(first.places.map((p) => [p.name, p.lat, p.hides_name]), [['Kedai Runcit Ah Seng', 3.1001, null], ['Starbucks', 3.2, 'Starbucks']], "with the tester's edits");
+    assert.equal((await guest('GET', `/api/driver-places?since=${first.next}`)).body.places.length, 0, 'nothing new since');
+    const me = (await sam('GET', '/api/me')).body.user;
+    assert.equal(me.points, 20, 'points for each approved one');
+
+    await owner('POST', `/api/suggestions/${add.id}`, { action: 'undo' });
+    const after = (await guest('GET', `/api/driver-places?since=${first.next}`)).body.places;
+    assert.deepEqual(after.map((p) => [p.name, p.removed]), [['Kedai Runcit Ah Seng', 1]], 'taken out: phones are told to drop it');
+    const { reviewed } = (await owner('GET', '/api/suggestions')).body;
+    assert.deepEqual(reviewed.map((s) => s.status).sort(), ['approved', 'rejected', 'undone']);
+  } finally {
+    delete env.TESTER_EMAILS;
+  }
+});
+
 test('an overloaded routing server reads as busy, not as no route', async () => {
   routingDown = true;
   try {

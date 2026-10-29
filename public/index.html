@@ -78,6 +78,7 @@
       <div class="dest-text">
         <h2 id="dest-name"></h2>
         <p id="dest-addr"></p>
+        <button id="btn-wrong-place" class="wrong-place hidden">Wrong spot or closed?</button>
         <p id="peek-summary" class="peek-summary"></p>
       </div>
       <button id="btn-save-place" class="icon-btn" aria-label="Save place"><svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6L12 16.7l-5.4 2.9 1.1-6-4.5-4.2 6.1-.8Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
@@ -212,6 +213,16 @@
       <button id="btn-here-no" class="btn ghost">Not now</button>
       <button id="btn-here-yes" class="btn primary">I’m here</button>
     </div>
+  </section>
+
+  <!-- ===== Suggest a place, or review one (public/suggest.js) ===== -->
+  <div id="suggest-pin" class="suggest-pin hidden" aria-hidden="true"></div>
+  <section id="suggest" class="sheet hidden" aria-label="Suggest a place">
+    <div class="dest-head">
+      <div class="dest-text"><h2 id="suggest-title"></h2><p id="suggest-where" class="hint"></p></div>
+      <button class="icon-btn" data-close="suggest" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    </div>
+    <div id="suggest-body"></div>
   </section>
 
   <!-- ===== Arrived ===== -->
