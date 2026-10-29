@@ -24,6 +24,7 @@ Overture publishes a new release monthly: https://docs.overturemaps.org/release-
 Geofabrik's extract is rebuilt daily; --fresh-osm downloads it again.
 """
 import argparse
+import collections
 import glob
 import math
 import os
@@ -60,6 +61,13 @@ NEAR_M = 100
 NEAR_LANDMARK_M = 300
 NEAR_VENUE_M = 500  # a mall or a station is big: its listings can be this far apart
 COPY_SPOT_M = 3000  # a landmark confirmed within this of itself is in one spot
+NAMED_AFTER_M = 5000  # a shop named after a mall is in it, or near it
+MALLS = {'shopping_center', 'shopping_mall', 'mall'}
+# Where "one of a kind, so the same name elsewhere is a copy" holds: malls and airports. Not hospitals or universities,
+# whose departments (Jabatan Patologi, Faculty of Civil Engineering) are real in many.
+ONE_OF_A_KIND = MALLS | {'airport', 'aerodrome'}
+NOT_DISTINCT = {'mall', 'plaza', 'store', 'shop', 'one', 'stop', 'centre', 'center', 'city', 'the', 'square', 'point',
+                'galleria', 'complex', 'shopping', 'pusat', 'mart', 'big'}
 VENUES = {'shopping_center', 'shopping_mall', 'mall', 'train_station', 'metro_station', 'rail_station', 'station', 'airport',
           'aerodrome', 'terminal', 'ferry_terminal', 'bus_station', 'hospital', 'university', 'college_university', 'stadium',
           'museum', 'zoo', 'theme_park', 'convention_center', 'tourist_attraction', 'attraction'}
@@ -267,6 +275,15 @@ def same_name(a, b):
     return short == long_ or any(len(x) >= 3 and x not in GENERIC for x in short)
 
 
+def same_kind(a, b):
+    """Whether two listings could be the same kind of place, for joining names that only start alike: "KFC" and
+    "KFC Nu Sentral", but not the "Mid Valley" bus stop and Mid Valley Megamall."""
+    if not a or not b or a == b or (a in VENUES and b in VENUES):
+        return True
+    # Sources name kinds differently (OpenStreetMap's fast_food is Overture's fast_food_restaurant): a shared word will do.
+    return bool((set(a.split('_')) & set(b.split('_'))) - {'and', 'or', 'of', 'other', 'service', 'services', 'store', 'shop'})
+
+
 def merge_duplicates(rows):
     """One row per place listed by several sources (see the top of this file). rows: (name, address, category, kind,
     lat, lng, source); the source order decides whose pin and name are kept."""
@@ -286,7 +303,8 @@ def merge_duplicates(rows):
                 for k in grid.get((words[0], at[0] + dy, at[1] + dx), ()):
                     o = kept[k]
                     reach = NEAR_VENUE_M if cat in VENUES or o['category'] in VENUES else NEAR_LANDMARK_M if 'landmark' in (kind, o['kind']) else NEAR_M
-                    if metres(lat, lng, o['lat'], o['lng']) <= reach and same_name(words, o['words']):
+                    if metres(lat, lng, o['lat'], o['lng']) <= reach and same_name(words, o['words']) and (
+                            words == o['words'] or same_kind(cat, o['category'])):
                         match = o
                         break
                 if match:
@@ -320,7 +338,7 @@ def without_copies(kept):
     key = lambda p: ' '.join(p['words'])
     by_name = {}
     for p in kept:
-        if p['category'] in VENUES and ('osm' in p['sources'] or len(p['sources']) > 1):
+        if p['category'] in ONE_OF_A_KIND and ('osm' in p['sources'] or len(p['sources']) > 1):
             by_name.setdefault(key(p), []).append(p)
     spots = {}  # name -> (its confirmed listings, all in one spot; whether OpenStreetMap confirms it)
     for k, a in by_name.items():
@@ -328,15 +346,57 @@ def without_copies(kept):
         if all(metres(x['lat'], x['lng'], confirmed[0]['lat'], confirmed[0]['lng']) <= COPY_SPOT_M for x in confirmed):
             spots[k] = (confirmed, 'osm' in confirmed[0]['sources'])
 
+    # A venue only Overture lists (its places are vetted: confidence over 0.6), in one spot, still outranks
+    # Foursquare-only listings of its name elsewhere ("Sunway Pyramid" 630 m from KL Sentral).
+    by_overture = {}
+    for p in kept:
+        if p['category'] in ONE_OF_A_KIND and p['sources'] == ['overture'] and key(p) not in spots:
+            by_overture.setdefault(key(p), []).append(p)
+    for k, a in by_overture.items():
+        if all(metres(x['lat'], x['lng'], a[0]['lat'], a[0]['lng']) <= COPY_SPOT_M for x in a):
+            spots[k] = (a, False)
+
     def copy(p):
         spot = spots.get(key(p))
-        if not spot or (p['category'] and p['category'] not in VENUES) or 'osm' in p['sources']:
+        if not spot or (p['category'] and p['category'] not in ONE_OF_A_KIND) or 'osm' in p['sources']:
             return False
-        confirmed, by_osm = spot
-        return not any(p is x for x in confirmed) and (by_osm or len(p['sources']) == 1)
+        confirmed, _ = spot
+        if confirmed[0]['sources'] == ['overture']:
+            return p['sources'] == ['foursquare']
+        # One source only: two that agree are a real place, as OpenStreetMap may know just one of a chain's malls
+        # (Boulevard Shopping Mall is in Miri, Kuching and Bintulu).
+        return not any(p is x for x in confirmed) and len(p['sources']) == 1
 
     out = [p for p in kept if not copy(p)]
     print(f'  copies of venues pinned elsewhere: {len(kept) - len(out):,} dropped', flush=True)
+
+    # And a shop named after a mall it's far from ("KFC NU Sentral" 24 km from NU Sentral), from one source: a
+    # check-in page made elsewhere too. Only malls OpenStreetMap or two sources confirm, with names of two words or
+    # more: stations and towns share names ("Puchong"), and "Pavilion" alone is in many names.
+    times = collections.Counter(key(p) for p in out)  # a name on 3 or more listings is a chain's (MR DIY, AEON Big)
+    venues = {k: c for k, (c, _) in spots.items()
+              if len(k.split()) >= 2 and c[0]['category'] in MALLS and 'osm' in c[0]['sources'] and len(c[0]['sources']) > 1
+              and times[k] <= 2 and any(len(x) >= 4 and x not in NOT_DISTINCT for x in k.split())}
+    longest = max((len(k.split()) for k in venues), default=0)
+
+    every = collections.defaultdict(list)  # every listing of each of those names, to measure from all of them
+    for p in out:
+        if key(p) in venues:
+            every[key(p)].append(p)
+
+    def misplaced(p):
+        if p['sources'] != ['foursquare']:  # check-in pages; Overture's places are vetted
+            return False
+        w = p['words']
+        for n in range(min(longest, len(w) - 1), 1, -1):
+            for i in range(len(w) - n + 1):
+                k = ' '.join(w[i:i + n])
+                if k in venues and k != key(p):
+                    return all(metres(p['lat'], p['lng'], x['lat'], x['lng']) > NAMED_AFTER_M for x in every[k])
+        return False
+
+    kept, out = out, [p for p in out if not misplaced(p)]
+    print(f'  shops named after a venue far away: {len(kept) - len(out):,} dropped', flush=True)
     return out
 
 

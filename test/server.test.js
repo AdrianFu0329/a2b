@@ -115,7 +115,11 @@ globalThis.fetch = async (url, init = {}) => {
     if (q === 'nandos') return Response.json({ features: [feat("Nando's", 101.518, 3.071), feat("Nando's", -0.12, 51.5, 'restaurant', { country: 'UK', countrycode: 'GB' })] });
     if (q === 'nandos eco grandeur') return Response.json({ features: [] });
   }
-  if (u.includes('/api/')) return Response.json({ features: [{ geometry: { coordinates: [13.41, 52.52] }, properties: { name: 'Alexanderplatz', city: 'Berlin', country: 'Germany', osm_value: 'square' } }] });
+  if (u.includes('/api/') && u.includes('q=slowtown')) {
+    await new Promise((r) => setTimeout(r, 400)); // a busy public geocoder
+    return Response.json({ features: [{ geometry: { coordinates: [101.70, 3.16] }, properties: { name: 'Slowtown Late', countrycode: 'MY', osm_value: 'cafe' } }] });
+  }
+  if (u.includes('/api/')) return Response.json({ features: [{ geometry: { coordinates: [13.41, 52.52] }, properties: { name: 'Alexanderplatz', city: 'Berlin', country: 'Germany', countrycode: 'DE', osm_value: 'square' } }] });
   throw new Error(`unexpected fetch ${u}`);
 };
 
@@ -982,6 +986,16 @@ test('own places: searched by name, nearest first, and ahead of the public geoco
   await loadLocations([['Trx', 'Kuala Lumpur', 'shopping_mall', 'place', 3.1319, 101.6841, 'foursquare']]);
   const near = await client()('GET', '/api/locations?q=trx&lat=3.134&lng=101.686');
   assert.equal(near.body.places[0].name, 'The Exchange TRX', '…and before a check-in page named "Trx" next to you');
+  // The place named just so, though a crowd of shorter rows "… Sunway Pyramid" outscores it in the full-text index.
+  await loadLocations([
+    ...Array.from({ length: 150 }, (_, i) => [`Shop ${i} Sunway Pyramid`, '', 'retail', 'place', 3.073, 101.607, 'foursquare']),
+    ['Sunway Pyramid', '3, Jalan PJS 11/15, Bandar Sunway, 47500 Petaling Jaya, Selangor', 'mall', 'landmark', 3.0726, 101.607, 'osm+overture+foursquare'],
+  ]);
+  const pyramid = await client()('GET', '/api/locations?q=sunway%20pyramid&lat=3.134&lng=101.686');
+  assert.equal(pyramid.body.places[0].name, 'Sunway Pyramid');
+  const app = await client()('GET', '/api/search?q=trx&lat=3.134&lng=101.686');
+  assert.deepEqual(app.body.places.filter((p) => p.landmark).map((p) => [p.name, p.landmark]), [['The Exchange TRX', 'place'], ['TRX City Park', 'place']],
+    'own landmarks tagged for the app, as Photon\'s are');
   const mall = await client()('GET', '/api/locations?q=mid%20valley&lat=3.16&lng=101.70');
   assert.equal(mall.body.places[0].name, 'Mid Valley Megamall', 'a landmark ahead of a shop named after it');
   const s = await client()('GET', '/api/search?q=nasi%20lemak&lat=3.16&lng=101.70');
@@ -997,6 +1011,9 @@ test('own places: searched by name, nearest first, and ahead of the public geoco
   assert.deepEqual(alone.body.places.map((p) => p.name), ['Jalan Ampang', 'Jalan Ampang Hilir'], 'names starting so, around the person');
   const far = await client()('GET', '/api/locations?q=jalan%20am&lat=1.46&lng=103.76');
   assert.deepEqual(far.body.places, [], 'not 300 km away');
+  await loadLocations([['KFC', 'Lot No. 16, Level 5, Nu Sentral, Jalan Tun Sambanthan', 'fast_food', 'place', 3.1334, 101.6868, 'overture']]);
+  const deep = await client()('GET', '/api/locations?q=kfc%20nu%20sentral&lat=3.134&lng=101.686');
+  assert.equal(deep.body.places[0]?.address.slice(0, 31), 'Lot No. 16, Level 5, Nu Sentral', 'words late in an address count too');
   const narrowed = await client()('GET', '/api/locations?q=nasi%20lemak%20jb&lat=3.16&lng=101.70');
   assert.deepEqual(narrowed.body.places.map((p) => p.address), [], '"jb" must match too');
 });
@@ -1095,5 +1112,20 @@ test('Malaysia, roughly: the peninsula, Sabah and Sarawak, not Singapore or Bang
   }
   for (const [lng, lat, name] of [[103.8198, 1.3521, 'Singapore'], [100.5018, 13.7563, 'Bangkok'], [106.8456, -6.2088, 'Jakarta']]) {
     assert.ok(!inMalaysia([lng, lat]), name);
+  }
+});
+
+test('own places answer without waiting long for a slow public geocoder', async () => {
+  await loadLocations([1, 2, 3].map((i) => [`Slowtown Cafe ${i}`, 'Kuala Lumpur', 'cafe', 'place', 3.16 + i / 1000, 101.70, 'overture']));
+  env.PHOTON_WAIT_MS = '50';
+  try {
+    const t0 = Date.now();
+    const r = await client()('GET', '/api/search?q=slowtown&lat=3.16&lng=101.70');
+    assert.ok(Date.now() - t0 < 350, 'not held up by the 400 ms geocoder');
+    assert.equal(r.body.partial, true);
+    assert.ok(r.body.places.every((p) => p.name !== 'Slowtown Late'));
+    assert.equal(r.body.places.length, 3);
+  } finally {
+    delete env.PHOTON_WAIT_MS;
   }
 });

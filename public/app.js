@@ -1108,7 +1108,8 @@ const searchMemo = new Map(); // url -> { at, promise }
 let searchAbort = null;
 function searchServer(q, near, { newest = false } = {}) {
   const lang = (navigator.language || 'en').slice(0, 2);
-  const url = `/api/search?q=${encodeURIComponent(q.trim().toLowerCase())}&lat=${near[1].toFixed(2)}&lng=${near[0].toFixed(2)}&lang=${lang}`;
+  // v: as the server's SEARCH_VERSION, so the browser's copy of an older answer isn't used after an update.
+  const url = `/api/search?v=2&q=${encodeURIComponent(q.trim().toLowerCase())}&lat=${near[1].toFixed(2)}&lng=${near[0].toFixed(2)}&lang=${lang}`;
   const hit = searchMemo.get(url);
   if (hit && Date.now() - hit.at < SEARCH_MEMO_MS) return hit.promise;
   if (newest) {
@@ -1195,7 +1196,7 @@ async function runSearch(q, enter = false) {
           searchNearby(q, near).catch(() => []),
         ]);
     // A search for parking is answered with the car parks around the place (or you), nearest first: only those.
-    const places = server.parking ? await withOvertureParking(server) : mergeResults(server.places, local, q, near);
+    const places = server.parking ? await withOvertureParking(server) : mergeResults(server.places, local, q, near, server.ranked);
     const from = server.parking?.from;
     const note = server.parking
       ? places.length ? `Car parks near ${from ?? 'you'}` : `No car parks mapped near ${from ?? 'you'}.`

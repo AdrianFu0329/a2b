@@ -175,3 +175,10 @@ test('EV chargers: the server’s list and the files’ together, a charger in b
   const shown = await placesOfTypesIn(['fuel', 'ev'], [101.46, 3.22, 101.48, 3.235]);
   assert.deepEqual(shown.filter((p) => p.type === 'ev').map((p) => p.name).sort(), ['ChargEV Eco Grandeur', 'Tesla Puncak Alam'], 'on the map as well');
 });
+
+test('a place named just what was typed comes before nearer ones only starting so', () => {
+  const near = [101.69, 3.14];
+  const p = (name, lng, lat) => ({ name, address: 'Kuala Lumpur', lng, lat });
+  const out = mergeResults([p('Bangunan Ming Jalan Ampang', 101.70, 3.15), p('Jalan Ampang', 101.72, 3.16), p('Wisma BSN Jalan Ampang', 101.71, 3.15)], [], 'jalan ampang', near);
+  assert.equal(out[0].name, 'Jalan Ampang');
+});

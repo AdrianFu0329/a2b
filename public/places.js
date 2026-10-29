@@ -99,7 +99,7 @@ export async function searchNearby(q, near) {
 //   Overture places carrying that landmark's name but pinned more than a kilometre from it (3 km for a town),
 //   or named with the query but 1.5 km from everything OpenStreetMap has by that name, are dropped:
 //   they're mostly check-in pages people made elsewhere ("Petronas Twin Tower" in Kota Kinabalu).
-export function mergeResults(server, local, q, near) {
+export function mergeResults(server, local, q, near, ranked = false) {
   const dup = (a, b) => words(a.name).join(' ') === words(b.name).join(' ') && distance([a.lng, a.lat], [b.lng, b.lat]) < 150;
   const first = words(q)[0] ?? '';
   // A sight or venue before a town of that name, and a town before a station named after it.
@@ -113,19 +113,22 @@ export function mergeResults(server, local, q, near) {
   const misplaced = (l) =>
     (named.length > 0 && named.every((w) => words(l.name).includes(w)) && !within(l, [landmark], reach)) ||
     (anchors.length > 0 && matchesWordStarts(l.name, q) && !within(l, anchors, Math.max(reach, 1500)));
-  const all = [...server, ...local.filter((l) => !server.some((s) => dup(s, l)) && !misplaced(l))];
+  const extra = local.filter((l) => !server.some((s) => dup(s, l)) && !misplaced(l));
+  const all = [...server, ...extra];
+  const exact = words(q).join(' ');
   const tier = (p) => {
     if (p === landmark) return -1;
+    if (words(p.name).join(' ') === exact) return -0.5; // named just what was typed ("jalan ampang": the road itself)
     const full = matchesWordStarts(`${p.name} ${p.address ?? ''}`, q);
     if (full && matchesWordStarts(p.name, first)) return 0;
     return full ? 1 : 2;
   };
   const km = (p) => (near ? distance(near, [p.lng, p.lat]) / 1000 : 0);
-  return all
-    .map((p) => ({ p, t: tier(p), d: km(p) }))
-    .sort((a, b) => a.t - b.t || a.d - b.d)
-    .map(({ p }) => p)
-    .slice(0, 12);
+  const order = (list) => list.map((p) => ({ p, t: tier(p), d: km(p) })).sort((a, b) => a.t - b.t || a.d - b.d).map(({ p }) => p);
+  // The server ranked A2B's own places (src/lib/locations.js) knowing more than this phone does: keep its order,
+  // with the phone's own finds after.
+  if (ranked) return [...server, ...order(extra)].slice(0, 12);
+  return order(all).slice(0, 12);
 }
 
 // ---------- Searching by kind of place ----------
