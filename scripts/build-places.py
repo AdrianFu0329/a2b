@@ -8,7 +8,7 @@ writes them as small JSON files into public/places/: one file per area of 0.5 x 
 55 x 55 km) and first letter of a word in the place's name. Searching "nandos" near you downloads only
 the "n" file for your area and the areas next to it, and searches it on the phone, so this costs nothing
 to host and uses no database. Each area also gets a file per kind of place people look for nearby (petrol
-stations, hospitals, clinics, police stations, convenience stores; see TYPES), for searches like "petrol"
+stations, hospitals, clinics, police stations, convenience stores, EV chargers; see TYPES), for searches like "petrol"
 that name a kind of place rather than a place: most petrol stations are just called "Petronas" or "Shell".
 
 OpenStreetMap-sourced places are left out: A2B already searches OpenStreetMap through Photon, and leaving
@@ -55,6 +55,7 @@ TYPES = {
         or (cat in ('hospital', 'health_care', 'medical_service') and bool(CLINIC_NAME.search(name)))),
     'police': lambda name, cat: cat == 'police_station',
     'convenience': lambda name, cat: cat == 'convenience_store',
+    'ev': lambda name, cat: cat == 'ev_charging_station',  # the server adds OpenStreetMap's and Open Charge Map's
 }
 
 # Rough bounding boxes, so Overture only has to scan the right parts of its files.

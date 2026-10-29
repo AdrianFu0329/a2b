@@ -13,6 +13,7 @@ import { liveTraffic, applyTraffic } from './lib/traffic.js';
 import { loadCameras, camerasAlong } from './lib/cameras.js';
 import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
+import { refreshChargers, allChargers } from './lib/chargers.js';
 import { reportsRepo } from './lib/reports.js';
 import { locationsRepo } from './lib/locations.js';
 import { distance } from '../public/geo.js';
@@ -59,6 +60,7 @@ export default {
       env.DB.prepare('DELETE FROM probe_devices WHERE updated_at < ?').bind(now - PROBE_RETENTION_MS),
       env.DB.prepare('DELETE FROM probe_limits WHERE last_at < ?').bind(now - PROBE_RETENTION_MS),
     ]);
+    await refreshChargers(env, { now }).catch((e) => console.warn('chargers', e.message)); // weekly, per source
   },
 };
 
@@ -391,6 +393,16 @@ async function route(request, env, url) {
     const res = json({ parking: await parkingNear(env, [lng, lat]) }, 200, { 'cache-control': 'public, max-age=86400' });
     if (cache) await cache.put(key, res.clone());
     return res;
+  }
+
+  // EV chargers (src/lib/chargers.js): all of them, a few hundred small rows, for the phone to search and draw. Only
+  // the nightly job fills the table, never a request: a whole-country Overpass download takes up to a minute, and
+  // drivers asking at once would each start one. Until the first run the list is empty (the phone still has
+  // Overture's chargers), and phones ask again sooner.
+  if (path === '/api/chargers' && method === 'GET') {
+    await needSpot();
+    const chargers = await allChargers(db);
+    return json({ chargers }, 200, { 'cache-control': `private, max-age=${chargers.length ? 3600 : 600}` });
   }
 
   if (path === '/api/reverse' && method === 'GET') {

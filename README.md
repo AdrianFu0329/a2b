@@ -40,11 +40,12 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 
 | Feature | What it does |
 | --- | --- |
-| 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "petrol near klcc") for the nearest ones. |
-| ⛽ **On the map** | Petrol stations, hospitals, clinics and convenience stores show on the map when zoomed in. Tap one, or any station (LRT, MRT, KTM, monorail, bus) or landmark the map shows, for routes there. |
+| 🔎 **Search** | Places from OpenStreetMap plus shops from Overture Maps, searched near you. Landmarks come first, and paste coordinates (`3.15, 101.71`) to go anywhere. Search a kind of place in English or Malay ("petrol", "stesen minyak", "hospital", "klinik", "balai polis", "convenience store", "ev charger", "pengecas", "petrol near klcc") for the nearest ones. |
+| ⛽ **On the map** | Petrol stations, EV chargers, hospitals, clinics and convenience stores show on the map when zoomed in. Tap one, or any station (LRT, MRT, KTM, monorail, bus) or landmark the map shows, for routes there. |
 | 🛣️ **Routes** | Up to three routes with drive time in live traffic (jams coloured on the line), arrival, tolls and reported traffic. Tap a route on the map to pick it; the chosen one starts by itself after 8 seconds. |
 | 🚶 **Walking** | Switch the route options to Walk for footpaths and pedestrian crossings, with the same spoken directions. |
 | 🚆 **By train** | Switch a route to Train for trips on the LRT, MRT, Monorail, BRT and KTM Komuter: the walk to the station, which line (in its colour) and which way, how often trains run, where to change and the walk at the end, drawn on the map. Live departure times open in Google Maps. |
+| 🚇 **Train guidance** | Start a train trip to be guided through it: the walk to the station, which train, the next station as you go (estimated from the timetable underground, where GPS drops out), "Next stop: Masjid Jamek. Get off here." with a buzz, and where to change. A 3D train in the line's colour shows where you are on the line. Works while A2B is open on screen. |
 | 🗣️ **Turn by turn** | Spoken directions, the next turn and the one after, lane guidance, roundabout exits, a turn arrow on the map, and rerouting when you go off route. |
 | 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
@@ -103,6 +104,8 @@ The database tables are created on the first request (or run `npm run db:migrate
 - `MAX_ACTIVE` and `MAX_GUESTS`: how many devices can use the app at once, and how many of those can be guests.
 - `TESTER_EMAILS` (a secret: `npx wrangler secret put TESTER_EMAILS`): accounts that get the testing tools and the
   usage dashboard.
+- `OCM_KEY` (a secret, optional): an [Open Charge Map](https://openchargemap.org/site/develop/api) API key, free, for
+  more EV chargers than OpenStreetMap has.
 
 To use your own domain, add it under *Workers & Pages → a2b → Settings → Domains & Routes*.
 
@@ -124,6 +127,7 @@ Everything A2B uses is free and needs no key:
 | Shops and places | [Overture Maps](https://overturemaps.org) | Built into small files the phone searches (`npm run places`). |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
 | Fixed speed cameras (AES, AWAS) | OpenStreetMap, found through Photon | Built with `npm run cameras` into `public/cameras.json`, kept in git. |
+| EV chargers | OpenStreetMap ([Overpass API](https://overpass-api.de)), [Open Charge Map](https://openchargemap.org) (`OCM_KEY` secret, optional), Overture Maps | Kept in the database and refreshed weekly by the nightly job (the first list arrives with its first run after deploying). Open Charge Map's openly licensed chargers (CC BY-SA 4.0) are added when a free key is set (`npx wrangler secret put OCM_KEY`). |
 
 The community servers ask for fair use, which is why the beta caps how many people use it at once. For more
 traffic, point `ROUTING_URL` and `GEOCODER_URL` at your own [Valhalla](https://github.com/valhalla/valhalla) and

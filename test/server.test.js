@@ -26,6 +26,7 @@ let failWithExcludes = false;
 let lastLocateBody = null;
 const DETOUR = LINE.map(([lng, lat]) => [lng + 0.003, lat]); // a parallel street ~200 m east
 let osmLookups = 0;
+let overpassCalls = 0;
 let tomtomDown = false;
 let cameras = null; // the built speed camera list, as in public/cameras.json
 let tomtomCalls = 0;
@@ -83,6 +84,10 @@ globalThis.fetch = async (url, init = {}) => {
     return new Response(`<osm><node id="1" lat="${(s + n) / 2 + 0.0001}" lon="${(w + e) / 2}"><tag k="barrier" v="toll_booth"/><tag k="name" v="Plaza Tol Ujian"/>`
       + '<tag k="charge" v="2.10 MYR/motorcar;1.10 MYR/taxi"/><tag k="payment:touchngo" v="yes"/><tag k="payment:touchngo_smarttag" v="yes"/><tag k="payment:touchngo_rfid" v="yes"/></node>'
       + `<node id="2" lat="${s}" lon="${w}"><tag k="barrier" v="toll_booth"/><tag k="name" v="Far booth"/></node></osm>`);
+  }
+  if (u.startsWith('https://overpass-api.de/')) {
+    overpassCalls++;
+    return Response.json({ elements: [{ type: 'node', id: 9, lat: 3.1579, lon: 101.7119, tags: { amenity: 'charging_station', name: 'Suria KLCC EV', 'socket:type2_combo': '2', 'socket:type2_combo:output': '60 kW' } }] });
   }
   if (u.includes('/reverse') && u.includes('osm_tag=amenity')) {
     return Response.json({ features: [
@@ -154,7 +159,7 @@ function client(device) {
 // open even when A2B is full). Everything else (accounts, places, reports, trips) doesn't.
 function needsSpot(method, path) {
   if (path === '/api/presence') return false;
-  if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/reverse') || path.startsWith('/api/parking'))) return true;
+  if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/reverse') || path.startsWith('/api/parking') || path.startsWith('/api/chargers'))) return true;
   if (method === 'GET' && path.startsWith('/api/locations?')) return true;
   return method === 'POST' && (path === '/api/route' || path === '/api/transit');
 }
@@ -969,6 +974,22 @@ test('own places: searched by name, nearest first, and ahead of the public geoco
   assert.equal(rev.body.place.name, 'Jalan Ampang', 'what is here comes from our own streets');
 });
 
+test('EV chargers: the whole list, fetched from OpenStreetMap by the nightly job and kept in the database', async () => {
+  const alice = client();
+  await env.DB.prepare('DELETE FROM chargers').run();
+  const calls = overpassCalls;
+  const empty = await alice('GET', '/api/chargers');
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.body.chargers, []);
+  assert.equal(overpassCalls, calls, 'a request never downloads them');
+  await worker.scheduled({}, env);
+  assert.equal(overpassCalls, calls + 1, 'the nightly job does');
+  const r = await alice('GET', '/api/chargers');
+  assert.deepEqual(r.body.chargers, [['Suria KLCC EV', 101.7119, 3.1579, 'CCS2 · up to 60 kW', 'ev_charging_station']]);
+  await worker.scheduled({}, env);
+  assert.equal(overpassCalls, calls + 1, 'not again within the week');
+});
+
 test('trips by train need a spot, a start and a destination', async () => {
   assert.equal((await client('transit-no-spot')('POST', '/api/transit', { from: [101.6865, 3.134], to: [101.7116, 3.1579] })).status, 503);
   const c = client();
@@ -978,4 +999,10 @@ test('trips by train need a spot, a start and a destination', async () => {
   assert.ok(Array.isArray(res.body.trips));
   assert.equal(typeof res.body.walk, 'number');
   for (const trip of res.body.trips) assert.ok(trip.legs.some((l) => l.mode === 'train') && trip.arrive > trip.depart);
+  // Each ride carries its stations in order with the seconds after boarding, for following the trip on the phone.
+  for (const l of res.body.trips.flatMap((t) => t.legs).filter((x) => x.mode === 'train')) {
+    assert.equal(l.stations.length, l.stops + 1);
+    assert.deepEqual([l.stations[0][0], l.stations.at(-1)[0]], [l.from.name, l.to.name]);
+    assert.ok(l.stations.every(([name, lat, lng, t], i) => typeof name === 'string' && Math.abs(lat) < 90 && Math.abs(lng) < 180 && (!i || t > l.stations[i - 1][3])));
+  }
 });
