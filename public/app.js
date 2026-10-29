@@ -1882,8 +1882,9 @@ function collapsibleSheet(sheet, list, settled) {
   };
   sheet.querySelector('.grabber').onclick = () => set(!peeked());
   sheetGesture(sheet, {
-    // Not from inside a list that's scrolled, so long lists can still be scrolled back up.
-    start: (e) => !(e.target.closest(`#${list.id}`) && list.scrollTop > 0),
+    // Not from inside a list that scrolls: that drag scrolls it (the header still pulls the sheet). Taking it as a
+    // pull let the sheet snap back on release and the list never moved.
+    start: (e) => !(e.target.closest(`#${list.id}`) && (list.scrollTop > 0 || list.scrollHeight > list.clientHeight + 1)),
     move: (dy) => {
       if (!sheet.classList.contains('dragging')) {
         measure();

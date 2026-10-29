@@ -147,7 +147,15 @@ body.driving .maplibregl-ctrl-bottom-right { bottom: calc(92px + var(--trip-keep
 #preview.peek #route-list, #preview.peek #route-status, #preview.peek #dest-addr { display: none; }
 #preview.peek .peek-summary { display: block; }
 #preview.peek .sheet-actions { margin-top: 10px; }
-#preview { touch-action: none; user-select: none; -webkit-user-select: none; }
+#preview { user-select: none; -webkit-user-select: none; }
+/* A drag on the sheet's fixed parts pulls it up and down. Not touch-action on the sheet itself: Safari applies an
+   ancestor's "none" to everything inside, and the list could never scroll. */
+#preview > :not(#route-list), #parking > :not(#parking-list) { touch-action: none; }
+/* The sheet itself doesn't scroll (a drag on it pulls it up and down): the routes do, between the header and Go,
+   which stay in view, as the parking list does. A train trip's steps easily run past the screen. */
+#preview { display: flex; flex-direction: column; overflow: hidden; }
+#preview > * { flex: none; }
+#route-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; }
 /* While dragging, the sheet's height follows the finger: the route list gives way, header and Go stay. */
 #preview.dragging { display: flex; flex-direction: column; overflow: hidden; animation: none; }
 #preview.dragging > * { flex: none; }
@@ -602,7 +610,7 @@ body.driving .toast { top: calc(140px + var(--safe-top)); }
 .w-ic { display: inline-flex; vertical-align: -3px; color: var(--accent-text); }
 
 /* Parking near the destination (trip menu › Parking nearby). */
-#parking { z-index: 16; touch-action: none; user-select: none; -webkit-user-select: none; }
+#parking { z-index: 16; user-select: none; -webkit-user-select: none; }
 #parking .grabber { width: 56px; height: 5px; padding: 8px 0; box-sizing: content-box; background-clip: content-box; cursor: pointer; }
 #parking-list { touch-action: pan-y; max-height: 48vh; overflow: auto; } /* a long list still scrolls */
 #parking.peek #parking-list, #parking.peek #parking-status, #parking.peek #parking-for { display: none; }
