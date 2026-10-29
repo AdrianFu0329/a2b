@@ -26,6 +26,7 @@ import { prefetchRouteTiles } from './offline.js';
 import { DeadReckoner, shouldEstimate, nearTunnel, pointAt, BAD_ACCURACY_M } from './dead-reckoning.js';
 import { matchesWordStarts } from './text.js';
 import { signPlaces } from './signs.js';
+import { mapPlace } from './map-places.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -466,7 +467,6 @@ const POI_STYLE = { fuel: { color: '#e8590c' }, ev: { color: '#0c8599' }, hospit
 const BASE_PLACE_LAYERS = new Set(['poi', 'aerodrome_label']); // the base map's own labelled places
 const TAP_SLOP = 12; // px around a tap, for fingertips
 let basePlaceLayers = []; // this style's layers drawing those, found when it loads
-const KIND_NAMES = { rail: 'Train station', railway: 'Train station', bus: 'Bus stop', bus_station: 'Bus station', bus_stop: 'Bus stop', subway: 'Station', light_rail: 'LRT station', monorail: 'Monorail station', halt: 'Train station', aerodrome: 'Airport', airport: 'Airport' };
 
 // The place drawn under a point on the screen, A2B's own first, or null.
 function placeAt(point) {
@@ -474,11 +474,12 @@ function placeAt(point) {
   const box = [[point.x - TAP_SLOP, point.y - TAP_SLOP], [point.x + TAP_SLOP, point.y + TAP_SLOP]];
   const ours = map.getLayer('pois') && map.queryRenderedFeatures(box, { layers: ['pois'] })[0];
   if (ours) return { name: ours.properties.name, address: ours.properties.address, lng: ours.geometry.coordinates[0], lat: ours.geometry.coordinates[1] };
-  const f = basePlaceLayers.length && map.queryRenderedFeatures(box, { layers: basePlaceLayers }).find((x) => x.geometry.type === 'Point' && (x.properties['name:latin'] || x.properties.name));
-  if (!f) return null;
-  const p = f.properties;
-  const kind = KIND_NAMES[p.subclass] ?? KIND_NAMES[p.class] ?? String(p.subclass || p.class || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
-  return { name: p['name:latin'] || p.name, address: kind, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] };
+  // Stops, stations and car parks count even unnamed (many bus stops and "P" signs are): see map-places.js.
+  for (const f of basePlaceLayers.length ? map.queryRenderedFeatures(box, { layers: basePlaceLayers }) : []) {
+    const place = f.geometry.type === 'Point' && mapPlace(f.properties);
+    if (place) return { ...place, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] };
+  }
+  return null;
 }
 
 function tapPlaceOnMap(e) {
@@ -835,7 +836,7 @@ function estSpeed(prev, lngLat, t) {
 
 function handleFix(fix, first = false) {
   if (mode === 'drive' && !sim) {
-    lastFixAt = Date.now();
+    tunnelFixAt = Date.now();
     lastFixAccuracy = fix.accuracy;
     // A vague fix in a tunnel would drag the car off its route: leave it to the estimate (see tunnelTick).
     if ((fix.accuracy ?? 0) > BAD_ACCURACY_M && (reckoner || tunnelAhead())) return;
@@ -2416,7 +2417,7 @@ function driveTick(fix) {
 // ---------- Tunnel mode ----------
 // When the GPS goes quiet in a tunnel (or anywhere, while moving), keep the car going along the route at its last
 // speed, so the banner, distances and the turn after the tunnel keep coming. See dead-reckoning.js.
-let reckoner = null, tunnelTimer = null, lastFixAt = 0, lastFixAccuracy = null, lastGoodSpeed = 0, gpsBlocked = false;
+let reckoner = null, tunnelTimer = null, tunnelFixAt = 0, lastFixAccuracy = null, lastGoodSpeed = 0, gpsBlocked = false;
 
 function tunnelAhead() {
   return Boolean(nav && live && nearTunnel(live.along, nav.cum, nav.route.tunnels));
@@ -2424,7 +2425,7 @@ function tunnelAhead() {
 
 function startTunnelWatch() {
   stopTunnelWatch();
-  lastFixAt = Date.now();
+  tunnelFixAt = Date.now();
   lastFixAccuracy = null;
   lastGoodSpeed = 0;
   tunnelTimer = setInterval(tunnelTick, 1000);
@@ -2445,7 +2446,7 @@ function tunnelTick() {
   if (mode !== 'drive' || sim || !nav || !live || live.offRoute) return;
   const now = Date.now();
   if (!reckoner) {
-    if (!shouldEstimate({ sinceFixMs: now - lastFixAt, accuracy: lastFixAccuracy, speed: lastGoodSpeed, tunnel: tunnelAhead() })) return;
+    if (!shouldEstimate({ sinceFixMs: now - tunnelFixAt, accuracy: lastFixAccuracy, speed: lastGoodSpeed, tunnel: tunnelAhead() })) return;
     reckoner = new DeadReckoner({ along: live.along, speed: lastGoodSpeed, now: now - 1000 });
     $('dr-chip').classList.remove('hidden');
   }
