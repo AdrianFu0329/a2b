@@ -37,6 +37,12 @@ Existing provider requests may finish after invalidation; their results cannot a
 branch cancels pending debounce work without requiring the separate route request/abort helpers. Local file
 promises are shared and cached; invalidating one search does not cancel another consumer's file load.
 
+**M2-D remains partial.** A provider that never settles can still keep `Promise.allSettled` waiting, and a
+cached pending local-file request can remain pending. This patch isolates completed failures; it does not
+provide bounded deadlines or progressive results for stalled sources. Adding explicit search/provider
+deadlines and integrating #11's progressive path are deferred. M2-B's optional API timeout does not apply
+automatically to these search calls.
+
 ## Validation
 
 - `npm test`: 199 passing tests, no failures (20 new regression cases).
@@ -50,6 +56,18 @@ promises are shared and cached; invalidating one search does not cancel another 
   partial result, explicit selection, guest Recent, deduplicated complete Enter, genuine empty state and
   portrait/landscape layout. No browser exceptions; all external requests were blocked. Map boot was omitted.
 - `git diff --check` passed. No real places database or production API was queried for these tests.
+
+## Synthetic before and after
+
+Both screenshots use Chrome at 375 × 812 with the same local fixture: search **Cafe**, a server response of
+HTTP 503 (`Synthetic provider unavailable`), and one successful local result (`Cafe`, `Synthetic address`).
+The harness executes the actual search functions, event handlers, modules, HTML and styles from the stated
+revision. App/map boot is omitted and external requests are blocked; these are component captures, not a live-site test.
+
+| Before: upstream `134045a` | After: `5a498c9` |
+| --- | --- |
+| Only the server error is shown; the successful local result is lost. | The local result remains selectable with a limited-results notice. |
+| ![Before: synthetic provider error hides the local Cafe result](../images/search-lifecycle/before-provider-failure.png) | ![After: synthetic local Cafe result remains with a limited-results notice](../images/search-lifecycle/after-provider-failure.png) |
 
 ## Open PR integration notes
 
@@ -68,4 +86,4 @@ Read before implementation; neither PR below is merged or cherry-picked into thi
 - [#36](https://github.com/thaqif0709/a2b/pull/36) is already on the base. Immediate keyboard focus, loading
   placeholders and guest history are preserved. The broader train and route work in that PR is untouched.
 
-This change is ready for owner review locally. No PR, push, CLA assent, merge or deployment was performed.
+Submitted for owner review; no CLA assent, merge or deployment.
