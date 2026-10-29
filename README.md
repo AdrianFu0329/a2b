@@ -104,12 +104,34 @@ The database tables are created on the first request (or run `npm run db:migrate
 `wrangler.toml`:
 
 - `MAX_ACTIVE` and `MAX_GUESTS`: how many devices can use the app at once, and how many of those can be guests.
-- `TESTER_EMAILS` (a secret: `npx wrangler secret put TESTER_EMAILS`): accounts that get the testing tools and the
-  usage dashboard.
+- `TESTER_USER_IDS` (a secret): comma-separated account IDs for demo driving and the capacity-limit bypass.
+  Testers cannot read the usage dashboard or private feedback.
+- `OWNER_USER_IDS` (a secret): comma-separated account IDs for the usage dashboard and private feedback inbox,
+  including closing and reopening feedback. Owners can also use the testing tools.
 - `OCM_KEY` (a secret, optional): an [Open Charge Map](https://openchargemap.org/site/develop/api) API key, free, for
   more EV chargers than OpenStreetMap has.
 
 To use your own domain, add it under *Workers & Pages → a2b → Settings → Domains & Routes*.
+
+**Provision trusted accounts after signup**
+
+Signup does not verify email ownership. `TESTER_EMAILS` is no longer used, and there is no automatic migration
+from email addresses to privileged accounts. With neither ID secret configured, everyone has ordinary access.
+
+1. Have the intended person create an ordinary account on the correct deployment and sign in. In their browser's
+   developer tools, open the response to `GET /api/me` and obtain `user.id` (not the session ID or cookie).
+2. Confirm that existing account and its ID with the intended person through an already trusted channel. An
+   email address, display name or unverified request alone is not proof. Never pre-authorize an ID for an account
+   that has not been created. IDs belong to one database; verify them again after a database replacement.
+3. Only the deployment maintainer sets `TESTER_USER_IDS` or `OWNER_USER_IDS` with `npx wrangler secret put
+   TESTER_USER_IDS` or `npx wrangler secret put OWNER_USER_IDS`. Enter only the confirmed IDs, separated by commas,
+   at the prompt. Keep the values out of commits, logs and PRs. Retire the unused `TESTER_EMAILS` secret separately.
+4. Reload the app and verify the intended access: testers see **Settings › Testing**, owners additionally see
+   **Settings › Administration**. Remove an ID from its secret to revoke access on the next API request; reload
+   any open Settings screen to refresh its menu. Deleted accounts recreated with the same email need fresh approval.
+
+For local development only, use these same names in the ignored `.dev.vars` file with IDs from your local database,
+then restart `npm run dev`. Do not copy production account IDs or credentials into a local fixture.
 
 </details>
 
@@ -202,7 +224,8 @@ test/                   node --test: the navigation engine and the whole API on 
 | Search and routes | `GET /api/search` · `GET /api/reverse` · `POST /api/route` · `GET /api/parking` |
 | Reports | `GET`, `POST /api/reports` · `POST /api/reports/:id/vote` · `GET /api/leaderboard` |
 | Shared drives | `POST /api/trips` · `GET`, `PATCH /api/trips/:token` |
-| App | `GET /api/health` · `POST /api/presence` · `GET /api/stats` (testers only) |
+| App | `GET /api/health` · `POST /api/presence` · `GET /api/stats` (owners only) |
+| Feedback | `POST /api/feedback` (any driver) · `GET /api/feedback`, `PATCH`, `DELETE /api/feedback/:id` (owners only) |
 
 **Security**
 
@@ -210,7 +233,8 @@ test/                   node --test: the navigation engine and the whole API on 
 - Sessions are random tokens in HttpOnly, SameSite=Lax cookies; only their hash is stored.
 - Writes must be JSON, which blocks cross-site form posts, and a strict Content-Security-Policy is set in
   `public/_headers`.
-- Secrets (the Cloudflare token, tester emails) live in Cloudflare, never in the code.
+- Trusted roles are granted by existing account ID, never by an unverified email or client-supplied role flag.
+- Secrets (the Cloudflare token and trusted account IDs) live in Cloudflare, never in the code.
 - A daily job clears expired sessions, old shared drives and old usage numbers.
 
 </details>

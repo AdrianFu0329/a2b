@@ -29,8 +29,10 @@ go easy on them (no load tests or scripted bulk requests).
 
 Optional extras:
 
-- **Demo drive** (fake GPS along a route) is for tester accounts. Create `.dev.vars` (it's git-ignored) with
-  `TESTER_EMAILS=you@example.com`, then sign up locally with that email. It appears under Settings › Testing.
+- **Demo drive** (fake GPS along a route) is for trusted tester accounts. Sign up locally, obtain your `user.id`
+  from the signed-in `GET /api/me` response, and put that existing ID in `TESTER_USER_IDS` in `.dev.vars` (it's
+  git-ignored). Restart the local dev server and reload the app; it appears under Settings › Testing. This role
+  cannot read private feedback or usage. See the README's trusted-account provisioning steps for owner access.
 - **Shop search data** and the **roads under construction** list are built from Overture Maps:
   `pip install duckdb && npm run places && npm run construction`. The shop files are big and aren't kept in git.
 
