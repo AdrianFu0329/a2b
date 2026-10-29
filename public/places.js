@@ -138,6 +138,7 @@ export const TYPES = {
   hospital: { label: 'Hospitals', words: ['hospitals?', 'medical cent(?:re|er)s?', 'emergency rooms?', 'emergency', 'kecemasan'] },
   clinic: { label: 'Clinics', words: ['klinik kesihatan', 'clinics?', 'klinik', 'poliklinik', 'polyclinics?', 'doctors?', 'gps?'] },
   police: { label: 'Police stations', words: ['police stations?', 'balai polis', 'ibu pejabat polis', 'police', 'polis', 'ipd'] },
+  ev: { label: 'EV chargers', words: ['ev charg(?:ers?|ing(?: stations?)?)', 'electric (?:car |vehicle )?charg(?:ers?|ing)', 'charging stations?', 'chargers?', 'pengecas(?: ev)?', 'stesen (?:cas|pengecas)', 'cas ev', 'ev'] },
   convenience: { label: 'Convenience stores', words: ['convenience stores?', 'convenience shops?', 'kedai serbaneka', 'kedai runcit', 'convenience', 'serbaneka', 'mini ?marts?'] },
 };
 const TYPE_RES = Object.entries(TYPES).map(([type, t]) => [type, new RegExp(`\\b(?:${t.words.join('|')})\\b`, 'gi')]);
@@ -155,8 +156,34 @@ export function typeQuery(q) {
   return null;
 }
 
-// Every listed place of a kind in the areas around `at`, as [name, lng, lat, address, category] rows.
+// Kinds of place with a list from the server too (EV chargers: OpenStreetMap and Open Charge Map, src/lib/chargers.js),
+// set by app.js: type -> () => Promise of rows like the files'. Fetched once; a failure is asked again next time.
+const sources = new Map();
+const fetched = new Map();
+export function addTypeSource(type, load) {
+  sources.set(type, load);
+  fetched.delete(type);
+}
+function sourceRows(type) {
+  if (!sources.has(type)) return Promise.resolve([]);
+  if (!fetched.has(type)) {
+    fetched.set(type, sources.get(type)().catch(() => {
+      fetched.delete(type);
+      return [];
+    }));
+  }
+  return fetched.get(type);
+}
+
+// Every listed place of a kind in the areas around `at`, as [name, lng, lat, address, category] rows: the server's
+// list first where there is one, and a file's place the server also lists (within 50 m) once.
 async function typeRows(type, at) {
+  const [server, files] = await Promise.all([sourceRows(type), fileRows(type, at)]);
+  if (!server.length) return files;
+  return [...server, ...files.filter(([, lng, lat]) => !server.some(([, x, y]) => Math.abs(y - lat) < 0.001 && distance([x, y], [lng, lat]) < 50))];
+}
+
+async function fileRows(type, at) {
   const idx = await loadIndex();
   if (!idx) return [];
   const v = encodeURIComponent(idx.release ?? '');
