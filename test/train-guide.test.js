@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  TrainGuide, trackOf, snap, pointAt, stationAlongs, alongAtTime, timeAtAlong, nextStop, shouldAlert, alighted, boarded, markerFor, alreadyOn, DWELL_S, OFF_MS,
+  TrainGuide, trackOf, snap, pointAt, stationAlongs, alongAtTime, timeAtAlong, nextStop, shouldAlert, alighted, boarded, markerFor, alreadyOn, DWELL_S, OFF_MS, HERE_TRUST_MS,
 } from '../public/train-guide.js';
 import { planTransit, feeds } from '../src/lib/transit.js';
 
@@ -178,6 +178,7 @@ test('off the trip: on a walk heading away, or off the line on a ride', () => {
   offLine(310_000);
   const v = offLine(310_000 + OFF_MS);
   assert.ok(v.off && v.pos[0] === 101.71, 'off, and shown where GPS says');
+  assert.ok(!v.estimating, 'good GPS off the line is not "no GPS"');
   // Underground with no GPS is never off.
   assert.ok(!r.update({ now: T0 + 400_000, fix: null }).view.off);
 });
@@ -215,6 +216,17 @@ test('"I\'m already here": at the station, on the train, at a stop', () => {
   assert.equal(g.hereText(), 'I’ve arrived');
   assert.deepEqual(g.here({ now: T0 + 310_000 }).map((e) => e.type), ['arrived']);
   assert.ok(g.done);
+});
+
+test('after "I\'m already here", GPS that disagrees doesn\'t re-plan straight away', () => {
+  const g = new TrainGuide(oneRide(), { now: T0 });
+  g.update({ now: T0, fix: null });
+  g.here({ now: T0 }); // at A, though GPS (wrong, indoors) puts you 1 km away
+  const far = (t) => g.update({ now: T0 + t, fix: { lngLat: [101.71, lat(0)], speed: 0, accuracy: 30 } }).view;
+  far(1000);
+  assert.ok(!far(1000 + OFF_MS).off, 'you said where you are');
+  far(HERE_TRUST_MS + 1000);
+  assert.ok(far(HERE_TRUST_MS + 1000 + OFF_MS).off, 'but not for ever');
 });
 
 test('the first update says how the trip starts', () => {

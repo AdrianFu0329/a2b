@@ -27,6 +27,7 @@ export const OFF_WALK_M = 120; // this far off the walk, and getting further fro
 export const LEFT_STATION_M = 400; // waiting for a train this far from the station: you've left it
 export const OFF_TRAIN_M = 400; // on a ride this far from the line, with good GPS: not on this train
 export const OFF_MS = 15_000; // off for this long, not just a wobble
+export const HERE_TRUST_MS = 120_000; // after "I'm already here", trust you over GPS this long (it's often wrong indoors)
 
 // ---------- Geometry along a track ----------
 export function trackOf(coords) {
@@ -252,7 +253,7 @@ export class TrainGuide {
 
   // Off the trip for a while (not just a GPS wobble).
   offFor(now, off) {
-    if (!off) this.offSince = null;
+    if (!off || now - (this.hereAt ?? -Infinity) < HERE_TRUST_MS) this.offSince = null;
     else this.offSince ??= now;
     return this.offSince != null && now - this.offSince >= OFF_MS;
   }
@@ -263,6 +264,7 @@ export class TrainGuide {
     const events = [];
     if (this.done) return events;
     this.offSince = null;
+    this.hereAt = now;
     const leg = this.leg;
     if (leg.mode === 'walk') {
       this.advance(now, events);
@@ -369,7 +371,8 @@ export class TrainGuide {
     } else if (!this.approaching) {
       const sinceBoard = (now - this.boardedAt) / 1000;
       this.along = Math.max(this.along, alongAtTime(this.times, this.alongs, sinceBoard));
-      estimating = now - this.lastGood > LOST_MS;
+      // "No GPS" only when there's no good fix: one that's good but off the line isn't underground.
+      estimating = !s && now - this.lastGood > LOST_MS;
     }
     const off = this.offFor(now, wayOff);
     const sinceBoard = (now - this.boardedAt) / 1000;
