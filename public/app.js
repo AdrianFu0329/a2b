@@ -27,6 +27,7 @@ import { DeadReckoner, shouldEstimate, nearTunnel, pointAt, BAD_ACCURACY_M } fro
 import { matchesWordStarts } from './text.js';
 import { signPlaces } from './signs.js';
 import { mapPlace } from './map-places.js';
+import { initSuggest, openSuggest, closeSuggest, suggesting, syncDriverPlaces } from './suggest.js';
 
 // Which map look to use for day or night (see map-themes.js). 'mapTheme' in local storage overrides it.
 function mapThemeId(t = themeNow) {
@@ -242,6 +243,8 @@ async function boot() {
   carMarker = new maplibregl.Marker({ element: el('div', 'car', CAR), rotationAlignment: 'map', pitchAlignment: 'map' });
 
   initPanels({ onUserChanged, applyTheme, openSearchFor, openPreview, refreshSound, setupVehicle, drawPois, setSimSpeed: (v) => sim && (sim.speedFactor = v) });
+  initSuggest({ map, openAuth, setBrowseHidden: (hidden) => $('browse-ui').classList.toggle('hidden', hidden) });
+  syncDriverPlaces();
   wireUi();
   setupSheetDrag();
   refreshSound();
@@ -483,6 +486,7 @@ function placeAt(point) {
 }
 
 function tapPlaceOnMap(e) {
+  if (suggesting()) return; // the map is moving under the suggestion's pin
   const place = placeAt(e.point);
   if (!place) return;
   stopFollowing();
@@ -946,7 +950,7 @@ function setupLongPress() {
   map.on('touchmove', (e) => start && Math.hypot(e.point.x - start.x, e.point.y - start.y) > 10 && cancel());
   map.on('touchend', cancel);
   map.on('touchcancel', cancel);
-  map.on('contextmenu', (e) => !['drive', 'ride', 'watch'].includes(mode) && showContextMenu(e.lngLat, e.point));
+  map.on('contextmenu', (e) => !['drive', 'ride', 'watch'].includes(mode) && !suggesting() && showContextMenu(e.lngLat, e.point));
   map.on('click', hideContextMenu);
   map.on('click', routeAtTap);
   map.on('click', () => tripSheet.set(false)); // a tap on the map closes the trip menu
@@ -990,6 +994,12 @@ function hideContextMenu() {
 // ================= UI wiring =================
 function wireUi() {
   $('btn-where').onclick = () => openSearchFor(null);
+  $('btn-wrong-place').onclick = () => {
+    if (!state.user) return openAuth('suggest');
+    const place = dest;
+    closeScreen('preview');
+    openSuggest({ kind: 'fix', place, onClose: (cancelled) => cancelled && openPreview(place) });
+  };
   $('btn-menu').onclick = openMenu;
   $('btn-recenter').onclick = recenter;
   $('btn-recenter-drive').onclick = recenter;
@@ -1122,9 +1132,10 @@ function closeScreen(id) {
   if (id === 'parking') closeParking();
   if (id === 'preview') backToBrowse();
   if (id === 'report-sheet') reportDraft = null;
+  if (id === 'suggest') closeSuggest();
 }
 
-const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'resume', 'here-confirm', 'preview'];
+const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'resume', 'here-confirm', 'suggest', 'preview'];
 
 // Closes the top-most screen; returns false when nothing was open.
 function closeTop() {
@@ -1161,6 +1172,7 @@ let searchSeq = 0;
 
 function openSearchFor(target) {
   armBack();
+  syncDriverPlaces(); // places drivers added lately (public/suggest.js)
   searchTarget = target;
   $('search').classList.remove('hidden');
   $('search-input').value = '';
@@ -1312,7 +1324,11 @@ async function runSearch(q, enter = false) {
 
 function showResults(q, near, places, note, overture, enter) {
   $('search-home').classList.add('hidden');
-  if (!places.length) return searchMessage(note || `No results for "${q}".`);
+  if (!places.length) {
+    searchMessage(note || `No results for "${q}".`);
+    if (!searchTarget) $('search-status').append(addMissingButton(q, `Add “${q}” to the map`, 'btn primary small add-missing'));
+    return;
+  }
   const ul = $('results');
   ul.classList.remove('hidden');
   ul.removeAttribute('aria-busy');
@@ -1328,7 +1344,23 @@ function showResults(q, near, places, note, overture, enter) {
     ul.append(li);
   }
   if (overture) ul.append(el('li', 'search-note', esc(places.some((p) => p.type === 'ev') ? `${placesAttribution} · ${CHARGERS_ATTRIBUTION}` : placesAttribution)));
+  if (!searchTarget) {
+    const li = el('li', 'add-missing-row');
+    li.append(addMissingButton(q, 'Can’t find it? Add a missing place', 'btn link'));
+    ul.append(li);
+  }
   if (enter && places.length === 1) pickPlace(places[0]);
+}
+
+// Suggest a place search didn't find (public/suggest.js), with what was typed as its name.
+function addMissingButton(q, label, cls) {
+  const b = el('button', cls, esc(label));
+  b.onclick = () => {
+    if (!state.user) return openAuth('suggest');
+    closeScreen('search');
+    openSuggest({ kind: 'add', name: q.trim() });
+  };
+  return b;
 }
 
 // A search naming a kind of place ("petrol", "hospital", "balai polis", "convenience store"): its nearest
@@ -1451,6 +1483,8 @@ async function openPreview(place) {
   $('peek-summary').textContent = '';
   $('dest-name').textContent = place.name;
   $('dest-addr').textContent = place.address || '';
+  // A wrong place can be fixed; a dropped pin or typed coordinates are just a spot.
+  $('btn-wrong-place').classList.toggle('hidden', ['Dropped pin', 'Coordinates'].includes(place.name));
   // Placeholder cards the shape of real ones, so the sheet doesn't jump when the routes arrive.
   renderTravel();
   $('route-list').innerHTML = '<div class="route-opt skeleton" aria-hidden="true"><i></i><i></i></div>'.repeat(2);
