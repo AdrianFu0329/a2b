@@ -14,6 +14,7 @@ import { loadCameras, camerasAlong } from './lib/cameras.js';
 import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { entrancesNear, pickEntrance, arrivalStreet } from './lib/entrances.js';
+import { refreshChargers, allChargers } from './lib/chargers.js';
 import { reportsRepo } from './lib/reports.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
@@ -58,6 +59,7 @@ export default {
       env.DB.prepare('DELETE FROM probe_devices WHERE updated_at < ?').bind(now - PROBE_RETENTION_MS),
       env.DB.prepare('DELETE FROM probe_limits WHERE last_at < ?').bind(now - PROBE_RETENTION_MS),
     ]);
+    await refreshChargers(env, { now }).catch((e) => console.warn('chargers', e.message)); // weekly, per source
   },
 };
 
@@ -119,16 +121,19 @@ async function route(request, env, url) {
   if (path === '/api/feedback' && method === 'GET') {
     if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
     const rows = await db
-      .prepare('SELECT f.id, f.message, f.app, f.ua, f.created_at, u.name, u.email FROM feedback f LEFT JOIN users u ON u.id = f.user_id ORDER BY f.created_at DESC LIMIT 200')
+      .prepare('SELECT f.id, f.message, f.app, f.ua, f.created_at, f.closed_at, u.name, u.email FROM feedback f LEFT JOIN users u ON u.id = f.user_id ORDER BY f.closed_at IS NOT NULL, f.created_at DESC LIMIT 200')
       .all();
     return json({ feedback: rows.results });
   }
 
-  const doneFeedback = path.match(/^\/api\/feedback\/(\d+)$/);
-  if (doneFeedback && method === 'DELETE') {
+  // Close a piece of feedback (handled) or reopen it: { closed: true | false }. Feedback is never deleted here, so
+  // nothing is lost to a stray tap. DELETE, which older copies of the app send for "Done", closes it too.
+  const oneFeedback = path.match(/^\/api\/feedback\/(\d+)$/);
+  if (oneFeedback && (method === 'PATCH' || method === 'DELETE')) {
     if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
-    await db.prepare('DELETE FROM feedback WHERE id = ?').bind(Number(doneFeedback[1])).run();
-    return json({ ok: true });
+    const closed = method === 'DELETE' || (await readJson(request)).closed !== false;
+    await db.prepare('UPDATE feedback SET closed_at = ? WHERE id = ?').bind(closed ? Date.now() : null, Number(oneFeedback[1])).run();
+    return json({ ok: true, closed });
   }
 
   // ---------- Accounts ----------
@@ -382,6 +387,16 @@ async function route(request, env, url) {
     return res;
   }
 
+  // EV chargers (src/lib/chargers.js): all of them, a few hundred small rows, for the phone to search and draw. Only
+  // the nightly job fills the table, never a request: a whole-country Overpass download takes up to a minute, and
+  // drivers asking at once would each start one. Until the first run the list is empty (the phone still has
+  // Overture's chargers), and phones ask again sooner.
+  if (path === '/api/chargers' && method === 'GET') {
+    await needSpot();
+    const chargers = await allChargers(db);
+    return json({ chargers }, 200, { 'cache-control': `private, max-age=${chargers.length ? 3600 : 600}` });
+  }
+
   if (path === '/api/reverse' && method === 'GET') {
     await needSpot();
     const lat = num(url, 'lat'), lng = num(url, 'lng');
@@ -396,7 +411,10 @@ async function route(request, env, url) {
     const from = lngLat(body.from), to = lngLat(body.to);
     if (!from || !to) throw httpError('A trip needs a start and a destination.', 400);
     const at = Number.isFinite(body.at) && Math.abs(body.at - Date.now()) < 7 * 86400_000 ? body.at : Date.now();
-    const plan = await withRealWalks(env, planTransit(from, to, at));
+    // Moving along a line (a phone on a train): the trip starts on that train.
+    const m = body.moving;
+    const moving = m && Number.isFinite(m.speed) && Number.isFinite(m.heading) ? { speed: m.speed, heading: m.heading } : null;
+    const plan = await withRealWalks(env, planTransit(from, to, at, { moving }));
     await count('routes'); // with driving and walking routes
     return json(plan);
   }
@@ -465,6 +483,7 @@ async function route(request, env, url) {
         const a = await fetchRouteAttributes(env, r.shapes, r.coords).catch(() => null);
         r.limits = a?.limits ?? null;
         r.tolls = (a?.tolls ?? []).map((at) => ({ at }));
+        r.tunnels = a?.tunnels ?? [];
       }),
       // Live traffic, when TomTom is set up: the route's time with today's traffic, and where the jams are.
       ...routes.map(async (r) => {
