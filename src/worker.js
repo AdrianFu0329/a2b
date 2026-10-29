@@ -26,6 +26,7 @@ const LOGIN_MAX_FAILURES = 8; // per address: wrong passwords for one account st
 // were dropped: behind the Pages proxy every client shares one IP, so they would lock out everyone at once)
 const RECENTS_KEPT = 20;
 const FULL_MESSAGE = 'A2B is full right now. You will be let in when a spot opens.';
+const UNEXPECTED_MESSAGE = 'Something went wrong on our side. Please try again in a minute.';
 const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean', traffic_probe: 'boolean', map_pois: 'boolean' };
 
 export default {
@@ -39,7 +40,9 @@ export default {
       return await route(request, env, url);
     } catch (e) {
       if (!e.status || e.status >= 500) console.error(e);
-      return json({ error: e.message || String(e), code: e.code }, e.status && e.status < 600 ? e.status : 500);
+      // Only messages written for drivers (httpError's, which carry a status) reach the app. Anything else, such as
+      // a database error, is in the log above and shows as a plain apology.
+      return json({ error: e.status ? e.message : UNEXPECTED_MESSAGE, code: e.code }, e.status && e.status < 600 ? e.status : 500);
     }
   },
 
