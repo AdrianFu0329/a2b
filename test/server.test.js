@@ -944,9 +944,14 @@ async function loadLocations(rows) {
   await db.prepare("INSERT INTO locations_fts (locations_fts) VALUES ('rebuild')").run();
 }
 
-test('own place search matches word prefixes, ignoring accents and punctuation', () => {
-  assert.equal(ftsQuery("Nando's Bangsar"), '"nando"* "s"* "bangsar"*');
-  assert.equal(ftsQuery('Café  Kopi'), '"cafe"* "kopi"*');
+test('own place search matches distinctive word prefixes, ignoring accents, punctuation and common words', () => {
+  assert.equal(ftsQuery("Nando's Bangsar"), '"nando"* "s" "bangsar"*', 'a word under 3 letters as a whole word');
+  assert.equal(ftsQuery('Kopi  Café Ãnggun'), '"kopi"* "cafe" "anggun"*', 'accents off; "cafe", in too many names, as a whole word');
+  assert.equal(ftsQuery('Jalan Ampang'), '"jalan" "ampang"*');
+  assert.equal(ftsQuery('kfc n'), '"kfc"*', 'a half-typed last word only narrows');
+  assert.equal(ftsQuery('e tech it'), '"e" "tech"*');
+  assert.equal(ftsQuery('jalan'), null);
+  assert.equal(ftsQuery('kuala lumpur'), null);
   assert.equal(ftsQuery(' -- '), null);
 });
 
@@ -965,6 +970,16 @@ test('own places: searched by name, nearest first, and ahead of the public geoco
     ['Mid Valley Starbucks', 'Mid Valley City', 'cafe', 'place', 3.118, 101.677, 'overture'],
     ['Mid Valley Megamall', 'Mid Valley City', 'shopping_mall', 'landmark', 3.1181, 101.6771, 'overture'],
   ]);
+  await loadLocations([
+    ['TRX City Park', 'Level 3, The Exchange TRX', 'park', 'landmark', 3.1425, 101.7190, 'osm+foursquare'],
+    ['TRX City Police Station', '', 'police', 'place', 3.1418, 101.7175, 'osm'],
+    ['The Exchange TRX', 'Persiaran TRX, 55188 Kuala Lumpur', 'mall', 'landmark', 3.1420, 101.7185, 'osm+foursquare'],
+  ]);
+  const trx = await client()('GET', '/api/locations?q=trx&lat=3.16&lng=101.70');
+  assert.equal(trx.body.places[0].name, 'The Exchange TRX', 'the mall before a park and a police station named TRX…');
+  await loadLocations([['Trx', 'Kuala Lumpur', 'shopping_mall', 'place', 3.1319, 101.6841, 'foursquare']]);
+  const near = await client()('GET', '/api/locations?q=trx&lat=3.134&lng=101.686');
+  assert.equal(near.body.places[0].name, 'The Exchange TRX', '…and before a check-in page named "Trx" next to you');
   const mall = await client()('GET', '/api/locations?q=mid%20valley&lat=3.16&lng=101.70');
   assert.equal(mall.body.places[0].name, 'Mid Valley Megamall', 'a landmark ahead of a shop named after it');
   const s = await client()('GET', '/api/search?q=nasi%20lemak&lat=3.16&lng=101.70');
@@ -972,6 +987,16 @@ test('own places: searched by name, nearest first, and ahead of the public geoco
   assert.ok(s.body.places.some((p) => p.name === 'Alexanderplatz'), 'topped up from the public geocoder');
   const rev = await client()('GET', '/api/reverse?lat=3.1602&lng=101.7102');
   assert.equal(rev.body.place.name, 'Jalan Ampang', 'what is here comes from our own streets');
+  // Common and short words: they narrow the other words' matches, and alone they look around the person.
+  await loadLocations([['Jalan Ampang Hilir', 'Kuala Lumpur', 'street', 'street', 3.152, 101.735, 'osm']]);
+  const both = await client()('GET', '/api/locations?q=jalan%20ampang&lat=3.16&lng=101.70');
+  assert.deepEqual(both.body.places.map((p) => p.name), ['Jalan Ampang', 'Jalan Ampang Hilir']);
+  const alone = await client()('GET', '/api/locations?q=jalan%20am&lat=3.16&lng=101.70');
+  assert.deepEqual(alone.body.places.map((p) => p.name), ['Jalan Ampang', 'Jalan Ampang Hilir'], 'names starting so, around the person');
+  const far = await client()('GET', '/api/locations?q=jalan%20am&lat=1.46&lng=103.76');
+  assert.deepEqual(far.body.places, [], 'not 300 km away');
+  const narrowed = await client()('GET', '/api/locations?q=nasi%20lemak%20jb&lat=3.16&lng=101.70');
+  assert.deepEqual(narrowed.body.places.map((p) => p.address), [], '"jb" must match too');
 });
 
 test('EV chargers: the whole list, fetched from OpenStreetMap by the nightly job and kept in the database', async () => {
