@@ -32,6 +32,7 @@ let tomtomDown = false;
 let cameras = null; // the built speed camera list, as in public/cameras.json
 let schools = null; // the built school list, as in public/schools.json
 let tomtomCalls = 0;
+let traceCalls = 0; // trace_attributes requests (speed limits and tolls)
 
 function fakeTrip(coords, time) {
   return {
@@ -80,6 +81,7 @@ globalThis.fetch = async (url, init = {}) => {
     return Response.json({ trip: fakeTrip(LINE, 120), alternates: [{ trip: fakeTrip(LINE.slice(0, 15), 90) }] });
   }
   if (u.includes('/trace_attributes')) {
+    traceCalls++;
     // A tunnel from shape index 12 to 15, in two edges (as Valhalla splits a long one).
     return Response.json({ edges: [{ begin_shape_index: 0, speed_limit: 50 }, { begin_shape_index: 5, end_shape_index: 10, speed_limit: 50, end_node: { type: 'toll_booth' } }, { begin_shape_index: 10, end_shape_index: 12, speed_limit: 30 }, { begin_shape_index: 12, end_shape_index: 13, speed_limit: 30, tunnel: true }, { begin_shape_index: 13, end_shape_index: 15, speed_limit: 30, tunnel: true }, { begin_shape_index: 15 }] });
   }
@@ -365,6 +367,50 @@ test('routes avoid reported closures and account for reported traffic', async ()
   assert.deepEqual(full.limits, [[0, 50], [10, 30], [15, null]]);
   assert.deepEqual(full.tunnels, [[12, 15]], 'a tunnel in two edges is one stretch');
   assert.equal(full.shapes, undefined, 'encoded shapes stay on the server');
+});
+
+test('a faster-route check ends after one routing request when every route is the way the car is going', async () => {
+  env.TOMTOM_KEY = 'test-key';
+  try {
+    [tomtomCalls, traceCalls] = [0, 0];
+    // Driving LINE: Valhalla's routes (LINE and the first part of it) are both the same way.
+    const same = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], check: { rest: encode(LINE, 5), left: 2000 } });
+    assert.equal(same.status, 200);
+    assert.deepEqual(same.body.routes, []);
+    assert.deepEqual([tomtomCalls, traceCalls], [0, 0], 'no traffic, speed limits or tolls looked up');
+
+    // Driving the parallel street: both routes are another way. Traffic for both; the extras only for the one
+    // enough quicker than the 450 s left (TomTom: 100 s, against 600 s for the full one).
+    [tomtomCalls, traceCalls] = [0, 0];
+    const other = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], check: { rest: encode(DETOUR, 5), left: 450 } });
+    assert.equal(other.body.routes.length, 2);
+    assert.equal(tomtomCalls, 2);
+    assert.equal(traceCalls, 1);
+    const quick = other.body.routes.find((x) => x.coords.length === 15), full = other.body.routes.find((x) => x.coords.length === 21);
+    assert.ok(Array.isArray(quick.tolls) && Array.isArray(quick.cameras), 'ready to drive if taken');
+    assert.equal(full.tolls, undefined);
+    assert.equal(quick.shapes, undefined, 'encoded shapes stay on the server');
+
+    // Driving the first half of LINE and on: the short route is the same way, the full one another. The way the car
+    // is going is only looked up when the other is quick enough to offer.
+    const half = encode(LINE.slice(0, 12), 5);
+    [tomtomCalls, traceCalls] = [0, 0];
+    const slow = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], check: { rest: half, left: 450 } });
+    assert.deepEqual(slow.body.routes, [], 'the other way (600 s) is no quicker');
+    assert.deepEqual([tomtomCalls, traceCalls], [1, 0], 'traffic for the other way only');
+    [tomtomCalls, traceCalls] = [0, 0];
+    const quicker = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], check: { rest: half, left: 2000 } });
+    assert.equal(quicker.body.routes.length, 2);
+    assert.deepEqual([tomtomCalls, traceCalls], [2, 1], 'then the way the car is going too, and the extras for the offer');
+
+    // A check that doesn't make sense is an ordinary route request.
+    [tomtomCalls, traceCalls] = [0, 0];
+    const plain = await alice('POST', '/api/route', { from: [13.4, 52.5], to: [13.4, 52.509], check: { rest: 'x', left: 0 } });
+    assert.equal(plain.body.routes.length, 2);
+    assert.equal(traceCalls, 2);
+  } finally {
+    delete env.TOMTOM_KEY;
+  }
 });
 
 test('walking routes skip closures, reported traffic and the driving extras', async () => {
