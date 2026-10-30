@@ -81,8 +81,8 @@ export async function searchNearby(q, near) {
     const km = distance(near, [r.lng, r.lat]) / 1000;
     if (km <= RADIUS_KM) found.push({ name: r.name, address: r.address ?? '', lat: r.lat, lng: r.lng, category: r.category || 'place', km, inName: matchesWordStarts(r.name, q), source: 'driver' });
   }
-  // Places matching on their name alone first, then nearest.
-  const best = () => found.sort((a, b) => b.inName - a.inName || a.km - b.km).slice(0, MAX_RESULTS);
+  // The venue the query names first (see markVenues), then places matching on their name alone, then nearest.
+  const best = () => found.sort((a, b) => (b.mentions ?? 0) - (a.mentions ?? 0) || b.inName - a.inName || a.km - b.km).slice(0, MAX_RESULTS);
   const idx = await loadIndex();
   if (!idx) return best();
   const v = encodeURIComponent(idx.release ?? '');
@@ -110,7 +110,24 @@ export async function searchNearby(q, near) {
       if (!isHidden(p)) found.push(p);
     }
   }
+  markVenues(found);
   return best();
+}
+
+// A mall (or stadium) whose name the shops around it carry: "trx" finds 70 places, most of them "... The
+// Exchange TRX", and the one they're all in should come first, not whichever shop is nearest. Overture has copies
+// of big places pinned in the wrong spot too ("The Exchange TRX" 4 km off), so only shops within VENUE_M count.
+const VENUES = new Set(['shopping_mall', 'department_store', 'stadium_arena']);
+const VENUE_M = 1000;
+const MIN_MENTIONS = 3;
+function markVenues(found) {
+  const text = (p) => ` ${words(`${p.name} ${p.address}`).join(' ')} `;
+  for (const v of found) {
+    if (!VENUES.has(v.category) || !v.inName) continue;
+    const name = ` ${words(v.name).join(' ')} `;
+    const mentions = found.filter((p) => p !== v && Math.abs(p.lat - v.lat) < 0.01 && text(p).includes(name) && distance([v.lng, v.lat], [p.lng, p.lat]) <= VENUE_M).length;
+    if (mentions >= MIN_MENTIONS) Object.assign(v, { landmark: 'place', mentions });
+  }
 }
 
 // Puts nearby Overture places together with the other search's results, dropping duplicates (same name
@@ -129,8 +146,11 @@ export function mergeResults(server, local, q, near) {
   server = server.filter((p) => !isHidden(p)); // a place a driver's fix moved or took out
   const dup = (a, b) => words(a.name).join(' ') === words(b.name).join(' ') && distance([a.lng, a.lat], [b.lng, b.lat]) < 150;
   const first = words(q)[0] ?? '';
-  // A sight or venue before a town of that name, and a town before a station named after it.
-  const candidates = server.filter((p) => p.landmark && matchesWordStarts(p.name, first));
+  // A sight or venue before a town of that name, and a town before a station named after it. Among sights, a
+  // mall the shops nearby name (markVenues) beats a park that merely shares a word ("trx"), the nearest mall first.
+  const km = (p) => (near ? distance(near, [p.lng, p.lat]) / 1000 : 0);
+  const venues = local.filter((p) => p.mentions).sort((a, b) => km(a) - km(b));
+  const candidates = [...venues, ...server].filter((p) => p.landmark && matchesWordStarts(p.name, first));
   const landmark = ['place', 'area', 'station'].map((k) => candidates.find((p) => p.landmark === k)).find(Boolean);
   const named = landmark ? words(landmark.name).filter((w) => w.length >= 3) : [];
   const reach = landmark?.landmark === 'area' ? 3000 : 1000; // a town is a few km across
@@ -140,14 +160,18 @@ export function mergeResults(server, local, q, near) {
   const misplaced = (l) =>
     (named.length > 0 && named.every((w) => words(l.name).includes(w)) && !within(l, [landmark], reach)) ||
     (anchors.length > 0 && matchesWordStarts(l.name, q) && !within(l, anchors, Math.max(reach, 1500)));
-  const all = [...server, ...local.filter((l) => !server.some((s) => dup(s, l)) && !misplaced(l))];
+  // The landmark once: OpenStreetMap and Overture pin a big place a few hundred metres apart.
+  const copy = (p) => p !== landmark && words(p.name).join(' ') === words(landmark.name).join(' ') && within(p, [landmark], reach);
+  // A marked mall wins over OpenStreetMap's copy of it, so it keeps its place near the top.
+  const kept = [...server.filter((s) => !venues.some((v) => dup(s, v))), ...local.filter((l) => venues.includes(l) || (!server.some((s) => dup(s, l)) && !misplaced(l)))];
+  const all = landmark ? kept.filter((p) => !copy(p)) : kept;
   const tier = (p) => {
     if (p === landmark) return -1;
+    if (venues.includes(p) && matchesWordStarts(p.name, q)) return -0.5; // the other malls of that name ("pavilion")
     const full = matchesWordStarts(`${p.name} ${p.address ?? ''}`, q);
     if (full && matchesWordStarts(p.name, first)) return 0;
     return full ? 1 : 2;
   };
-  const km = (p) => (near ? distance(near, [p.lng, p.lat]) / 1000 : 0);
   return all
     .map((p) => ({ p, t: tier(p), d: km(p) }))
     .sort((a, b) => a.t - b.t || a.d - b.d)
