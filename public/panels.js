@@ -39,11 +39,10 @@ export function initPanels(callbacks) {
 
 export async function refreshMe() {
   try {
-    const { user, stats, tester, owner } = await api('/api/me');
+    const { user, stats, tester } = await api('/api/me');
     state.user = user;
     state.stats = stats ?? null;
     state.tester = Boolean(tester);
-    state.owner = Boolean(owner);
     if (user) {
       // The account's settings win over this device's, so they follow the driver between phones.
       Object.assign(state.settings, user.settings);
@@ -52,7 +51,6 @@ export async function refreshMe() {
   } catch {
     state.user = null;
     state.tester = false;
-    state.owner = false;
   }
   if (!state.tester) state.simulate = false; // testing tools only for tester accounts
 }
@@ -194,9 +192,9 @@ async function logout() {
 
 // The recovery code is shown once and never again: a panel with a copy button keeps it on screen until it
 // is dismissed, so it can't be lost the way a prompt can.
-function openRecoveryCode(code, replaced = false) {
+function openRecoveryCode(code) {
   openPanel('Save your recovery code', `<div class="feedback">
-    <p class="hint">${replaced ? 'Your old recovery code no longer works. Save this replacement. ' : ''}Write this down somewhere safe. It resets your password if you ever lose it — there is no other way to see it again.</p>
+    <p class="hint">Write this down somewhere safe. It resets your password if you ever lose it — there is no other way to see it again.</p>
     <input id="rc-code" class="field" readonly value="${esc(code)}" style="font-family:monospace;text-align:center;letter-spacing:1px">
     <div style="display:flex;gap:8px;margin-top:12px">
       <button class="btn primary" id="rc-copy" style="flex:1">Copy code</button>
@@ -222,7 +220,7 @@ function openRecoveryCode(code, replaced = false) {
 function recoverAccount() {
   $('auth').classList.add('hidden'); // the reset form is a panel; the sign-in screen would sit on top of it
   openPanel('Reset your password', `<div class="feedback">
-    <p class="hint">Enter the account email, your latest saved recovery code, and a new password.</p>
+    <p class="hint">Enter the account email, the recovery code shown when you signed up, and a new password.</p>
     <input id="rc-email" class="field" type="email" autocomplete="email" placeholder="Account email">
     <input id="rc-code-in" class="field" placeholder="Recovery code">
     <input id="rc-pass" class="field" type="password" autocomplete="new-password" placeholder="New password (at least 8 characters)">
@@ -238,23 +236,17 @@ function recoverAccount() {
       return;
     }
     err.classList.add('hidden');
-    const button = $('rc-go');
-    button.disabled = true;
-    button.textContent = 'Resetting password…';
     try {
-      const result = await api('/api/auth/recover', { method: 'POST', body: { email, code, password } });
+      await api('/api/auth/recover', { method: 'POST', body: { email, code, password } });
+      await refreshMe();
+      $('panel').classList.add('hidden');
       $('auth').classList.add('hidden');
       $('auth-form').reset();
-      // Show the replacement before any follow-up request can fail: this response is its only copy.
-      openRecoveryCode(result.recovery_code, true);
-      await refreshMe();
       await ctx.onUserChanged();
+      toast(`Welcome back, ${state.user.name}!`);
     } catch (e) {
       err.textContent = e.message;
       err.classList.remove('hidden');
-    } finally {
-      button.disabled = false;
-      button.textContent = 'Reset password';
     }
   };
 }
@@ -266,12 +258,6 @@ function openPanel(title, html) {
   $('panel').classList.remove('hidden');
   armBack();
   return $('panel-body');
-}
-
-export function closePanel() {
-  $('panel').classList.add('hidden');
-  // Back/Escape may hide the screen while a request is pending. Never retain passwords in hidden UI.
-  $('panel-body').querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
 }
 
 // The voice directions are read in (see voice.js), with a sample to hear it.
@@ -374,15 +360,12 @@ export function openSettings() {
       <button class="set-row" id="s-feedback"><span>Send feedback<small>Ideas, bugs, a wrong road or a missing place. It goes straight to the developer.</small></span></button>
     </div>
     ${state.tester ? `<div class="set-group"><h3>Testing</h3>
-      <button class="set-row" id="s-suggested"><span>Suggested places<small>Places drivers asked to add or fix, waiting for review</small></span></button>
+      <button class="set-row" id="s-usage"><span>Usage<small>Who's on A2B now, and the last two weeks</small></span></button>
+      <button class="set-row" id="s-inbox"><span>Feedback<small>What drivers sent from Settings, and places they suggested</small></span></button>
       <label class="set-row"><span>Demo drive<small>Simulate GPS along the route. Handy for trying A2B at a desk.</small></span><input type="checkbox" class="switch" id="s-sim" ${state.simulate ? 'checked' : ''}></label>
       <div class="set-row${state.simulate ? '' : ' hidden'}" id="s-sim-speed-row"><span>Demo speed<small>How fast the demo car drives</small></span><div class="choice" id="s-sim-speed">${[1, 2, 4, 8]
         .map((v) => `<button data-v="${v}" class="${local.get('simSpeed', 1) === v ? 'on' : ''}">${v}×</button>`)
         .join('')}</div></div>
-    </div>` : ''}
-    ${state.owner ? `<div class="set-group"><h3>Administration</h3>
-      <button class="set-row" id="s-usage"><span>Usage<small>Who's on A2B now, and the last two weeks</small></span></button>
-      <button class="set-row" id="s-inbox"><span>Feedback inbox<small>Private messages drivers sent from Settings</small></span></button>
     </div>` : ''}`);
 
   body.querySelectorAll('[data-set]').forEach((c) => {
@@ -434,13 +417,13 @@ export function openSettings() {
     ctx.setupVehicle();
   };
   if (state.tester) {
-    const suggested = $('s-suggested');
-    if (suggested) suggested.onclick = () => openInbox('places');
     $('s-sim').onchange = (e) => {
       state.simulate = e.target.checked;
       local.set('simulate', state.simulate);
       $('s-sim-speed-row').classList.toggle('hidden', !state.simulate);
     };
+    $('s-usage').onclick = openUsage;
+    $('s-inbox').onclick = openInbox;
     // Testing aid: applies straight away, also to a demo drive already under way.
     $('s-sim-speed').onclick = (e) => {
       const b = e.target.closest('button');
@@ -449,10 +432,6 @@ export function openSettings() {
       local.set('simSpeed', Number(b.dataset.v));
       ctx.setSimSpeed(Number(b.dataset.v));
     };
-  }
-  if (state.owner) {
-    $('s-usage').onclick = openUsage;
-    $('s-inbox').onclick = openInbox;
   }
   $('s-feedback').onclick = openFeedback;
   $('s-home').onclick = () => homeWorkAction('home');
@@ -469,7 +448,18 @@ export function openSettings() {
         toast(e.message);
       }
     };
-    $('s-pass').onclick = openChangePassword;
+    $('s-pass').onclick = async () => {
+      const current = prompt('Current password');
+      if (!current) return;
+      const next = prompt('New password (at least 8 characters)');
+      if (!next) return;
+      try {
+        await api('/api/me', { method: 'PATCH', body: { current_password: current, password: next } });
+        toast('Password changed');
+      } catch (e) {
+        toast(e.message);
+      }
+    };
     $('s-delete').onclick = async () => {
       if (!confirm('Delete your account? Your saved places and reports will be removed. This cannot be undone.')) return;
       try {
@@ -483,80 +473,6 @@ export function openSettings() {
       }
     };
   }
-}
-
-function openChangePassword() {
-  const body = openPanel('Change password', `
-    <form id="password-form" class="auth-form password-form" novalidate>
-      <label for="password-current">Current password
-        <input id="password-current" type="password" autocomplete="current-password" required>
-      </label>
-      <label for="password-new">New password
-        <input id="password-new" type="password" autocomplete="new-password" minlength="8" aria-describedby="password-hint" required>
-      </label>
-      <p id="password-hint" class="hint">Use at least 8 characters. You can paste from a password manager.</p>
-      <label for="password-confirm">Confirm new password
-        <input id="password-confirm" type="password" autocomplete="new-password" required>
-      </label>
-      <p id="password-error" class="error hidden" role="alert" tabindex="-1"></p>
-      <button id="password-save" class="btn primary" type="submit">Change password</button>
-      <button id="password-cancel" class="btn ghost" type="button">Cancel</button>
-    </form>`);
-  const form = body.querySelector('form');
-  const current = $('password-current'), next = $('password-new'), confirm = $('password-confirm');
-  const error = $('password-error'), save = $('password-save'), cancel = $('password-cancel');
-  const fields = [current, next, confirm];
-  let pending = false;
-  const leave = () => {
-    form.reset();
-    openSettings();
-    $('s-pass')?.focus();
-  };
-  cancel.onclick = leave;
-  form.onsubmit = async (event) => {
-    event.preventDefault();
-    if (pending) return;
-    error.classList.add('hidden');
-    fields.forEach((field) => {
-      field.removeAttribute('aria-invalid');
-      field.removeAttribute('aria-describedby');
-    });
-    next.setAttribute('aria-describedby', 'password-hint');
-    const invalid = !current.value ? [current, 'Enter your current password.']
-      : next.value.length < 8 ? [next, 'Use at least 8 characters for your new password.']
-      : confirm.value !== next.value ? [confirm, 'The new passwords do not match.'] : null;
-    if (invalid) {
-      const [field, message] = invalid;
-      field.setAttribute('aria-invalid', 'true');
-      field.setAttribute('aria-describedby', field === next ? 'password-hint password-error' : 'password-error');
-      error.textContent = message;
-      error.classList.remove('hidden');
-      field.focus();
-      return;
-    }
-    pending = true;
-    form.setAttribute('aria-busy', 'true');
-    [...fields, save, cancel].forEach((control) => { control.disabled = true; });
-    save.textContent = 'Changing password…';
-    try {
-      await api('/api/me', { method: 'PATCH', body: { current_password: current.value, password: next.value } });
-      form.reset();
-      // A panel closed during the request must not be reopened by a late result.
-      if (form.isConnected && !$('panel').classList.contains('hidden')) leave();
-      toast('Password changed');
-    } catch (e) {
-      if (!form.isConnected || $('panel').classList.contains('hidden')) return;
-      error.textContent = e.message;
-      error.classList.remove('hidden');
-      error.focus();
-    } finally {
-      pending = false;
-      form.removeAttribute('aria-busy');
-      [...fields, save, cancel].forEach((control) => { control.disabled = false; });
-      save.textContent = 'Change password';
-    }
-  };
-  current.focus();
 }
 
 function homeWorkAction(which) {
@@ -653,7 +569,7 @@ function openFeedback() {
   setTimeout(() => text.focus(), 300);
 }
 
-// The owner's feedback inbox (the server checks owner access for every read and update). Close marks one handled and
+// The owner's feedback inbox (GET /api/feedback is only answered for tester accounts). Close marks one handled and
 // moves it under Closed, tagged with when; Reopen brings it back. Nothing is deleted.
 async function openInbox(tab = 'messages') {
   const panel = openPanel('Feedback', `${inboxTabs(tab)}<div id="fb-list"><p class="hint" style="padding:12px 18px">Loading…</p></div>`);
@@ -744,8 +660,7 @@ async function renderPlaceSuggestions(body) {
   };
 }
 
-// The owner's usage dashboard (GET /api/stats is only answered for owner accounts). Refreshes while open.
-
+// The owner's usage dashboard (GET /api/stats is only answered for tester accounts). Refreshes while open.
 async function openUsage() {
   const body = openPanel('Usage', '<p class="hint" style="padding:12px 18px">Loading…</p>');
   const render = async () => {

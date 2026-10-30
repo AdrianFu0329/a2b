@@ -4,7 +4,7 @@
 import { ensureSchema } from './lib/schema.js';
 import {
   hashPassword, verifyPassword, normalizeEmail, validatePassword, cleanName, createSession, createRecoveryCode,
-  recoverAccount, RECOVERY_WINDOW_MS, currentUser, destroySession, sessionCookie, publicUser, sha256, readCookie,
+  consumeRecoveryCode, currentUser, destroySession, sessionCookie, publicUser, sha256, readCookie,
 } from './lib/auth.js';
 import { probesRepo, annotateWithProbes, PROBE_RETENTION_MS } from './lib/probes.js';
 import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, corridorBox, routeReportBox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
@@ -60,7 +60,6 @@ export default {
       env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
       env.DB.prepare('DELETE FROM trips WHERE updated_at < ?').bind(now - 2 * 86400_000),
       env.DB.prepare('DELETE FROM login_failures WHERE at < ?').bind(now - LOGIN_WINDOW_MS),
-      env.DB.prepare('DELETE FROM recovery_attempts WHERE at <= ?').bind(now - RECOVERY_WINDOW_MS),
       env.DB.prepare('DELETE FROM presence WHERE last_seen < ?').bind(now - 86400_000),
       env.DB.prepare('DELETE FROM usage_devices WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
       env.DB.prepare('DELETE FROM usage_daily WHERE day < ?').bind(dayOf(now - USAGE_DAYS * 86400_000)),
@@ -104,12 +103,12 @@ async function route(request, env, url) {
 
   // The owner's usage dashboard; anyone else gets a plain "not found".
   if (path === '/api/stats' && method === 'GET') {
-    if (!user || !isOwner(env, user)) throw httpError('Not found.', 404);
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
     return json(await usage.report(limits(env)));
   }
 
   // ---------- Feedback ----------
-  // From Settings › Feedback, with or without an account; read by the owner in Settings › Administration.
+  // From Settings › Feedback, with or without an account; read by the owner in Settings › Testing.
   if (path === '/api/feedback' && method === 'POST') {
     // Open to anyone with a valid device id, even when A2B is full: that's exactly when feedback is most
     // needed. The 10-a-day limit below still applies.
@@ -129,7 +128,7 @@ async function route(request, env, url) {
   }
 
   if (path === '/api/feedback' && method === 'GET') {
-    if (!user || !isOwner(env, user)) throw httpError('Not found.', 404);
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
     const rows = await db
       .prepare('SELECT f.id, f.message, f.app, f.ua, f.created_at, f.closed_at, u.name, u.email FROM feedback f LEFT JOIN users u ON u.id = f.user_id ORDER BY f.closed_at IS NOT NULL, f.created_at DESC LIMIT 200')
       .all();
@@ -140,7 +139,7 @@ async function route(request, env, url) {
   // nothing is lost to a stray tap. DELETE, which older copies of the app send for "Done", closes it too.
   const oneFeedback = path.match(/^\/api\/feedback\/(\d+)$/);
   if (oneFeedback && (method === 'PATCH' || method === 'DELETE')) {
-    if (!user || !isOwner(env, user)) throw httpError('Not found.', 404);
+    if (!user || !isTester(env, user)) throw httpError('Not found.', 404);
     const closed = method === 'DELETE' || (await readJson(request)).closed !== false;
     await db.prepare('UPDATE feedback SET closed_at = ? WHERE id = ?').bind(closed ? Date.now() : null, Number(oneFeedback[1])).run();
     return json({ ok: true, closed });
@@ -217,12 +216,16 @@ async function route(request, env, url) {
     const email = normalizeEmail(body.email);
     const bad = validatePassword(body.password);
     if (bad) throw httpError(bad, 400);
-    if (!email) throw httpError('Wrong email or recovery code.', 401);
-    const result = await recoverAccount(db, email, body.code, body.password, validDevice(device) ? device : null);
-    if (result.status === 'limited') throw httpError('Too many recovery attempts. Try again in 15 minutes.', 429);
-    if (result.status !== 'ok') throw httpError('Wrong email or recovery code.', 401);
-    return json({ user: publicUser(result.user), recovery_code: result.recovery }, 200,
-      { 'set-cookie': sessionCookie(request, result.token, result.expires) });
+    const row = email ? await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() : null;
+    if (!row || !(await consumeRecoveryCode(db, row.id, body.code))) throw httpError('Wrong email or recovery code.', 401);
+    const { hash, salt } = await hashPassword(body.password);
+    await db.batch([
+      db.prepare('UPDATE users SET pass_hash = ?, pass_salt = ? WHERE id = ?').bind(hash, salt, row.id),
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.id),
+      db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(row.id),
+    ]);
+    const me = await db.prepare('SELECT * FROM users WHERE id = ?').bind(row.id).first();
+    return withSession(request, db, me, 200, { device });
   }
 
   if (path === '/api/auth/logout' && method === 'POST') {
@@ -235,7 +238,7 @@ async function route(request, env, url) {
     const sessions = (
       await db.prepare('SELECT token_hash, device, last_seen FROM sessions WHERE user_id = ? ORDER BY last_seen DESC').bind(user.id).all()
     ).results.map((s) => ({ id: s.token_hash.slice(0, 12), device: s.device, last_seen: s.last_seen, current: s.token_hash === user.token_hash }));
-    return json({ user: publicUser(user), stats: await reports.stats(user.id), tester: isTester(env, user), owner: isOwner(env, user), sessions });
+    return json({ user: publicUser(user), stats: await reports.stats(user.id), tester: isTester(env, user), sessions });
   }
 
   if (path === '/api/me' && method === 'PATCH') {
@@ -723,6 +726,8 @@ function cleanLang(v) {
   return ((v ?? 'en').match(/[a-zA-Z-]+/)?.[0] ?? 'en').slice(0, 5);
 }
 
+// Testing tools (demo drive) are for the accounts listed in the TESTER_EMAILS secret, comma separated
+// (`wrangler secret put TESTER_EMAILS`), so the addresses never ship in the code.
 // A search for parking (see parkingQuery): the car parks around the place named, or around the searcher, and
 // where that is, so the app can add the parking it knows from Overture. Null when it isn't a search for parking,
 // or the place named isn't found, so the ordinary search answers instead.
@@ -753,16 +758,6 @@ async function searchParking(env, q, lat, lng, lang) {
 
 const FEEDBACK_MAX = 2000; // characters
 const FEEDBACK_PER_DAY = 10; // per account, or per device without one
-
-// Grant access only after the maintainer confirms an existing account's ID. Signup does not verify email,
-// so neither an email allowlist nor fields supplied by the client can establish a trusted account.
-function hasAccountId(value, user) {
-  return String(value ?? '').split(',').some((id) => id.trim() === String(user.id));
-}
-
-function isOwner(env, user) {
-  return hasAccountId(env.OWNER_USER_IDS, user);
-}
 
 function isTester(env, user) {
   const list = String(env.TESTER_EMAILS ?? '').split(',').map((e) => normalizeEmail(e)).filter(Boolean);

@@ -4,7 +4,7 @@
 import { REPORT_TYPES, reportLabel, reportIcon, canReportFrom, TRAIN_REPORT_TYPES, trainReportIcon } from './report-types.js';
 import { distance, bearing, cumulative, encodePolyline, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
-import { canAutoStartRoute, showRouteLoading } from './route-preview.js';
+import { canAutoStartRoute } from './route-preview.js';
 import { TrainGuide, markerFor, walkText } from './train-guide.js';
 import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
@@ -18,13 +18,14 @@ import {
   isSaved, setHomeWork, armBack, sideColumnEnd,
 } from './core.js';
 import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
-import { initPanels, openMenu, openAuth, openSettings, closePanel, renderAvatar, refreshMe } from './panels.js';
+import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe } from './panels.js';
 import { startPresence, checkIn } from './presence.js';
 import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
-import { DeadReckoningEpisode, isFreshGpsFix, shouldEstimate, nearTunnel, pointAt } from './dead-reckoning.js';
+import { isSchoolTime, schoolAhead, schoolLimit } from './school-zones.js';
+import { DeadReckoner, shouldEstimate, nearTunnel, pointAt, BAD_ACCURACY_M } from './dead-reckoning.js';
 import { matchesWordStarts } from './text.js';
 import { shouldCheck as shouldCheckFaster, pickFaster, offerText, checkBody, OFFER_FOR_MS, KEEP_FOR_MS } from './faster-route.js';
 import { signPlaces } from './signs.js';
@@ -103,7 +104,6 @@ const tollsSpoken = new Set(); // toll plazas (route + index) already announced 
 const camerasWarned = new Set(); // fixed speed cameras (route + index) already announced this drive
 const schoolsWarned = new Set(); // school zones (route + index) already announced this drive
 const cameraPins = [];
-const tunnelEpisode = new DeadReckoningEpisode();
 
 // ================= Boot =================
 // With Reduce Motion on (an iPhone accessibility setting), MapLibre turns every camera move into an instant
@@ -859,34 +859,19 @@ function keepTrail(at) {
 
 // ================= Location =================
 function startLocation() {
-  locationStarted = true;
-  locationWatch ??= createLocationWatch({ geolocation: navigator.geolocation, onFix, onState: renderLocationStatus });
-  locationWatch.start();
+  if (!('geolocation' in navigator)) return locationFailed();
+  navigator.geolocation.watchPosition(onFix, locationFailed, { enableHighAccuracy: true, maximumAge: 1000, timeout: 30000 });
 }
 
-function retryLocation() {
-  locationWatch?.stop();
-  startLocation();
-}
-
-function stopLocation() {
-  locationWatch?.stop();
-}
-
-function resumeLocation() {
-  if (locationStarted && !['denied', 'unsupported'].includes(locationWatch?.status)) startLocation();
-}
-
-function renderLocationStatus(status) {
-  state.locationStatus = status;
-  state.locationDenied = status === 'denied';
-  const message = locationMessage(status);
-  $('loc-message').textContent = message;
-  $('loc-banner').classList.toggle('hidden', !message);
-  $('btn-loc-retry').classList.toggle('hidden', !['denied', 'timeout', 'unavailable'].includes(status));
+function locationFailed(err) {
+  state.locationDenied = true;
+  if (mode === 'browse' && !state.pos) $('loc-banner').classList.remove('hidden');
+  if (err && err.code !== 1 && !state.pos) setTimeout(startLocation, 15000);
 }
 
 function onFix(p) {
+  state.locationDenied = false;
+  $('loc-banner').classList.add('hidden');
   const raw = [p.coords.longitude, p.coords.latitude];
   const prev = state.pos;
   const speed = p.coords.speed;
@@ -905,7 +890,6 @@ function onFix(p) {
     speed: speed ?? (still ? 0 : prev ? estSpeed(prev, raw, p.timestamp) : 0),
     accuracy: p.coords.accuracy,
     time: still ? prev.time : p.timestamp, // so the speed estimate spans the whole stop
-    gpsTime: p.timestamp,
   };
   if (sim || gpsBlocked) return; // a simulated drive owns the car right now (or a test is pretending the GPS is gone)
   handleFix(fix, !prev);
@@ -918,11 +902,11 @@ function estSpeed(prev, lngLat, t) {
 
 function handleFix(fix, first = false) {
   if (mode === 'drive' && !sim) {
+    tunnelFixAt = Date.now();
     lastFixAccuracy = fix.accuracy;
-    // Vague, stale or repeated measurements cannot recover an outage or confirm arrival.
-    if (!tunnelEpisode.acceptFix(fix, Date.now(), { strict: tunnelEpisode.active || tunnelEpisode.exhausted || tunnelEpisode.suspended || tunnelAhead() })) return;
-    tunnelFixAt = fix.gpsTime ?? fix.time;
-    $('dr-chip')?.classList.add('hidden');
+    // A vague fix in a tunnel would drag the car off its route: leave it to the estimate (see tunnelTick).
+    if ((fix.accuracy ?? 0) > BAD_ACCURACY_M && (reckoner || tunnelAhead())) return;
+    if (reckoner) stopReckoning();
     lastGoodSpeed = fix.speed ?? lastGoodSpeed;
   }
   state.pos = fix;
@@ -1014,10 +998,7 @@ function recenter() {
     return rideTick();
   }
   if (state.pos) map.easeTo({ center: state.pos.lngLat, zoom: Math.max(map.getZoom(), 15), bearing: 0, pitch: 0, duration: 700 });
-  else {
-    if (!locationStarted) startLocation();
-    toast(locationMessage(state.locationStatus) || 'Finding your location…');
-  }
+  else if (state.locationDenied) toast('Location is off. Allow location for this site in your browser settings.');
 }
 
 // ================= Long-press: drop a pin =================
@@ -1100,7 +1081,10 @@ function wireUi() {
   $('ride-report-chip').onclick = () => askTrainReport(trainReports.shown);
   rideSheet.init();
   $('btn-compass').onclick = () => map.easeTo({ bearing: 0, pitch: 0 });
-  $('btn-loc-retry').onclick = retryLocation;
+  $('btn-loc-retry').onclick = () => {
+    $('loc-banner').classList.add('hidden');
+    startLocation();
+  };
   $('btn-report').onclick = openReportMenu;
   $('btn-report-drive').onclick = openReportMenu;
   $('btn-sound').onclick = $('btn-sound-browse').onclick = $('btn-sound-ride').onclick = () => {
@@ -1111,9 +1095,28 @@ function wireUi() {
   document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => closeScreen(b.dataset.close)));
 
   // Search
-  $('search-input').oninput = onSearchInput;
-  $('search-input').onkeydown = onSearchKeydown;
-  $('search-clear').onclick = clearSearch;
+  let t;
+  $('search-input').oninput = () => {
+    clearTimeout(t);
+    const q = $('search-input').value.trim();
+    $('search-clear').classList.toggle('hidden', !q);
+    if (q.length < 2) return showSearchHome();
+    showSearching(); // straight away, not after the pause: your recent places go, the results' placeholders come
+    t = setTimeout(() => runSearch(q), 280);
+  };
+  $('search-input').onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      clearTimeout(t);
+      const q = $('search-input').value.trim();
+      if (q.length >= 2) runSearch(q, true);
+    }
+  };
+  $('search-clear').onclick = () => {
+    $('search-input').value = '';
+    $('search-clear').classList.add('hidden');
+    showSearchHome();
+    $('search-input').focus();
+  };
   $('tile-home').onclick = () => (state.home ? pickPlace({ ...state.home, name: 'Home' }) : openSearchFor('home'));
   $('tile-work').onclick = () => (state.work ? pickPlace({ ...state.work, name: 'Work' }) : openSearchFor('work'));
 
@@ -1183,8 +1186,6 @@ function wireUi() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && (mode === 'drive' || mode === 'ride')) requestWakeLock();
   });
-  window.addEventListener('pagehide', stopLocation);
-  window.addEventListener('pageshow', resumeLocation);
 }
 
 function refreshSound() {
@@ -1194,8 +1195,6 @@ function refreshSound() {
 }
 
 function closeScreen(id) {
-  if (id === 'panel') return closePanel();
-  if (id === 'search') invalidateSearch();
   $(id).classList.add('hidden');
   if (id === 'parking') closeParking();
   if (id === 'preview') backToBrowse();
@@ -1237,47 +1236,8 @@ function onBack() {
 // ================= Search =================
 let searchTarget = null; // null = navigate | 'home' | 'work' | 'save'
 let searchSeq = 0;
-let searchTimer = null;
-
-// Edits and leaving search invalidate work immediately, including the gap before the next debounced request.
-function invalidateSearch() {
-  clearTimeout(searchTimer);
-  searchTimer = null;
-  return ++searchSeq;
-}
-
-function isCurrentSearch(seq, q, target) {
-  return seq === searchSeq && q === $('search-input').value.trim() && target === searchTarget &&
-    !$('search').classList.contains('hidden');
-}
-
-function onSearchInput() {
-  invalidateSearch();
-  const q = $('search-input').value.trim();
-  $('search-clear').classList.toggle('hidden', !q);
-  if (q.length < 2) return showSearchHome();
-  showSearching();
-  searchTimer = setTimeout(() => runSearch(q), 280);
-}
-
-function onSearchKeydown(e) {
-  if (e.key !== 'Enter' || e.isComposing) return;
-  e.preventDefault();
-  invalidateSearch();
-  const q = $('search-input').value.trim();
-  if (q.length >= 2) runSearch(q, true);
-}
-
-function clearSearch() {
-  invalidateSearch();
-  $('search-input').value = '';
-  $('search-clear').classList.add('hidden');
-  showSearchHome();
-  $('search-input').focus();
-}
 
 function openSearchFor(target) {
-  const seq = invalidateSearch();
   armBack();
   syncDriverPlaces(); // places drivers added lately (public/suggest.js)
   searchTarget = target;
@@ -1292,8 +1252,7 @@ function openSearchFor(target) {
   // Focus now, inside the tap: iPhones only bring the keyboard up for a focus made during the tap itself, and
   // ignored the old delayed one. The delayed one stays as a fallback for browsers that need a frame first.
   $('search-input').focus();
-  setTimeout(() => seq === searchSeq && !$('search').classList.contains('hidden') &&
-    document.activeElement !== $('search-input') && $('search-input').focus(), 50);
+  setTimeout(() => document.activeElement !== $('search-input') && $('search-input').focus(), 50);
 }
 
 function showSearchHome() {
@@ -1395,52 +1354,38 @@ function searchMessage(text) {
 }
 
 async function runSearch(q, enter = false) {
-  if (q !== $('search-input').value.trim() || $('search').classList.contains('hidden')) return;
-  const seq = invalidateSearch(), target = searchTarget;
-  const current = () => isCurrentSearch(seq, q, target);
+  const seq = ++searchSeq;
   showSearching();
   const near = state.pos?.lngLat ?? map.getCenter().toArray();
-  let limited = false;
-  const unavailable = () => { limited = true; };
-  const display = (places, note, overture) => {
-    if (!current()) return;
-    if (limited) note = [places.length ? 'Limited results: some search sources are unavailable.'
-      : 'Some places could not be checked. Try searching again.', note].filter(Boolean).join(' ');
-    showResults(q, near, places, note, overture, enter && !limited);
-  };
   try {
     const coord = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
     // Pasted coordinates are only a place when they're on the earth ("999,999" goes to text search instead).
     const lat = Number(coord?.[1]), lng = Number(coord?.[2]);
     const pasted = coord && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
     // "petrol", "klinik near bangsar": the nearest places of that kind (see searchByType), when there are any.
-    const typed = !pasted && (await searchByType(q, near, unavailable).catch(() => (unavailable(), null)));
-    if (!current()) return;
+    const typed = !pasted && (await searchByType(q, near).catch(() => null));
     if (typed) {
-      return display(typed.places, typed.note, true);
+      if (seq !== searchSeq) return;
+      return showResults(q, near, typed.places, typed.note, true, enter);
     }
-    if (pasted) return display([{ name: 'Coordinates', address: q, lat, lng }], null, false);
     // Two searches at once: the server's (OpenStreetMap) and this phone's own (Overture shops and places).
-    const [remote, nearby] = await Promise.allSettled([
-      api(`/api/search?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}&lang=${(navigator.language || 'en').slice(0, 2)}`),
-      searchNearby(q, near, { onUnavailable: unavailable }),
-    ]);
-    if (!current()) return;
-    if (remote.status === 'rejected' || nearby.status === 'rejected') unavailable();
-    const server = remote.status === 'fulfilled' ? remote.value : { places: [] };
-    const local = nearby.status === 'fulfilled' ? nearby.value : [];
+    const [server, local] = pasted
+      ? [{ places: [{ name: 'Coordinates', address: q, lat, lng }] }, []]
+      : await Promise.all([
+          api(`/api/search?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}&lang=${(navigator.language || 'en').slice(0, 2)}`),
+          searchNearby(q, near).catch(() => []),
+        ]);
     // A search for parking is answered with the car parks around the place (or you), nearest first: only those.
-    let places = server.parking ? await withOvertureParking(server, unavailable) : mergeResults(server.places, local, q, near);
+    let places = server.parking ? await withOvertureParking(server) : mergeResults(server.places, local, q, near);
     if (!server.parking && !pasted) places = await withAddressSearch(q, near, places);
     const from = server.parking?.from;
     const note = server.parking
       ? places.length ? `Car parks near ${from ?? 'you'}` : `No car parks mapped near ${from ?? 'you'}.`
-      : local.length ? null : remote.status === 'rejected' ? remote.reason.message : server.note;
-    const detail = limited && !places.length ? remote.status === 'rejected' ? remote.reason.message : null : note;
+      : local.length ? null : server.note; // "not in the map data" is moot once Overture found it
     if (seq !== searchSeq) return;
-    display(places, detail, places.some((p) => !server.places.includes(p) && p.source !== 'tomtom'));
+    showResults(q, near, places, note, places.some((p) => !server.places.includes(p) && p.source !== 'tomtom'), enter);
   } catch (e) {
-    if (!current()) return;
+    if (seq !== searchSeq) return;
     searchMessage(e.message);
   }
 }
@@ -1459,7 +1404,6 @@ async function withAddressSearch(q, near, places) {
 const RESULT_ICONS = { parking: 'parking', address: 'house', street: 'street' };
 
 function showResults(q, near, places, note, overture, enter) {
-  const seq = searchSeq, target = searchTarget;
   $('search-home').classList.add('hidden');
   if (!places.length) {
     searchMessage(note || `No results for "${q}".`);
@@ -1477,7 +1421,7 @@ function showResults(q, near, places, note, overture, enter) {
     const li = el('li');
     const d = formatDistance(distance(near, [p.lng, p.lat]), state.settings.units);
     li.innerHTML = `<button class="place-row"><span class="p-ic">${PLACE_ICONS[RESULT_ICONS[p.category] ?? 'pin']}</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address)}</small></span><span class="p-dist">${d}</span></button>`;
-    li.firstElementChild.onclick = () => isCurrentSearch(seq, q, target) && pickPlace(p);
+    li.firstElementChild.onclick = () => pickPlace(p);
     ul.append(li);
   }
   const credits = [overture && placesAttribution, overture && places.some((p) => p.type === 'ev') && CHARGERS_ATTRIBUTION, places.some((p) => p.source === 'tomtom') && 'Addresses © TomTom'];
@@ -1506,30 +1450,26 @@ function addMissingButton(q, label, cls) {
 // "kpj hospital": those places near you) or an area ("petrol near klcc": those places around KLCC, which the
 // server finds). A place actually called what was typed ("Police Museum") still comes first. Returns null to
 // fall back to the usual search (no data for that kind here, or the area isn't found).
-async function searchByType(q, near, onUnavailable) {
+async function searchByType(q, near) {
   const t = typeQuery(q);
   if (!t) return null;
   const label = TYPES[t.type].label;
   if (!t.area) {
-    const places = await placesOfType(t.type, near, { onUnavailable });
+    const places = await placesOfType(t.type, near);
     return places.length ? { places, note: `${label} near you` } : null;
   }
-  const mine = (await placesOfType(t.type, near, { onUnavailable })).filter((p) => matchesWordStarts(`${p.name} ${p.address}`, t.area));
+  const mine = (await placesOfType(t.type, near)).filter((p) => matchesWordStarts(`${p.name} ${p.address}`, t.area));
   if (mine.length) return { places: mine, note: `${label} near you matching "${t.area}"` };
 
   const lang = (navigator.language || 'en').slice(0, 2);
   const search = (text) => api(`/api/search?q=${encodeURIComponent(text)}&lat=${near[1]}&lng=${near[0]}&lang=${lang}`);
-  const [whole, local, where] = await Promise.all([
-    search(q).catch(() => (onUnavailable?.(), { places: [] })),
-    searchNearby(q, near, { onUnavailable }).catch(() => (onUnavailable?.(), [])),
-    search(t.area).catch(() => (onUnavailable?.(), { places: [] })),
-  ]);
+  const [whole, local, where] = await Promise.all([search(q).catch(() => ({ places: [] })), searchNearby(q, near).catch(() => []), search(t.area)]);
   const named = mergeResults(whole.places ?? [], local, q, near).filter((p) => matchesWordStarts(p.name, q)).slice(0, 3);
   // A mall or venue before a station of the same name, as the usual search ranks them.
   const anchor = ['place', 'area'].map((k) => where.places?.find((p) => p.landmark === k)).find(Boolean) ?? where.places?.[0];
-  if (!anchor) return named.length ? { places: named, note: null } : null;
+  if (!anchor) return null;
   const at = [anchor.lng, anchor.lat];
-  const around = (await placesOfType(t.type, at, { onUnavailable }))
+  const around = (await placesOfType(t.type, at))
     .filter((p) => !named.some((n) => distance([n.lng, n.lat], [p.lng, p.lat]) < 80))
     .map((p) => ({ ...p, address: [`${formatDistance(distance(at, [p.lng, p.lat]), state.settings.units)} from ${anchor.name}`, p.address].filter(Boolean).join(' · ') }));
   if (!around.length && !named.length) return null;
@@ -1538,10 +1478,10 @@ async function searchByType(q, near, onUnavailable) {
 
 // The car parks the server found (OpenStreetMap) plus the parking in this phone's Overture listings, often a
 // mall's own ("Parking, Entry C"), within 1.5 km of the same spot, nearest first.
-async function withOvertureParking(server, onUnavailable) {
+async function withOvertureParking(server) {
   const at = [server.parking.lng, server.parking.lat];
   const from = server.parking.from;
-  const extra = (await Promise.all(['parking', 'car park'].map((w) => searchNearby(w, at, { onUnavailable }).catch(() => (onUnavailable?.(), []))))).flat()
+  const extra = (await Promise.all(['parking', 'car park'].map((w) => searchNearby(w, at).catch(() => [])))).flat()
     .filter((p) => p.category === 'parking' && distance(at, [p.lng, p.lat]) <= 1500)
     .map((p) => ({ ...p, address: from ? `${formatDistance(distance(at, [p.lng, p.lat]))} from ${from}` : p.address, category: 'parking' }));
   const all = [...server.places];
@@ -1550,32 +1490,37 @@ async function withOvertureParking(server, onUnavailable) {
 }
 
 async function pickPlace(p) {
-  const target = searchTarget;
-  invalidateSearch();
-  searchTarget = null;
-  closeScreen('search');
   $('search-input').blur();
-  if (target === 'home' || target === 'work') {
-    const which = target;
+  if (searchTarget === 'home' || searchTarget === 'work') {
+    const which = searchTarget;
     try {
       await setHomeWork(which, p);
       toast(`${which === 'home' ? 'Home' : 'Work'} saved`);
     } catch (e) {
       toast(e.message);
     }
+    searchTarget = null;
     renderSearchHome();
+    closeScreen('search');
     return;
   }
-  if (target === 'save') {
+  if (searchTarget === 'save') {
+    searchTarget = null;
+    closeScreen('search');
     return saveAsFavourite(p);
   }
-  if (target === 'stop') {
+  if (searchTarget === 'stop') {
+    searchTarget = null;
+    closeScreen('search');
     return addStop(p);
   }
-  if (target === 'from') {
+  if (searchTarget === 'from') {
+    searchTarget = null;
+    closeScreen('search');
     origin = p;
     return dest && openPreview(dest);
   }
+  closeScreen('search');
   // Search history: kept on this phone without an account (and on the account with one), so it's there next time.
   // Not TomTom's addresses: its terms don't allow keeping them.
   if (p.source !== 'tomtom') addPlace('recent', p).then(renderSearchHome).catch(() => {});
@@ -1643,7 +1588,7 @@ async function openPreview(place) {
       ? 'Location is off, so routes start from the middle of the map.'
       : 'Waiting for your location… routes start from the middle of the map for now.'
     : 'Finding the best routes…';
-  showRouteLoading($('route-status'), status);
+  $('route-status').innerHTML = `<span class="spinner" aria-hidden="true"></span>${status}`;
   transit = null;
   drawTransit();
   if (travel === 'transit') {
@@ -2727,7 +2672,7 @@ function stopSimulation() {
 
 function driveTick(fix) {
   if (!nav) return;
-  live = nav.update({ position: fix.lngLat, heading: fix.heading, speed: fix.speed, accuracy: fix.accuracy, estimated: fix.estimated });
+  live = nav.update({ position: fix.lngLat, heading: fix.heading, speed: fix.speed, accuracy: fix.accuracy });
   const heading = (fix.speed ?? 0) > 1.5 && fix.heading != null ? fix.heading : live.routeBearing;
   moveCar({ pos: live.snapped, heading, along: live.along, path: nav });
   renderBanner();
@@ -2744,12 +2689,10 @@ function driveTick(fix) {
     checkAlerts();
     checkFaster();
   }
-  // Estimates guide the arrow and upcoming turns, but cannot confirm stops, arrival, or an off-route drive.
-  if (fix.estimated) return;
-  if (share) pushShare(); // viewers see the last real position, not a guess
+  if (share && !fix.estimated) pushShare(); // viewers see the last real position, not a guess
 
   const stopStep = nav.steps.findIndex((st) => st.type === 'stop');
-  if (live.confirmedOnRoute && stops.length && stopStep >= 0 && live.stepIndex >= stopStep) {
+  if (stops.length && stopStep >= 0 && live.stepIndex >= stopStep) {
     toast(`Reached ${stops.shift().name}`);
     renderStopMenu();
   }
@@ -2764,7 +2707,7 @@ function driveTick(fix) {
 // ---------- Tunnel mode ----------
 // When the GPS goes quiet in a tunnel (or anywhere, while moving), keep the car going along the route at its last
 // speed, so the banner, distances and the turn after the tunnel keep coming. See dead-reckoning.js.
-let tunnelTimer = null, tunnelFixAt = 0, lastFixAccuracy = null, lastGoodSpeed = 0, gpsBlocked = false;
+let reckoner = null, tunnelTimer = null, tunnelFixAt = 0, lastFixAccuracy = null, lastGoodSpeed = 0, gpsBlocked = false;
 
 function tunnelAhead() {
   return Boolean(nav && live && nearTunnel(live.along, nav.cum, nav.route.tunnels));
@@ -2785,27 +2728,20 @@ function stopTunnelWatch() {
 }
 
 function stopReckoning() {
-  tunnelEpisode.reset();
+  reckoner = null;
   $('dr-chip')?.classList.add('hidden');
-}
-
-function renderTunnelStatus() {
-  const waiting = tunnelEpisode.exhausted || tunnelEpisode.suspended;
-  $('dr-chip').classList.toggle('hidden', !tunnelEpisode.active && !waiting);
-  if (tunnelEpisode.active || waiting) {
-    $('dr-chip').querySelector('span').textContent = waiting ? 'Waiting for GPS' : 'Estimating your position';
-  }
 }
 
 function tunnelTick() {
   if (mode !== 'drive' || sim || !nav || !live || live.offRoute) return;
   const now = Date.now();
-  const est = tunnelEpisode.advance({
-    eligible: shouldEstimate({ sinceFixMs: now - tunnelFixAt, accuracy: lastFixAccuracy, speed: lastGoodSpeed, tunnel: tunnelAhead() }),
-    along: live.along, speed: lastGoodSpeed, now, limit: live.limit,
-  });
-  renderTunnelStatus();
-  if (!est) return; // exhausted: keep the warning and wait for real GPS, without restarting the budget
+  if (!reckoner) {
+    if (!shouldEstimate({ sinceFixMs: now - tunnelFixAt, accuracy: lastFixAccuracy, speed: lastGoodSpeed, tunnel: tunnelAhead() })) return;
+    reckoner = new DeadReckoner({ along: live.along, speed: lastGoodSpeed, now: now - 1000 });
+    $('dr-chip').classList.remove('hidden');
+  }
+  const est = reckoner.advance(now, live.limit);
+  if (est.done) return stopReckoning(); // too long without a fix to guess: the car waits where it is, as before
   const { point, bearing: heading } = pointAt(nav.coords, nav.cum, est.along);
   updateSpeedo(est.speed);
   driveTick({ lngLat: point, heading, speed: est.speed, accuracy: 5, time: now, estimated: true });
@@ -2816,7 +2752,7 @@ if (['localhost', '127.0.0.1'].includes(location.hostname)) {
   window.__tunnelTest = {
     loseGps: () => (gpsBlocked = true),
     restore: () => (gpsBlocked = false),
-    state: () => ({ estimating: tunnelEpisode.active, exhausted: tunnelEpisode.exhausted, suspended: tunnelEpisode.suspended, along: live?.along, tunnels: nav?.route.tunnels ?? [] }),
+    state: () => ({ estimating: Boolean(reckoner), along: live?.along, tunnels: nav?.route.tunnels ?? [] }),
   };
 }
 
@@ -2946,25 +2882,8 @@ async function reroute(fix, { force = false, note } = {}) {
   try {
     const rs = await requestRoutes(fix.lngLat, [dest.lng, dest.lat], fix.heading ?? undefined, stops);
     if (mode !== 'drive') return;
-    keepTrail(fix.lngLat);
-    // The response may arrive long after the requested position. A gap cannot be restarted on a route with a
-    // different distance origin; keep the car still until GPS confirms where it is on that route.
-    const currentFix = state.pos;
-    const fresh = isFreshGpsFix(currentFix, Date.now()) && !tunnelEpisode.active && !tunnelEpisode.exhausted && !tunnelEpisode.suspended;
-    if (!sim && !fresh) tunnelEpisode.suspend();
-    live = null;
-    nav = new Navigator(rs[0], { units: state.settings.units });
-    nav.spoken.add('depart');
-    computeOnRoute();
-    loadReports(true);
-    if (sim) startSimulation(rs[0]);
-    else if (fresh) driveTick(currentFix);
-    else {
-      drawDriveLine();
-      drawManeuverArrow();
-    }
-    renderTunnelStatus();
-    if (mode !== 'drive' || !nav) return; // the current real fix may have confirmed arrival
+    adoptRoute(rs[0], fix.lngLat);
+    faster.lastCheck = Date.now(); // a fresh route: no need to look for a better one straight away
     speak(note ?? 'Route recalculated.');
     if (rs.closuresIgnored) toast("Couldn't find a way around a reported closure.");
   } catch (e) {
@@ -3314,17 +3233,13 @@ function renderShareMenu() {
 }
 
 // Sends the driver's position only when it tells viewers something new (see shouldSend in follow.js);
-// a new route (start, reroute) goes out with the next fresh position.
+// a new route (start, reroute) always goes out straight away.
 function pushShare(withRoute = false) {
   if (!share || !live || !state.pos) return;
   const now = Date.now();
-  if (!isFreshGpsFix(state.pos, now) || tunnelEpisode.active || tunnelEpisode.exhausted || tunnelEpisode.suspended) return;
-  withRoute ||= share.route !== nav; // keep sending a held/replaced route until the server acknowledges it
   const eta = now + live.remainingTime * 1000;
-  // A new route goes out promptly; retrying the same unacknowledged route still follows the normal cadence.
-  if (share.last?.route === nav && !shouldSend(share.last, { now, pos: live.snapped, eta })) return;
-  share.last = { at: now, pos: live.snapped, eta, count: (share.last?.count ?? 0) + 1, route: nav };
-  const sentShare = share, sentRoute = nav;
+  if (!withRoute && !shouldSend(share.last, { now, pos: live.snapped, eta })) return;
+  share.last = { at: now, pos: live.snapped, eta, count: (share.last?.count ?? 0) + 1 };
   api(`/api/trips/${share.token}`, {
     method: 'PATCH',
     body: {
@@ -3333,8 +3248,6 @@ function pushShare(withRoute = false) {
       eta,
       ...(withRoute ? { route: nav.coords } : {}),
     },
-  }).then(() => {
-    if (withRoute && share === sentShare && nav === sentRoute) sentShare.route = sentRoute;
   }).catch(() => {});
 }
 
