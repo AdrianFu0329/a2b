@@ -11,7 +11,7 @@ Based on upstream `134045a`. This change fixes password recovery on the existing
 - The reset button is disabled while a request is pending. The form now asks for the latest saved code, including replacements.
 - Recovery has a separate eight-attempt / fifteen-minute window per normalized email. Concurrent requests reserve attempts inside the same transaction. Unknown emails receive the same invalid/limited responses; users sharing an IP do not share the limit. Success clears recovery and login failures for that account; daily cleanup removes expired attempts.
 - Malformed percent-encoded session cookies are treated as signed out instead of causing a server error.
-- Migration `0013_recovery_attempts.sql` and runtime schema initialization create the attempt table and email/time index. No role or tester authorization behavior changes.
+- Migration `0015_recovery_attempts.sql` and runtime schema initialization create the attempt table and email/time index. No role or tester authorization behavior changes.
 
 ## Validation
 
