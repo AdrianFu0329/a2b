@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
 
 import { REPORT_TYPES, reportLabel, reportIcon, canReportFrom, TRAIN_REPORT_TYPES, trainReportIcon } from './report-types.js';
-import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
+import { distance, bearing, cumulative, encodePolyline, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { canAutoStartRoute } from './route-preview.js';
 import { TrainGuide, markerFor, walkText } from './train-guide.js';
@@ -23,8 +23,10 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
+import { isSchoolTime, schoolAhead, schoolLimit } from './school-zones.js';
 import { DeadReckoner, shouldEstimate, nearTunnel, pointAt, BAD_ACCURACY_M } from './dead-reckoning.js';
 import { matchesWordStarts } from './text.js';
+import { shouldCheck as shouldCheckFaster, pickFaster, offerText, checkBody, OFFER_FOR_MS, KEEP_FOR_MS } from './faster-route.js';
 import { signPlaces } from './signs.js';
 import { mapPlace } from './map-places.js';
 import { initSuggest, openSuggest, closeSuggest, suggesting, syncDriverPlaces } from './suggest.js';
@@ -100,6 +102,7 @@ let trail = []; // lines driven earlier in this drive: parts of routes replaced 
 let offTrail = []; // where the car has been since it left the current route
 const tollsSpoken = new Set(); // toll plazas (route + index) already announced this drive
 const camerasWarned = new Set(); // fixed speed cameras (route + index) already announced this drive
+const schoolsWarned = new Set(); // school zones (route + index) already announced this drive
 const cameraPins = [];
 
 // ================= Boot =================
@@ -339,6 +342,10 @@ function addMapLayers() {
     // A walk: the same route as dots (a line with a gradient can't be dotted), shown instead of the line above.
     map.addLayer({ id: 'routes-walk', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' }, paint: { 'line-color': WALK_DOTS[themeNow], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 10], 'line-dasharray': [0.1, 2.4] } }, before);
     // Toll plazas on the route, as small amber "TOLL" tags.
+    // The school a school-zone warning is about, pinned while the warning shows (see checkSchools).
+    map.addSource('school-pin', { type: 'geojson', data: emptyFc() });
+    if (!map.hasImage('school-pin')) map.addImage('school-pin', schoolPinImage(), { pixelRatio: 2 });
+    map.addLayer({ id: 'school-pin', type: 'symbol', source: 'school-pin', layout: { 'icon-image': 'school-pin', 'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
     map.addSource('tolls', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('toll-tag')) map.addImage('toll-tag', tollTagImage(), { pixelRatio: 2 });
     map.addLayer({ id: 'tolls', type: 'symbol', source: 'tolls', layout: { 'icon-image': 'toll-tag', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 1] } });
@@ -682,6 +689,61 @@ function checkCameras() {
     <div class="alert-actions"><button class="btn ghost" data-a="dismiss">OK</button></div><div class="alert-timer"><i style="animation-duration:10000ms"></i></div>`;
   card.classList.remove('hidden');
   card.querySelector('[data-a]').onclick = () => card.classList.add('hidden');
+}
+
+// While driving at school times: a spoken "School zone ahead" and a chip from about 300 m before each school on the
+// route until just past it. Nothing outside the school runs. See school-zones.js.
+function checkSchools() {
+  const chip = $('school-chip');
+  const next = state.settings.alerts && isSchoolTime(Date.now(), live.snapped) && schoolAhead(live.along, nav.route.schools, nav.cum);
+  if (!next) {
+    if (!chip.classList.contains('hidden')) map.getSource('school-pin')?.setData(emptyFc());
+    return chip.classList.add('hidden');
+  }
+  const { school, ahead } = next;
+  const units = state.settings.units;
+  const limit = schoolLimit(units);
+  chip.innerHTML = `<b>SCHOOL</b><span>${ahead > 0 ? formatDistance(ahead, units) : 'Now'} · ${limit.chip}${school.name ? `<small>${esc(school.name)}</small>` : ''}</span>`;
+  chip.classList.remove('hidden');
+  const key = `${nav.total}:${school.at}`;
+  if (pinnedSchool !== key) {
+    pinnedSchool = key;
+    map.getSource('school-pin')?.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: school.pos ?? nav.coords[school.at] } }] });
+  }
+  if (ahead > 0 && !schoolsWarned.has(key)) {
+    schoolsWarned.add(key);
+    speak(`School zone ahead. ${limit.spoken}`);
+  }
+}
+let pinnedSchool = null;
+
+// A yellow pin with a little school (a roof over a door), for the school a warning is about.
+function schoolPinImage() {
+  const w = 48, h = 60, c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d');
+  g.beginPath();
+  g.moveTo(w / 2, h - 3);
+  g.bezierCurveTo(w / 2 - 6, h - 16, 4, h - 26, 4, 22);
+  g.arc(w / 2, 22, w / 2 - 4, Math.PI, 0);
+  g.bezierCurveTo(w - 4, h - 26, w / 2 + 6, h - 16, w / 2, h - 3);
+  g.fillStyle = '#f5c400';
+  g.fill();
+  g.lineWidth = 3;
+  g.strokeStyle = '#1b1b1f';
+  g.stroke();
+  g.fillStyle = '#1b1b1f';
+  g.beginPath(); // the roof
+  g.moveTo(w / 2, 9);
+  g.lineTo(w / 2 + 13, 19);
+  g.lineTo(w / 2 - 13, 19);
+  g.closePath();
+  g.fill();
+  g.fillRect(w / 2 - 10, 19, 20, 14); // the walls
+  g.fillStyle = '#f5c400';
+  g.fillRect(w / 2 - 3, 25, 6, 8); // the door
+  return g.getImageData(0, 0, w, h);
 }
 
 // Turn arrow on the map for the next maneuver: from just before the turn to just after it
@@ -1087,6 +1149,8 @@ function wireUi() {
   $('btn-parking').onclick = openParking;
   tripSheet.init();
   $('btn-stop').onclick = () => endDrive(false);
+  $('btn-faster-take').onclick = takeFaster;
+  $('btn-faster-keep').onclick = keepCurrent;
   $('btn-overview').onclick = overview;
   $('btn-trip-settings').onclick = () => {
     tripSheet.set(false);
@@ -2170,12 +2234,14 @@ function routeNote(rs) {
   return '';
 }
 
-async function requestRoutes(from, to, heading, via = []) {
+// `check`: a faster-route check's checkBody (faster-route.js), so the server can skip what an unwanted answer needs.
+async function requestRoutes(from, to, heading, via = [], { check = null } = {}) {
   const s = state.settings;
   const { routes: rs, closures_ignored: closuresIgnored, construction_avoided: constructionAvoided } = await api('/api/route', {
     method: 'POST',
     body: {
       from, to, heading, travel,
+      ...(check && { check }),
       via: via.map((p) => [p.lng, p.lat]),
       units: s.units,
       lang: navigator.language || 'en-US',
@@ -2513,7 +2579,12 @@ function startDrive() {
   drawTrail();
   tollsSpoken.clear();
   camerasWarned.clear();
+  schoolsWarned.clear();
   $('toll-chip').classList.add('hidden');
+  resetFaster();
+  $('school-chip').classList.add('hidden');
+  map.getSource('school-pin')?.setData(emptyFc());
+  pinnedSchool = null;
   startTunnelWatch();
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
@@ -2593,11 +2664,13 @@ function driveTick(fix) {
   drawDriveLine();
   drawManeuverArrow();
   if (live.prompt) speak(live.prompt);
-  // Tolls, speed cameras and road reports ahead are for drivers.
+  // Tolls, speed cameras, school zones, road reports ahead and faster routes in traffic are for drivers.
   if (travel !== 'walk') {
     checkTolls();
     checkCameras();
+    checkSchools();
     checkAlerts();
+    checkFaster();
   }
   if (share && !fix.estimated) pushShare(); // viewers see the last real position, not a guess
 
@@ -2792,15 +2865,10 @@ async function reroute(fix, { force = false, note } = {}) {
   try {
     const rs = await requestRoutes(fix.lngLat, [dest.lng, dest.lat], fix.heading ?? undefined, stops);
     if (mode !== 'drive') return;
-    keepTrail(fix.lngLat);
-    nav = new Navigator(rs[0], { units: state.settings.units });
-    nav.spoken.add('depart');
-    computeOnRoute();
-    loadReports(true);
-    if (sim) startSimulation(rs[0]);
+    adoptRoute(rs[0], fix.lngLat);
+    faster.lastCheck = Date.now(); // a fresh route: no need to look for a better one straight away
     speak(note ?? 'Route recalculated.');
     if (rs.closuresIgnored) toast("Couldn't find a way around a reported closure.");
-    if (share) pushShare(true);
   } catch (e) {
     // The common mid-drive failure is a dead spot: say so, and keep guiding on the loaded route.
     if (!navigator.onLine || e.status === 0) toast("You're offline, so the route can't be recalculated. Stay on the highlighted route.", 4000);
@@ -2808,6 +2876,92 @@ async function reroute(fix, { force = false, note } = {}) {
   } finally {
     rerouting = false;
   }
+}
+
+// Drive on `route` from `at`: after a reroute, or taking a faster route.
+function adoptRoute(route, at) {
+  keepTrail(at);
+  hideFaster();
+  nav = new Navigator(route, { units: state.settings.units });
+  nav.spoken.add('depart');
+  computeOnRoute();
+  loadReports(true);
+  if (sim) startSimulation(route);
+  if (share) pushShare(true);
+}
+
+// ---------- Faster route found ----------
+// Now and then while driving, routes from here are asked for again; one clearly quicker and really another way is
+// offered on a card, said once, and gone after 20 s if not taken. See faster-route.js for when and what counts.
+const faster = { lastCheck: 0, checks: 0, quiet: 0, busy: false, kept: [], offer: null, timer: null };
+
+function resetFaster() {
+  hideFaster();
+  Object.assign(faster, { lastCheck: 0, checks: 0, quiet: 0, busy: false, kept: [] });
+}
+
+async function checkFaster({ force = false } = {}) {
+  if (mode !== 'drive' || !nav || !live || !dest || faster.offer || rerouting) return;
+  const now = Date.now();
+  const toStop = stops[0] && state.pos ? distance(state.pos.lngLat, [stops[0].lng, stops[0].lat]) : null;
+  const due = shouldCheckFaster({
+    now, startedAt: driveStarted, lastCheck: faster.lastCheck, checks: faster.checks, quiet: faster.quiet, left: live.remaining, leftTime: live.remainingTime,
+    offRoute: live.offRoute, busy: faster.busy, toStop, demo: Boolean(sim),
+  });
+  if (!due && !force) return;
+  faster.busy = true;
+  faster.lastCheck = now;
+  faster.checks++;
+  const route = nav.route, from = live.snapped, heading = state.pos?.heading ?? undefined;
+  try {
+    const rest = nav.coords.slice(Math.max(0, nav.seg - 1));
+    const check = checkBody(rest, live.remainingTime, encodePolyline);
+    const rs = await requestRoutes(from, [dest.lng, dest.lat], heading, stops, { check });
+    if (mode !== 'drive' || nav?.route !== route || !live) return; // rerouted or ended meanwhile
+    const pick = pickFaster(rs, { leftTime: live.remainingTime, rest, now: Date.now(), kept: faster.kept });
+    faster.quiet = pick ? 0 : faster.quiet + 1; // nothing found: wait longer before the next (checkGap)
+    if (pick) showFaster(pick);
+  } catch {
+    // A failed check is just no offer: the drive carries on as it is, and the next waits longer.
+    faster.quiet++;
+  } finally {
+    faster.busy = false;
+  }
+}
+
+function showFaster(pick) {
+  const { line, spoken } = offerText(pick.saves, pick.route.via);
+  faster.offer = pick;
+  const card = $('faster-card');
+  card.querySelector('.faster-line').textContent = line;
+  card.classList.remove('hidden');
+  speak(spoken);
+  clearTimeout(faster.timer);
+  faster.timer = setTimeout(() => keepCurrent(), OFFER_FOR_MS); // no answer counts as Keep
+}
+
+function hideFaster() {
+  clearTimeout(faster.timer);
+  faster.offer = null;
+  $('faster-card')?.classList.add('hidden');
+}
+
+function keepCurrent() {
+  if (faster.offer) faster.kept.push({ coords: faster.offer.route.coords, until: Date.now() + KEEP_FOR_MS });
+  hideFaster();
+}
+
+function takeFaster() {
+  const pick = faster.offer;
+  if (!pick || mode !== 'drive') return hideFaster();
+  adoptRoute(pick.route, live?.snapped ?? state.pos?.lngLat);
+  if (state.pos) driveTick(state.pos); // the new arrival time and line now, not at the next GPS fix
+  speak(`Taking the faster route${pick.route.via ? ` via ${pick.route.via}` : ''}.`);
+}
+
+// For testing on a phone against a local server: check now, whatever the timers say.
+if (typeof location !== 'undefined' && ['localhost', '127.0.0.1'].includes(location.hostname)) {
+  window.__fasterRouteTest = { checkNow: () => checkFaster({ force: true }), state: () => ({ ...faster, offer: faster.offer && { saves: faster.offer.saves, via: faster.offer.route.via } }) };
 }
 
 async function addStop(place) {
@@ -2978,7 +3132,11 @@ async function endDrive(arrived) {
   trail = [];
   offTrail = [];
   drawTrail();
+  resetFaster();
   $('toll-chip').classList.add('hidden');
+  $('school-chip').classList.add('hidden');
+  map.getSource('school-pin')?.setData(emptyFc());
+  pinnedSchool = null;
   onRoute = [];
   stops = [];
   renderStopMenu();
