@@ -24,8 +24,7 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
-import { isSchoolTime, schoolAhead, schoolLimit } from './school-zones.js';
-import { DeadReckoner, shouldEstimate, nearTunnel, pointAt, BAD_ACCURACY_M } from './dead-reckoning.js';
+import { DeadReckoningEpisode, isFreshGpsFix, shouldEstimate, nearTunnel, pointAt } from './dead-reckoning.js';
 import { matchesWordStarts } from './text.js';
 import { shouldCheck as shouldCheckFaster, pickFaster, offerText, checkBody, OFFER_FOR_MS, KEEP_FOR_MS } from './faster-route.js';
 import { signPlaces } from './signs.js';
@@ -105,6 +104,7 @@ const tollsSpoken = new Set(); // toll plazas (route + index) already announced 
 const camerasWarned = new Set(); // fixed speed cameras (route + index) already announced this drive
 const schoolsWarned = new Set(); // school zones (route + index) already announced this drive
 const cameraPins = [];
+const tunnelEpisode = new DeadReckoningEpisode();
 
 // ================= Boot =================
 // With Reduce Motion on (an iPhone accessibility setting), MapLibre turns every camera move into an instant
@@ -891,6 +891,7 @@ function onFix(p) {
     speed: speed ?? (still ? 0 : prev ? estSpeed(prev, raw, p.timestamp) : 0),
     accuracy: p.coords.accuracy,
     time: still ? prev.time : p.timestamp, // so the speed estimate spans the whole stop
+    gpsTime: p.timestamp,
   };
   if (sim || gpsBlocked) return; // a simulated drive owns the car right now (or a test is pretending the GPS is gone)
   handleFix(fix, !prev);
@@ -903,11 +904,11 @@ function estSpeed(prev, lngLat, t) {
 
 function handleFix(fix, first = false) {
   if (mode === 'drive' && !sim) {
-    tunnelFixAt = Date.now();
     lastFixAccuracy = fix.accuracy;
-    // A vague fix in a tunnel would drag the car off its route: leave it to the estimate (see tunnelTick).
-    if ((fix.accuracy ?? 0) > BAD_ACCURACY_M && (reckoner || tunnelAhead())) return;
-    if (reckoner) stopReckoning();
+    // Vague, stale or repeated measurements cannot recover an outage or confirm arrival.
+    if (!tunnelEpisode.acceptFix(fix, Date.now(), { strict: tunnelEpisode.active || tunnelEpisode.exhausted || tunnelEpisode.suspended || tunnelAhead() })) return;
+    tunnelFixAt = fix.gpsTime ?? fix.time;
+    $('dr-chip')?.classList.add('hidden');
     lastGoodSpeed = fix.speed ?? lastGoodSpeed;
   }
   state.pos = fix;
@@ -2673,7 +2674,7 @@ function stopSimulation() {
 
 function driveTick(fix) {
   if (!nav) return;
-  live = nav.update({ position: fix.lngLat, heading: fix.heading, speed: fix.speed, accuracy: fix.accuracy });
+  live = nav.update({ position: fix.lngLat, heading: fix.heading, speed: fix.speed, accuracy: fix.accuracy, estimated: fix.estimated });
   const heading = (fix.speed ?? 0) > 1.5 && fix.heading != null ? fix.heading : live.routeBearing;
   moveCar({ pos: live.snapped, heading, along: live.along, path: nav });
   renderBanner();
@@ -2690,10 +2691,12 @@ function driveTick(fix) {
     checkAlerts();
     checkFaster();
   }
-  if (share && !fix.estimated) pushShare(); // viewers see the last real position, not a guess
+  // Estimates guide the arrow and upcoming turns, but cannot confirm stops, arrival, or an off-route drive.
+  if (fix.estimated) return;
+  if (share) pushShare(); // viewers see the last real position, not a guess
 
   const stopStep = nav.steps.findIndex((st) => st.type === 'stop');
-  if (stops.length && stopStep >= 0 && live.stepIndex >= stopStep) {
+  if (live.confirmedOnRoute && stops.length && stopStep >= 0 && live.stepIndex >= stopStep) {
     toast(`Reached ${stops.shift().name}`);
     renderStopMenu();
   }
@@ -2708,7 +2711,7 @@ function driveTick(fix) {
 // ---------- Tunnel mode ----------
 // When the GPS goes quiet in a tunnel (or anywhere, while moving), keep the car going along the route at its last
 // speed, so the banner, distances and the turn after the tunnel keep coming. See dead-reckoning.js.
-let reckoner = null, tunnelTimer = null, tunnelFixAt = 0, lastFixAccuracy = null, lastGoodSpeed = 0, gpsBlocked = false;
+let tunnelTimer = null, tunnelFixAt = 0, lastFixAccuracy = null, lastGoodSpeed = 0, gpsBlocked = false;
 
 function tunnelAhead() {
   return Boolean(nav && live && nearTunnel(live.along, nav.cum, nav.route.tunnels));
@@ -2729,20 +2732,27 @@ function stopTunnelWatch() {
 }
 
 function stopReckoning() {
-  reckoner = null;
+  tunnelEpisode.reset();
   $('dr-chip')?.classList.add('hidden');
+}
+
+function renderTunnelStatus() {
+  const waiting = tunnelEpisode.exhausted || tunnelEpisode.suspended;
+  $('dr-chip').classList.toggle('hidden', !tunnelEpisode.active && !waiting);
+  if (tunnelEpisode.active || waiting) {
+    $('dr-chip').querySelector('span').textContent = waiting ? 'Waiting for GPS' : 'Estimating your position';
+  }
 }
 
 function tunnelTick() {
   if (mode !== 'drive' || sim || !nav || !live || live.offRoute) return;
   const now = Date.now();
-  if (!reckoner) {
-    if (!shouldEstimate({ sinceFixMs: now - tunnelFixAt, accuracy: lastFixAccuracy, speed: lastGoodSpeed, tunnel: tunnelAhead() })) return;
-    reckoner = new DeadReckoner({ along: live.along, speed: lastGoodSpeed, now: now - 1000 });
-    $('dr-chip').classList.remove('hidden');
-  }
-  const est = reckoner.advance(now, live.limit);
-  if (est.done) return stopReckoning(); // too long without a fix to guess: the car waits where it is, as before
+  const est = tunnelEpisode.advance({
+    eligible: shouldEstimate({ sinceFixMs: now - tunnelFixAt, accuracy: lastFixAccuracy, speed: lastGoodSpeed, tunnel: tunnelAhead() }),
+    along: live.along, speed: lastGoodSpeed, now, limit: live.limit,
+  });
+  renderTunnelStatus();
+  if (!est) return; // exhausted: keep the warning and wait for real GPS, without restarting the budget
   const { point, bearing: heading } = pointAt(nav.coords, nav.cum, est.along);
   updateSpeedo(est.speed);
   driveTick({ lngLat: point, heading, speed: est.speed, accuracy: 5, time: now, estimated: true });
@@ -2753,7 +2763,7 @@ if (['localhost', '127.0.0.1'].includes(location.hostname)) {
   window.__tunnelTest = {
     loseGps: () => (gpsBlocked = true),
     restore: () => (gpsBlocked = false),
-    state: () => ({ estimating: Boolean(reckoner), along: live?.along, tunnels: nav?.route.tunnels ?? [] }),
+    state: () => ({ estimating: tunnelEpisode.active, exhausted: tunnelEpisode.exhausted, suspended: tunnelEpisode.suspended, along: live?.along, tunnels: nav?.route.tunnels ?? [] }),
   };
 }
 
@@ -2883,8 +2893,25 @@ async function reroute(fix, { force = false, note } = {}) {
   try {
     const rs = await requestRoutes(fix.lngLat, [dest.lng, dest.lat], fix.heading ?? undefined, stops);
     if (mode !== 'drive') return;
-    adoptRoute(rs[0], fix.lngLat);
-    faster.lastCheck = Date.now(); // a fresh route: no need to look for a better one straight away
+    keepTrail(fix.lngLat);
+    // The response may arrive long after the requested position. A gap cannot be restarted on a route with a
+    // different distance origin; keep the car still until GPS confirms where it is on that route.
+    const currentFix = state.pos;
+    const fresh = isFreshGpsFix(currentFix, Date.now()) && !tunnelEpisode.active && !tunnelEpisode.exhausted && !tunnelEpisode.suspended;
+    if (!sim && !fresh) tunnelEpisode.suspend();
+    live = null;
+    nav = new Navigator(rs[0], { units: state.settings.units });
+    nav.spoken.add('depart');
+    computeOnRoute();
+    loadReports(true);
+    if (sim) startSimulation(rs[0]);
+    else if (fresh) driveTick(currentFix);
+    else {
+      drawDriveLine();
+      drawManeuverArrow();
+    }
+    renderTunnelStatus();
+    if (mode !== 'drive' || !nav) return; // the current real fix may have confirmed arrival
     speak(note ?? 'Route recalculated.');
     if (rs.closuresIgnored) toast("Couldn't find a way around a reported closure.");
   } catch (e) {
@@ -3234,13 +3261,17 @@ function renderShareMenu() {
 }
 
 // Sends the driver's position only when it tells viewers something new (see shouldSend in follow.js);
-// a new route (start, reroute) always goes out straight away.
+// a new route (start, reroute) goes out with the next fresh position.
 function pushShare(withRoute = false) {
   if (!share || !live || !state.pos) return;
   const now = Date.now();
+  if (!isFreshGpsFix(state.pos, now) || tunnelEpisode.active || tunnelEpisode.exhausted || tunnelEpisode.suspended) return;
+  withRoute ||= share.route !== nav; // keep sending a held/replaced route until the server acknowledges it
   const eta = now + live.remainingTime * 1000;
-  if (!withRoute && !shouldSend(share.last, { now, pos: live.snapped, eta })) return;
-  share.last = { at: now, pos: live.snapped, eta, count: (share.last?.count ?? 0) + 1 };
+  // A new route goes out promptly; retrying the same unacknowledged route still follows the normal cadence.
+  if (share.last?.route === nav && !shouldSend(share.last, { now, pos: live.snapped, eta })) return;
+  share.last = { at: now, pos: live.snapped, eta, count: (share.last?.count ?? 0) + 1, route: nav };
+  const sentShare = share, sentRoute = nav;
   api(`/api/trips/${share.token}`, {
     method: 'PATCH',
     body: {
@@ -3249,6 +3280,8 @@ function pushShare(withRoute = false) {
       eta,
       ...(withRoute ? { route: nav.coords } : {}),
     },
+  }).then(() => {
+    if (withRoute && share === sentShare && nav === sentRoute) sentShare.route = sentRoute;
   }).catch(() => {});
 }
 
