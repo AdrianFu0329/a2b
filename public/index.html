@@ -172,7 +172,7 @@
           </div>
         </div>
       </div>
-      <div id="ride-est" class="toll-chip ride-est hidden" role="status"><b>NO GPS</b><span>Estimating · underground</span></div>
+      <div id="ride-est" class="toll-chip ride-est hidden" role="status"><b>NO GPS</b><span>Estimating · Currently Underground</span></div>
       <div id="ride-off" class="offroute hidden" role="status"><span class="spinner" aria-hidden="true"></span>Recalculating…</div>
     </div>
     <div class="map-tools drive">
@@ -186,9 +186,8 @@
       <ol id="ride-stops" class="ride-stops"></ol>
       <div class="sheet-actions">
         <button id="btn-ride-stop" class="btn">Stop</button>
-        <button id="btn-ride-here" class="btn primary" aria-describedby="ride-here-hint"></button>
+        <button id="btn-ride-here" class="btn primary"></button>
       </div>
-      <p id="ride-here-hint" class="ride-here-hint">GPS lost? Tap where you are, or a station above.</p>
     </section>
   </div>
 
@@ -205,7 +204,7 @@
   <section id="here-confirm" class="sheet hidden" aria-label="Say where you are">
     <div class="dest-head"><div class="dest-text"><h2 id="here-title"></h2><p id="here-sub" class="hint"></p></div></div>
     <div class="sheet-actions">
-      <button id="btn-here-no" class="btn ghost">Not now</button>
+      <button id="btn-here-no" class="btn ghost">Cancel</button>
       <button id="btn-here-yes" class="btn primary">I’m here</button>
     </div>
   </section>

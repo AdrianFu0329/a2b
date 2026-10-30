@@ -1852,7 +1852,7 @@ function renderRide(view) {
   peek.style.setProperty('--dot', leg.line?.color ?? '#1c7ed6');
   peek.textContent = (view.kind === 'ride'
     ? (view.alerted ? `Get off at ${leg.to.name}` : `Next: ${view.next}`)
-    : view.kind === 'wait' ? `${leg.line.name} towards ${leg.towards}` : sentence(walkText(leg))) + (arrive ? ` · arrive ${formatClock(arrive)}` : '');
+    : view.kind === 'wait' ? `${leg.line.name} towards ${leg.towards}` : sentence(walkText(leg))) + (arrive ? ` · ETA at ${formatClock(arrive)}` : '');
   // The list: this ride's stations, or on foot what's left of the trip.
   const list = $('ride-stops');
   if (leg.mode === 'train') {
