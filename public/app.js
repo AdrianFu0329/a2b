@@ -23,6 +23,7 @@ import { noteProbeFix, startProbeSender, discardProbeBuffer } from './probe.js';
 import { welcome, hideSplash } from './welcome.js';
 import { watchUpdates, updateCheckpoint } from './update.js';
 import { prefetchRouteTiles } from './offline.js';
+import { isSchoolTime, schoolAhead, schoolLimit } from './school-zones.js';
 import { DeadReckoner, shouldEstimate, nearTunnel, pointAt, BAD_ACCURACY_M } from './dead-reckoning.js';
 import { matchesWordStarts } from './text.js';
 import { signPlaces } from './signs.js';
@@ -100,6 +101,7 @@ let trail = []; // lines driven earlier in this drive: parts of routes replaced 
 let offTrail = []; // where the car has been since it left the current route
 const tollsSpoken = new Set(); // toll plazas (route + index) already announced this drive
 const camerasWarned = new Set(); // fixed speed cameras (route + index) already announced this drive
+const schoolsWarned = new Set(); // school zones (route + index) already announced this drive
 const cameraPins = [];
 
 // ================= Boot =================
@@ -339,6 +341,10 @@ function addMapLayers() {
     // A walk: the same route as dots (a line with a gradient can't be dotted), shown instead of the line above.
     map.addLayer({ id: 'routes-walk', type: 'line', source: 'routes', filter: ['==', ['get', 'selected'], true], layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' }, paint: { 'line-color': WALK_DOTS[themeNow], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 10], 'line-dasharray': [0.1, 2.4] } }, before);
     // Toll plazas on the route, as small amber "TOLL" tags.
+    // The school a school-zone warning is about, pinned while the warning shows (see checkSchools).
+    map.addSource('school-pin', { type: 'geojson', data: emptyFc() });
+    if (!map.hasImage('school-pin')) map.addImage('school-pin', schoolPinImage(), { pixelRatio: 2 });
+    map.addLayer({ id: 'school-pin', type: 'symbol', source: 'school-pin', layout: { 'icon-image': 'school-pin', 'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
     map.addSource('tolls', { type: 'geojson', data: emptyFc() });
     if (!map.hasImage('toll-tag')) map.addImage('toll-tag', tollTagImage(), { pixelRatio: 2 });
     map.addLayer({ id: 'tolls', type: 'symbol', source: 'tolls', layout: { 'icon-image': 'toll-tag', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 1] } });
@@ -682,6 +688,61 @@ function checkCameras() {
     <div class="alert-actions"><button class="btn ghost" data-a="dismiss">OK</button></div><div class="alert-timer"><i style="animation-duration:10000ms"></i></div>`;
   card.classList.remove('hidden');
   card.querySelector('[data-a]').onclick = () => card.classList.add('hidden');
+}
+
+// While driving at school times: a spoken "School zone ahead" and a chip from about 300 m before each school on the
+// route until just past it. Nothing outside the school runs. See school-zones.js.
+function checkSchools() {
+  const chip = $('school-chip');
+  const next = state.settings.alerts && isSchoolTime(Date.now(), live.snapped) && schoolAhead(live.along, nav.route.schools, nav.cum);
+  if (!next) {
+    if (!chip.classList.contains('hidden')) map.getSource('school-pin')?.setData(emptyFc());
+    return chip.classList.add('hidden');
+  }
+  const { school, ahead } = next;
+  const units = state.settings.units;
+  const limit = schoolLimit(units);
+  chip.innerHTML = `<b>SCHOOL</b><span>${ahead > 0 ? formatDistance(ahead, units) : 'Now'} · ${limit.chip}${school.name ? `<small>${esc(school.name)}</small>` : ''}</span>`;
+  chip.classList.remove('hidden');
+  const key = `${nav.total}:${school.at}`;
+  if (pinnedSchool !== key) {
+    pinnedSchool = key;
+    map.getSource('school-pin')?.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: school.pos ?? nav.coords[school.at] } }] });
+  }
+  if (ahead > 0 && !schoolsWarned.has(key)) {
+    schoolsWarned.add(key);
+    speak(`School zone ahead. ${limit.spoken}`);
+  }
+}
+let pinnedSchool = null;
+
+// A yellow pin with a little school (a roof over a door), for the school a warning is about.
+function schoolPinImage() {
+  const w = 48, h = 60, c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d');
+  g.beginPath();
+  g.moveTo(w / 2, h - 3);
+  g.bezierCurveTo(w / 2 - 6, h - 16, 4, h - 26, 4, 22);
+  g.arc(w / 2, 22, w / 2 - 4, Math.PI, 0);
+  g.bezierCurveTo(w - 4, h - 26, w / 2 + 6, h - 16, w / 2, h - 3);
+  g.fillStyle = '#f5c400';
+  g.fill();
+  g.lineWidth = 3;
+  g.strokeStyle = '#1b1b1f';
+  g.stroke();
+  g.fillStyle = '#1b1b1f';
+  g.beginPath(); // the roof
+  g.moveTo(w / 2, 9);
+  g.lineTo(w / 2 + 13, 19);
+  g.lineTo(w / 2 - 13, 19);
+  g.closePath();
+  g.fill();
+  g.fillRect(w / 2 - 10, 19, 20, 14); // the walls
+  g.fillStyle = '#f5c400';
+  g.fillRect(w / 2 - 3, 25, 6, 8); // the door
+  return g.getImageData(0, 0, w, h);
 }
 
 // Turn arrow on the map for the next maneuver: from just before the turn to just after it
@@ -2513,7 +2574,11 @@ function startDrive() {
   drawTrail();
   tollsSpoken.clear();
   camerasWarned.clear();
+  schoolsWarned.clear();
   $('toll-chip').classList.add('hidden');
+  $('school-chip').classList.add('hidden');
+  map.getSource('school-pin')?.setData(emptyFc());
+  pinnedSchool = null;
   startTunnelWatch();
   nav = new Navigator(route, { units: state.settings.units });
   nav.spoken.add('depart');
@@ -2593,10 +2658,11 @@ function driveTick(fix) {
   drawDriveLine();
   drawManeuverArrow();
   if (live.prompt) speak(live.prompt);
-  // Tolls, speed cameras and road reports ahead are for drivers.
+  // Tolls, speed cameras, school zones and road reports ahead are for drivers.
   if (travel !== 'walk') {
     checkTolls();
     checkCameras();
+    checkSchools();
     checkAlerts();
   }
   if (share && !fix.estimated) pushShare(); // viewers see the last real position, not a guess
@@ -2979,6 +3045,9 @@ async function endDrive(arrived) {
   offTrail = [];
   drawTrail();
   $('toll-chip').classList.add('hidden');
+  $('school-chip').classList.add('hidden');
+  map.getSource('school-pin')?.setData(emptyFc());
+  pinnedSchool = null;
   onRoute = [];
   stops = [];
   renderStopMenu();

@@ -11,6 +11,7 @@ import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annota
 import { constructionTwins } from './lib/construction.js';
 import { liveTraffic, applyTraffic } from './lib/traffic.js';
 import { loadCameras, camerasAlong } from './lib/cameras.js';
+import { loadSchools, schoolsAlong } from './lib/schools.js';
 import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { refreshChargers, allChargers } from './lib/chargers.js';
@@ -526,6 +527,10 @@ async function route(request, env, url) {
       loadCameras(env.ASSETS)
         .catch(() => [])
         .then((cams) => routes.forEach((r) => (r.cameras = camerasAlong(r.coords, cams)))),
+      // Schools beside each route, for the school zone warning at school times.
+      loadSchools(env.ASSETS)
+        .catch(() => ({ grid: new Map() }))
+        .then((schools) => routes.forEach((r) => (r.schools = schoolsAlong(r.coords, schools)))),
     ]);
     for (const r of routes) delete r.shapes;
     const plazas = routes.flatMap((r) => r.tolls.map((t) => [t, r.coords[t.at]]));

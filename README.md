@@ -50,6 +50,7 @@ Keep the screen on while you drive (A2B keeps it awake). Only use it when it's s
 | 🚇 **Train guidance** | Start a train trip to be guided through it: the walk to the station, which train, the next station as you go (estimated from the timetable underground, where GPS drops out), "Next stop: Masjid Jamek. Get off here." with a buzz, and where to change. A 3D train in the line's colour shows where you are on the line. Works while A2B is open on screen. |
 | 🗣️ **Turn by turn** | Spoken directions, the next turn and the one after, lane guidance, roundabout exits, a turn arrow on the map, and rerouting when you go off route. |
 | 🚇 **Tunnel mode** | When the GPS drops out in a tunnel (SMART Tunnel, Penchala Link, KL's underpasses) or anywhere while moving, the car keeps going along the route at its last speed, so the next turn still comes. "No GPS · Estimating" shows until the signal is back, for up to 90 s or 2.5 km. |
+| 🏫 **School zones** | At school times (6:30–7:45, 12:30–2:30, 5:45–6:45 on school days, Sunday to Thursday in Kedah, Kelantan and Terengganu), "School zone ahead. Slow down to 30." about 300 m before each school on the route, with a "30 km/h zone" chip and a pin on the school until you're past. School holidays aren't known, so it still warns on those days. |
 | 📸 **Speed cameras** | Fixed AES and AWAS cameras on your route, with a voice warning and the limit about 800 m before each. |
 | 💰 **Tolls** | Toll plazas along the route, with the car price and ways to pay (Touch 'n Go, RFID, SmartTAG) where mapped. |
 | 🅿️ **Parking** | Car parks near your destination, paid or free, with type and spaces. Pick one and the drive reroutes there. Or search "parking", "parking klcc" or "letak kereta pavilion". |
@@ -131,6 +132,7 @@ Everything A2B uses is free and needs no key:
 | Places drivers added or fixed | A2B drivers, approved by a tester | Kept in the database; phones download what changed since they last asked. |
 | Roads under construction | [Overture Maps](https://overturemaps.org) (OpenStreetMap roads) | Built with `npm run construction`, kept in git. |
 | Fixed speed cameras (AES, AWAS) | OpenStreetMap, found through Photon | Built with `npm run cameras` into `public/cameras.json`, kept in git. |
+| Schools | OpenStreetMap, through the [Overpass API](https://overpass-api.de) | Built with `npm run schools` into `public/schools.json` (kindergartens, tuition centres and colleges left out), kept in git. |
 | EV chargers | OpenStreetMap ([Overpass API](https://overpass-api.de)), [Open Charge Map](https://openchargemap.org) (`OCM_KEY` secret, optional), Overture Maps | Kept in the database and refreshed weekly by the nightly job (the first list arrives with its first run after deploying). Open Charge Map's openly licensed chargers (CC BY-SA 4.0) are added when a free key is set (`npx wrangler secret put OCM_KEY`). |
 
 The community servers ask for fair use, which is why the beta caps how many people use it at once. For more
