@@ -350,6 +350,16 @@ body.walking #speedo, body.walking #limit, body.walking #toll-chip, body.walking
 .rider svg { width: 20px; height: 20px; }
 .rider.walker { width: 44px; height: 44px; background: none; border: 0; box-shadow: none; color: var(--car, #e23d9b); filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.35)); }
 .rider.walker svg { width: 44px; height: 44px; }
+/* Train reports (see trainReports in app.js): a button with the ride's others, what riders reported under the banner,
+   and on a trip's option when planning. */
+.report-round { background: var(--report); }
+.report-round svg { width: 22px; height: 22px; }
+#train-report, #train-report-vote { z-index: 21; }
+.report-grid.train-report-grid { grid-template-columns: repeat(2, 1fr); }
+.train-report-chip { text-align: left; }
+.train-report-chip b { background: var(--tr, #e67700); color: #fff; }
+.t-report { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; font-weight: 700; color: #e67700; }
+.t-report i { width: 8px; height: 8px; border-radius: 50%; background: var(--tr, #e67700); }
 .route-opt.t-opt { flex-wrap: wrap; }
 .t-opt .t-steps { flex-basis: 100%; }
 .t-legs { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }

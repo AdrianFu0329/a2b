@@ -63,7 +63,14 @@ CREATE TABLE IF NOT EXISTS driver_places (
   id INTEGER PRIMARY KEY AUTOINCREMENT, suggestion_id INTEGER, name TEXT NOT NULL, address TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
   lat REAL, lng REAL, hides_name TEXT, hides_lat REAL, hides_lng REAL, user_id INTEGER, updated_at INTEGER NOT NULL, removed INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS driver_places_updated ON driver_places (updated_at)
+CREATE INDEX IF NOT EXISTS driver_places_updated ON driver_places (updated_at);
+CREATE TABLE IF NOT EXISTS train_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, line TEXT NOT NULL, station TEXT NOT NULL DEFAULT '', type TEXT NOT NULL,
+  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, still INTEGER NOT NULL DEFAULT 0, gone INTEGER NOT NULL DEFAULT 0, removed INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS train_reports_live ON train_reports (line, expires_at);
+CREATE INDEX IF NOT EXISTS train_reports_user ON train_reports (user_id, created_at);
+CREATE TABLE IF NOT EXISTS train_report_votes (report_id INTEGER NOT NULL, user_id INTEGER NOT NULL, vote TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (report_id, user_id))
 `;
 
 let ready = null;

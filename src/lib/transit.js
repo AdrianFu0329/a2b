@@ -441,6 +441,14 @@ const lineKey = (trip) => trip.legs.filter((l) => l.mode === 'train').map((l) =>
 
 export const feeds = DATA.feeds;
 
+// The names of a line's stations (for checking a rider's report names one), or null for a line there isn't.
+const stationNames = new Map();
+export function lineStations(line) {
+  if (!DATA.lines[line]) return null;
+  if (!stationNames.has(line)) stationNames.set(line, new Set(patterns.filter((p) => p.line === line).flatMap((p) => p.stops.map((s) => stops[s].name))));
+  return stationNames.get(line);
+}
+
 // ---------- Real walks ----------
 const UA = 'a2b-navigation/0.1 (+https://a2b-beta.pages.dev)';
 // The public routing server is volunteer-run (fair use), and driving routes need it too: ask it for a few walks per

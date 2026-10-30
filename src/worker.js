@@ -15,6 +15,7 @@ import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
 import { refreshChargers, allChargers } from './lib/chargers.js';
 import { reportsRepo } from './lib/reports.js';
+import { trainReportsRepo } from './lib/train-reports.js';
 import { suggestionsRepo } from './lib/suggestions.js';
 import { presenceRepo, limits, validDevice } from './lib/presence.js';
 import { usageRepo, USAGE_DAYS, dayOf } from './lib/usage.js';
@@ -73,6 +74,7 @@ async function route(request, env, url) {
   const parts = path.split('/').filter(Boolean); // ['api', ...]
   const user = await currentUser(db, request);
   const reports = reportsRepo(db);
+  const trainReports = trainReportsRepo(db);
   const needUser = () => {
     if (!user) throw httpError('Sign in first.', 401);
     return user;
@@ -441,6 +443,9 @@ async function route(request, env, url) {
     const m = body.moving;
     const moving = m && Number.isFinite(m.speed) && Number.isFinite(m.heading) ? { speed: m.speed, heading: m.heading } : null;
     const plan = await withRealWalks(env, planTransit(from, to, at, { moving }));
+    // What riders have reported on the lines these trips use (delays, a stopped train...), so the trips can say so.
+    const lines = plan.trips.flatMap((t) => t.legs.filter((l) => l.mode === 'train').map((l) => l.line.id));
+    plan.reports = await trainReports.forLines(lines, user?.id);
     await count('routes'); // with driving and walking routes
     return json(plan);
   }
@@ -555,6 +560,24 @@ async function route(request, env, url) {
     const u = needUser();
     const body = await readJson(request);
     return json(await reports.vote(u, Number(parts[2]), body.vote));
+  }
+
+  // ---------- Train reports (src/lib/train-reports.js) ----------
+  if (path === '/api/train-reports' && method === 'GET') {
+    const lines = (url.searchParams.get('lines') ?? '').split(',').filter(Boolean);
+    if (!lines.length) throw httpError('lines=<line id>,... is required.', 400);
+    return json({ reports: await trainReports.forLines(lines, user?.id), now: Date.now() });
+  }
+
+  if (path === '/api/train-reports' && method === 'POST') {
+    const u = needUser();
+    return json(await trainReports.create(u, await readJson(request)), 201);
+  }
+
+  if (parts[1] === 'train-reports' && parts[3] === 'vote' && method === 'POST') {
+    const u = needUser();
+    const body = await readJson(request);
+    return json(await trainReports.vote(u, Number(parts[2]), body.vote));
   }
 
   // ---------- Opt-in probe traffic ----------

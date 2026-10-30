@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Thaqif Syarafuddin bin Roslan. A2B: https://github.com/thaqif0709/a2b (see NOTICE).
 
-import { REPORT_TYPES, reportLabel, reportIcon, canReportFrom } from './report-types.js';
+import { REPORT_TYPES, reportLabel, reportIcon, canReportFrom, TRAIN_REPORT_TYPES, trainReportIcon } from './report-types.js';
 import { distance, bearing, cumulative, formatDistance, formatDuration, formatClock } from './geo.js';
 import { Navigator, Simulator, reportsAlong, sliceAlong, spokenDistance, roundaboutTurn } from './nav.js';
 import { canAutoStartRoute } from './route-preview.js';
@@ -1015,6 +1015,8 @@ function wireUi() {
     if (li) askHere(Number(li.dataset.k));
   };
   $('btn-here-no').onclick = () => $('here-confirm').classList.add('hidden');
+  $('btn-report-ride').onclick = openTrainReport;
+  $('ride-report-chip').onclick = () => askTrainReport(trainReports.shown);
   rideSheet.init();
   $('btn-compass').onclick = () => map.easeTo({ bearing: 0, pitch: 0 });
   $('btn-loc-retry').onclick = () => {
@@ -1136,7 +1138,7 @@ function closeScreen(id) {
   if (id === 'suggest') closeSuggest();
 }
 
-const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'resume', 'here-confirm', 'suggest', 'preview'];
+const OVERLAYS = ['ctx', 'auth', 'panel', 'search', 'report-card', 'report-sheet', 'parking', 'later', 'arrived', 'resume', 'here-confirm', 'train-report', 'train-report-vote', 'suggest', 'preview'];
 
 // Closes the top-most screen; returns false when nothing was open.
 function closeTop() {
@@ -1561,7 +1563,7 @@ async function showTransit(place, from, status) {
   try {
     const plan = await api('/api/transit', { method: 'POST', body: { from, to: [place.lng, place.lat], moving: origin ? null : movingNow() } });
     if (mode !== 'preview' || dest !== place || travel !== 'transit') return;
-    transit = { place, trips: plan.trips, selected: 0 };
+    transit = { place, trips: plan.trips, selected: 0, reports: plan.reports ?? [] };
     const night = plan.night ? `${plan.note} The first trains leave around ${formatClock(new Date(plan.firstTrain))}.` : plan.note;
     const last = plan.trips[0]?.lastTrain ? 'Last train tonight: miss it and there’s no later one this way.' : '';
     const elsewhere = origin ? `From ${origin.name}. Leave later puts the trip in your calendar.` : '';
@@ -1607,7 +1609,7 @@ function renderTransit() {
     const facts = [`arrive ${formatClock(new Date(trip.arrive))}`, trip.changes ? `${trip.changes} change${trip.changes > 1 ? 's' : ''}` : 'no changes'];
     if (trip.lastTrain) facts.push('<span class="t-last">last train</span>');
     const steps = i === transit.selected ? `<ol class="t-steps">${trip.legs.map(stepHtml).join('')}</ol>` : '';
-    b.innerHTML = `<span class="r-time">${formatDuration(trip.duration)}</span><span class="r-info"><b>${facts.join(' · ')}</b><br><span class="t-legs">${legs}</span></span>${steps}`;
+    b.innerHTML = `<span class="r-time">${formatDuration(trip.duration)}</span><span class="r-info"><b>${facts.join(' · ')}</b><br><span class="t-legs">${legs}</span>${reportedOn(trip)}</span>${steps}`;
     b.onclick = () => {
       transit.selected = i;
       renderTransit();
@@ -1616,6 +1618,16 @@ function renderTransit() {
   });
   drawTransit();
   renderPeekSummary();
+}
+
+// What riders have reported on a trip's lines (src/lib/train-reports.js), as one line under its trains.
+function reportedOn(trip) {
+  const found = (transit.reports ?? []).filter((r) => trip.legs.some((l) => l.line?.id === r.line));
+  if (!found.length) return '';
+  const [r] = found, t = TRAIN_REPORT_TYPES[r.type];
+  const line = trip.legs.find((l) => l.line?.id === r.line).line;
+  const more = found.length > 1 ? ` · +${found.length - 1} more` : '';
+  return `<br><span class="t-report" style="--tr:${t.color}"><i></i>${esc(t.label)} on the ${esc(line.short)}${r.station ? ` at ${esc(r.station)}` : ''}, ${timeAgo(r.created_at)}${more}</span>`;
 }
 
 function stepHtml(l) {
@@ -1718,6 +1730,7 @@ function startRide() {
   drawPois(); // off the map while riding
   guide = new TrainGuide(trip, { now: rideNow(), leg: resumeLeg });
   resumeLeg = 0;
+  Object.assign(trainReports, { list: transit?.reports ?? [], at: 0, lines: '', said: new Set(), shown: null, html: '' });
   rideStarted = rideNow();
   saveTrip('ride');
   carMarker.remove(); // the train or walking marker instead (and the 3D vehicle hides itself in this mode)
@@ -1747,6 +1760,8 @@ function rideTick(say = null) {
   if (view.off) replanRide();
   else replanNoted = false;
   renderRide(view);
+  renderTrainReport(); // its age, and gone once it expires or the trip leaves that line
+  refreshTrainReports();
 }
 
 // What the guide says, as one sentence (each speak cuts off the one before). False once you've arrived.
@@ -1820,7 +1835,120 @@ function askHere(k) {
 
 const sentence = (t) => t.replace(/\.$/, '');
 
+// ================= Train reports =================
+// Riders report a problem on the line they're on: delays, a stopped train, crowds, a closed station (see
+// src/lib/train-reports.js). What's reported on the lines still ahead shows under the banner, said once, and riders
+// say whether it's still happening or cleared. When planning, a trip using a line with a report says so.
+const TRAIN_REPORTS_MS = 60_000;
+const trainReports = { list: [], at: 0, lines: '', said: new Set(), shown: null, html: '' };
+let lastRideView = null; // the guide's last view (renderRide), for where a report is from
+
+// The lines still ahead on this trip, the one you're on (or walking to) first.
+function linesAhead() {
+  return guide ? [...new Set(guide.trip.legs.slice(guide.i).filter((l) => l.mode === 'train').map((l) => l.line.id))] : [];
+}
+const tripLine = (id) => guide?.trip.legs.find((l) => l.line?.id === id)?.line;
+
+async function refreshTrainReports() {
+  const lines = linesAhead().join(',');
+  if (!lines || (lines === trainReports.lines && Date.now() - trainReports.at < TRAIN_REPORTS_MS)) return;
+  trainReports.at = Date.now();
+  trainReports.lines = lines;
+  try {
+    const res = await api(`/api/train-reports?lines=${encodeURIComponent(lines)}`);
+    if (mode !== 'ride') return;
+    trainReports.list = res.reports;
+    renderTrainReport();
+  } catch {} // offline: try again next time
+}
+
+function renderTrainReport() {
+  const chip = $('ride-report-chip');
+  const r = linesAhead().map((id) => trainReports.list.find((x) => x.line === id && x.expires_at > Date.now())).find(Boolean) ?? null;
+  trainReports.shown = r;
+  chip.classList.toggle('hidden', !r);
+  if (!r) return;
+  const t = TRAIN_REPORT_TYPES[r.type], line = tripLine(r.line);
+  const html = `<b>${t.short}</b><span>${esc(line?.name ?? '')}${r.station ? ` · ${esc(r.station)}` : ''}<small>${timeAgo(r.created_at)} · tap to say if it’s cleared</small></span>`;
+  if (html !== trainReports.html) { // only when it reads differently: a rewrite mid-tap would lose the tap
+    chip.style.setProperty('--tr', t.color);
+    chip.innerHTML = trainReports.html = html;
+  }
+  if (!trainReports.said.has(r.id) && !r.mine) {
+    trainReports.said.add(r.id);
+    speak(`Riders report ${t.label.toLowerCase()} on the ${line?.name ?? 'line'}${r.station ? `, at ${r.station}` : ''}.`);
+  }
+}
+
+// What a report from here is about: the train you're on and its next stop, the one you're waiting for and its
+// station, or on a walk the next train and where you'll board it.
+function trainReportPlace() {
+  const leg = guide.leg;
+  if (leg.mode === 'train') return { line: leg.line, station: guide.phase !== 'wait' && lastRideView?.kind === 'ride' ? lastRideView.next : leg.from.name };
+  const next = guide.trip.legs.slice(guide.i).find((l) => l.mode === 'train');
+  return next ? { line: next.line, station: next.from.name } : null;
+}
+
+function openTrainReport() {
+  if (mode !== 'ride' || !guide) return;
+  if (!state.user) return openAuth('report');
+  const at = trainReportPlace();
+  if (!at) return toast('There’s no train left on this trip to report on.');
+  $('train-report-title').textContent = `Report on the ${at.line.name}`;
+  $('train-report-where').textContent = `At ${at.station}`;
+  const grid = $('train-report-grid');
+  grid.innerHTML = '';
+  for (const [key, t] of Object.entries(TRAIN_REPORT_TYPES)) {
+    const b = el('button', 'report-tile', `<span class="pin-ic" style="background:${t.color}">${trainReportIcon(key, 36)}</span>${esc(t.label)}`);
+    b.onclick = () => sendTrainReport(key, at);
+    grid.append(b);
+  }
+  $('train-report').classList.remove('hidden');
+  armBack();
+}
+
+async function sendTrainReport(type, at) {
+  $('train-report').classList.add('hidden');
+  try {
+    const res = await api('/api/train-reports', { method: 'POST', body: { type, line: at.line.id, station: at.station } });
+    bumpPoints(res.points || 0);
+    trainReports.list = [res.report, ...trainReports.list.filter((r) => r.id !== res.report.id)];
+    trainReports.said.add(res.report.id);
+    renderTrainReport();
+    toast(res.merged ? 'Thanks! You confirmed what another rider reported.' : `Thanks! Riders on the ${at.line.name} will see it. +${res.points} points`);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+// A report under the banner, tapped: still happening, or cleared? Your own: only cleared.
+function askTrainReport(r) {
+  if (!r) return;
+  if (!state.user) return openAuth('report');
+  const t = TRAIN_REPORT_TYPES[r.type], line = tripLine(r.line);
+  $('train-vote-title').textContent = r.mine ? `${t.label}: cleared?` : `${t.label}: still happening?`;
+  $('train-vote-sub').textContent = `Reported ${timeAgo(r.created_at)} on the ${line?.name ?? 'line'}${r.station ? `, at ${r.station}` : ''}.`;
+  $('btn-train-still').classList.toggle('hidden', r.mine);
+  const vote = async (v) => {
+    $('train-report-vote').classList.add('hidden');
+    try {
+      const res = await api(`/api/train-reports/${r.id}/vote`, { method: 'POST', body: { vote: v } });
+      bumpPoints(res.points || 0);
+      trainReports.list = res.removed ? trainReports.list.filter((x) => x.id !== r.id) : trainReports.list.map((x) => (x.id === r.id ? res.report : x));
+      renderTrainReport();
+      toast(v === 'gone' && res.removed ? 'Thanks! It’s gone for everyone.' : 'Thanks!');
+    } catch (e) {
+      toast(e.message);
+    }
+  };
+  $('btn-train-gone').onclick = () => vote('gone');
+  $('btn-train-still').onclick = () => vote('still');
+  $('train-report-vote').classList.remove('hidden');
+  armBack();
+}
+
 function renderRide(view) {
+  lastRideView = view;
   const leg = view.leg;
   const units = state.settings.units;
   $('ride-banner').classList.toggle('alert', Boolean(view.alerted));
@@ -1971,7 +2099,7 @@ function stopCompass() {
 
 function endRide(arrived) {
   forgetTrip();
-  $('here-confirm').classList.add('hidden');
+  for (const id of ['here-confirm', 'train-report', 'train-report-vote', 'ride-report-chip']) $(id).classList.add('hidden');
   clearInterval(rideTimer);
   rideTimer = null;
   const name = dest?.name ?? '';
