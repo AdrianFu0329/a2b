@@ -21,12 +21,9 @@
     "construction": "python3 scripts/build-construction.py",
     "cameras": "node scripts/build-cameras.mjs",
     "schools": "node scripts/build-schools.mjs",
-    "transit": "python3 scripts/build-transit.py",
-    "test:browser": "playwright test"
-
+    "transit": "python3 scripts/build-transit.py"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
     "wrangler": "4.151.3"
   }
 }

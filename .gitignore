@@ -3,6 +3,3 @@ node_modules/
 .dev.vars
 public/places/
 public/version.json
-
-/test-results/
-/playwright-report/
