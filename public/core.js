@@ -169,6 +169,19 @@ export function toast(msg, ms = 2600) {
   toastTimer = setTimeout(() => el.classList.add('hidden'), ms);
 }
 
+// A phone on its side keeps its sheets, the turn banner and the trip sheet in a column on the left (styles.css,
+// "Phone on its side"). Where the map's free room starts, in px from the left edge; 0 when the column isn't there.
+let sideProbe = null;
+export function sideColumnEnd() {
+  if (!matchMedia('(orientation: landscape) and (max-height: 540px)').matches) return 0;
+  if (!sideProbe) {
+    sideProbe = document.createElement('i');
+    sideProbe.style.cssText = 'position: fixed; top: 0; left: var(--side-end); visibility: hidden; pointer-events: none';
+    document.body.append(sideProbe);
+  }
+  return sideProbe.offsetLeft;
+}
+
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
