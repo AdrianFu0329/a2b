@@ -12,7 +12,7 @@ import { applyTraffic } from '../src/lib/traffic.js';
 import { camerasAlong } from '../src/lib/cameras.js';
 import { parkingQuery } from '../src/lib/parking.js';
 import { cameraBearing } from '../scripts/build-cameras.mjs';
-import { REPORT_TYPES } from '../public/report-types.js';
+import { REPORT_TYPES, TRAIN_REPORT_POINTS } from '../public/report-types.js';
 import { encodePolyline as encode, decodePolyline } from '../public/geo.js';
 
 // ---------- Fake upstream services ----------
@@ -266,6 +266,24 @@ test('repeated wrong passwords are throttled', async () => {
 test('JSON is required for writes (blocks cross-site form posts)', async () => {
   const res = await worker.fetch(new Request('https://a2b.test/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'email=a&password=b' }), env);
   assert.equal(res.status, 415);
+});
+
+test('an unexpected server error reads as a plain apology, not its internals', async () => {
+  const broken = () => {
+    throw new Error('D1_ERROR: table place_suggestions has no column named kind: SQLITE_ERROR');
+  };
+  const DB = new Proxy({}, { get: () => broken });
+  const log = console.error;
+  console.error = () => {};
+  try {
+    const res = await worker.fetch(new Request('https://a2b.test/api/presence', { method: 'POST', headers: { 'x-a2b-device': 'device-unexpected-1' } }), { ...env, DB });
+    assert.equal(res.status, 500);
+    const { error } = await res.json();
+    assert.doesNotMatch(error, /D1_ERROR|SQLITE|column/);
+    assert.match(error, /Something went wrong/);
+  } finally {
+    console.error = log;
+  }
 });
 
 test('profile: home, work and settings', async () => {
@@ -1143,4 +1161,47 @@ test('motorcycle routes keep closures, limits and cameras, but have no tolls to 
   } finally {
     delete env.TOMTOM_KEY;
   }
+});
+
+test('train reports: riders report on a line, others see them on it and on trips by train, and clear them', async () => {
+  const KJ = 'prasarana:KJ';
+  const [ann, ben, dan] = [client(), client(), client()];
+  for (const [c, name] of [[ann, 'Ann'], [ben, 'Ben'], [dan, 'Dan']]) await c('POST', '/api/auth/signup', { email: `${name.toLowerCase()}-rides@test.com`, password: 'password4', name });
+  assert.equal((await client()('POST', '/api/train-reports', { type: 'delay', line: KJ })).status, 401);
+  assert.equal((await ann('POST', '/api/train-reports', { type: 'jam', line: KJ })).status, 400, 'not a train report');
+  assert.equal((await ann('POST', '/api/train-reports', { type: 'delay', line: 'prasarana:XX' })).status, 400, 'no such line');
+  assert.equal((await ann('POST', '/api/train-reports', { type: 'delay', line: KJ, station: 'Bukit Bintang' })).status, 400, 'not on this line');
+  assert.equal((await ann('POST', '/api/train-reports', { type: 'closed', line: KJ })).status, 400, 'which station?');
+
+  const made = await ann('POST', '/api/train-reports', { type: 'delay', line: KJ, station: 'Pasar Seni' });
+  assert.equal(made.status, 201);
+  assert.equal(made.body.points, TRAIN_REPORT_POINTS);
+  const id = made.body.report.id;
+  assert.deepEqual([made.body.report.line, made.body.report.station, made.body.report.mine], [KJ, 'Pasar Seni', true]);
+  assert.equal((await ann('POST', '/api/train-reports', { type: 'crowded', line: KJ })).status, 429, 'one a minute');
+
+  // On that line, not on another, and never among the road reports.
+  assert.equal((await client()('GET', `/api/train-reports?lines=${KJ},prasarana:AG`)).body.reports.length, 1);
+  assert.equal((await client()('GET', '/api/train-reports?lines=prasarana:AG')).body.reports.length, 0);
+  assert.equal((await client()('GET', '/api/reports?bbox=101.6,3.0,101.8,3.2')).body.reports.length, 0);
+
+  // Ben reports the same: it confirms Ann's, and keeps it longer.
+  const dup = await ben('POST', '/api/train-reports', { type: 'delay', line: KJ, station: 'Pasar Seni' });
+  assert.equal(dup.body.merged, true);
+  assert.equal(dup.body.report.id, id);
+  assert.equal(dup.body.report.still, 1);
+  assert.ok(dup.body.report.expires_at > made.body.report.expires_at);
+
+  // A trip by train on the Kelana Jaya Line says so.
+  const trip = await client()('POST', '/api/transit', { from: [101.6865, 3.134], to: [101.7116, 3.1579] });
+  assert.ok(trip.body.trips.some((t) => t.legs.some((l) => l.line?.id === KJ)));
+  assert.deepEqual(trip.body.reports.map((r) => r.id), [id]);
+
+  // Cleared: Ben changes his mind, Dan agrees, and two "cleared" outweigh no "still happening".
+  let v = await ben('POST', `/api/train-reports/${id}/vote`, { vote: 'gone' });
+  assert.deepEqual([v.body.report.still, v.body.report.gone, v.body.removed], [0, 1, false]);
+  v = await dan('POST', `/api/train-reports/${id}/vote`, { vote: 'gone' });
+  assert.equal(v.body.removed, true);
+  assert.equal((await client()('GET', `/api/train-reports?lines=${KJ}`)).body.reports.length, 0);
+  assert.equal((await dan('POST', `/api/train-reports/${id}/vote`, { vote: 'still' })).status, 404);
 });
