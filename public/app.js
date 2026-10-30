@@ -39,16 +39,15 @@ function mapThemeId(t = themeNow) {
   return t === 'night' ? 'plum_night' : 'bright_plum';
 }
 const styleUrl = (t) => BASE_STYLES[MAP_THEMES[mapThemeId(t)].base];
-// Route line colours per map theme: brand plum, lighter at night so it stands out on the dark map.
+// The selected route stays pink in both themes, distinct from the yellow-to-red traffic segments.
 // The stretch already driven stays visible in a muted tone.
 const ROUTE = {
-  day: { main: '#9b2c6b', casing: '#4a0f31', driven: '#c3b3bd', drivenCasing: '#8f7a87' },
-  night: { main: '#d0569a', casing: '#5e1640', driven: '#8a7684', drivenCasing: '#3b2f39' },
+  day: { main: '#ffbade', casing: '#4a0f31', driven: '#c3b3bd', drivenCasing: '#8f7a87' },
+  night: { main: '#ffbade', casing: '#5e1640', driven: '#8a7684', drivenCasing: '#3b2f39' },
 };
-// Walks are drawn as dots in the app's own colour (the route colour: plum by day, the brighter pink at night), so
-// they read as a walk and still stand out on the dark map. The same dots for the walks in train trips.
+// Walks use the same pink route colour as dots, including the walks in train trips.
 const WALK_DOTS = { day: ROUTE.day.main, night: ROUTE.night.main };
-const JAM_COLOURS = { 1: '#f2a516', 2: '#e8442e', 3: '#a3121c' }; // slow, queuing, stationary
+const JAM_COLOURS = { 1: '#ffd62e', 2: '#ff6f00', 3: '#f70518' }; // slow, queuing, stationary
 const REPORT_REFRESH_MS = 60_000;
 const STILL_SPEED = 1; // m/s; slower than this counts as standing still
 const BROWSE_RESUME_MS = 15_000;
@@ -831,7 +830,7 @@ function drawDriveLine() {
 }
 
 // The selected route's colours along its length: muted where already driven (up to `driven`, a fraction of the
-// length), then the route colour, with live-traffic and driver-speed jams in amber to deep red.
+// length), then the route colour, with live-traffic and driver-speed jams in yellow, orange and red.
 function routeColours(route, driven) {
   const c = ROUTE[themeNow];
   const jams = [...(route?.traffic?.jams ?? []), ...(route?.probe_jams ?? [])];
