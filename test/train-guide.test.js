@@ -320,12 +320,15 @@ test('train legs from the planner carry their stations with times', () => {
   assert.ok(Math.abs(leg.stations.at(-1)[3] - leg.duration) <= 1, 'the last is the ride');
 });
 
-test('no road reports from a train trip: no button on its screen, and the menu won\'t open', async () => {
+test('no road reports from a train trip: only its own report button, about the line, and the road menu won\'t open', async () => {
   assert.equal(canReportFrom('ride'), false, 'a report from a train would sit on the rail line');
   assert.equal(canReportFrom('drive'), true);
   assert.equal(canReportFrom('browse'), true);
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const ride = html.slice(html.indexOf('id="ride-ui"'), html.indexOf('<!-- ===== Arrived'));
   assert.ok(ride.length > 100, 'found the ride screen');
-  assert.doesNotMatch(ride, /report-fab|btn-report/, 'no report button on it');
+  assert.doesNotMatch(ride, /report-fab/, 'no road report button on it');
+  assert.deepEqual([...ride.matchAll(/id="(btn-report[\w-]*)"/g)].map((m) => m[1]), ['btn-report-ride'], 'only the train report button');
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /\$\('btn-report-ride'\)\.onclick = openTrainReport;/, 'which reports on the line (src/lib/train-reports.js), not the road');
 });

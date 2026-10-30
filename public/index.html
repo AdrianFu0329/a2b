@@ -174,9 +174,11 @@
       </div>
       <div id="ride-est" class="toll-chip ride-est hidden" role="status"><b>NO GPS</b><span>Estimating · Currently Underground</span></div>
       <div id="ride-off" class="offroute hidden" role="status"><span class="spinner" aria-hidden="true"></span>Recalculating…</div>
+      <button id="ride-report-chip" class="toll-chip train-report-chip hidden" aria-label="Reported on this line: still happening?"></button>
     </div>
     <div class="map-tools drive">
       <button id="btn-sound-ride" class="round small" aria-label="Sound"></button>
+      <button id="btn-report-ride" class="round small report-round" aria-label="Report a problem on this line"><svg viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4Z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M12 9.5v4.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="12" cy="17" r="1.4" fill="#fff"/></svg></button>
       <button id="btn-recenter-ride" class="round hidden" aria-label="Recenter"><svg viewBox="0 0 24 24"><path d="M12 2.5 19.5 20 12 16l-7.5 4Z" fill="currentColor"/></svg><span>Recenter</span></button>
     </div>
     <section id="ride-sheet" class="sheet ride-sheet">
@@ -197,6 +199,22 @@
     <div class="sheet-actions">
       <button id="btn-resume-no" class="btn ghost">No thanks</button>
       <button id="btn-resume-go" class="btn primary">Continue</button>
+    </div>
+  </section>
+
+  <!-- ===== Report a problem on the train line you're on, and say whether one reported is still happening ===== -->
+  <section id="train-report" class="sheet hidden" aria-label="Report a problem on this line">
+    <div class="dest-head">
+      <div class="dest-text"><h2 id="train-report-title">Report</h2><p id="train-report-where" class="hint"></p></div>
+      <button class="icon-btn" data-close="train-report" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    </div>
+    <div id="train-report-grid" class="report-grid train-report-grid"></div>
+  </section>
+  <section id="train-report-vote" class="sheet hidden" aria-label="Still happening?">
+    <div class="dest-head"><div class="dest-text"><h2 id="train-vote-title"></h2><p id="train-vote-sub" class="hint"></p></div></div>
+    <div class="sheet-actions">
+      <button id="btn-train-gone" class="btn ghost">It’s cleared</button>
+      <button id="btn-train-still" class="btn primary">Still happening</button>
     </div>
   </section>
 
