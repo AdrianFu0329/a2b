@@ -83,6 +83,40 @@ test('navigator tracks the next turn, ETA and voice cues', () => {
   assert.equal(s5.arrived, true);
 });
 
+test('estimated arrival never latches or consumes the real arrival cue', () => {
+  const nav = new Navigator(lRoute());
+  nav.update({ position: A, speed: 14 });
+  const turn = nav.update({ position: [13.4, 52.5086], speed: 14, estimated: true });
+  assert.equal(turn.prompt, 'Turn right onto Side St.', 'ordinary turn guidance still works');
+  const guessed = nav.update({ position: C, speed: 14, estimated: true });
+  assert.equal(guessed.arrived, false);
+  assert.equal(nav.arrived, false);
+  assert.equal(guessed.prompt, null);
+  assert.equal(nav.spoken.has('2:near'), false);
+  // A real off-route position must not confirm the estimate left at the end of the route.
+  assert.equal(nav.update({ position: [13.42, 52.51], speed: 5 }).arrived, false);
+  assert.equal(nav.update({ position: B, speed: 5 }).arrived, false, 'real recovery before the destination');
+  const arrived = nav.update({ position: C, speed: 0 });
+  assert.equal(arrived.arrived, true);
+  assert.equal(arrived.prompt, 'You have arrived at your destination.');
+});
+
+test('estimated stops do not consume stop cues or count as off-route fixes', () => {
+  const route = lRoute();
+  route.steps[1] = { ...route.steps[1], type: 'stop', pre: 'You have reached your stop.' };
+  const nav = new Navigator(route);
+  nav.update({ position: A });
+  const nearStop = [13.4, 52.5086];
+  assert.equal(nav.update({ position: nearStop, speed: 10, estimated: true }).prompt, null);
+  assert.equal(nav.spoken.has('1:near'), false);
+  assert.equal(nav.update({ position: nearStop, speed: 10 }).prompt, 'You have reached your stop.');
+  const away = [13.403, 52.503];
+  nav.update({ position: away });
+  assert.equal(nav.offCount, 1);
+  for (let i = 0; i < 5; i++) assert.equal(nav.update({ position: away, estimated: true }).offRoute, false);
+  assert.equal(nav.offCount, 1, 'only real fixes change the off-route counter');
+});
+
 test('a slice of the route runs around the corner', () => {
   const r = lRoute();
   const cum = cumulative(r.coords);

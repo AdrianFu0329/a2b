@@ -15,11 +15,13 @@ export const state = {
   settings: { ...DEFAULT_SETTINGS },
   simulate: false,
   tester: false, // this account may use testing tools (demo drive); set by the server
+  owner: false, // this account may read usage and private feedback; set by the server
   places: { saved: [], recent: [] },
   home: null,
   work: null,
   pos: null, // { lngLat, heading, speed, accuracy, time }
   locationDenied: false,
+  locationStatus: 'idle',
 };
 
 // ---------- Local storage (per-device conveniences; never required) ----------
