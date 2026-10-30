@@ -229,7 +229,7 @@ async function decide(action) {
   const s = open;
   const body = { action };
   if (action === 'approve' && s.kind === 'add') Object.assign(body, { name: $('suggest-name').value.trim(), category: s.category });
-  if (action === 'approve' && s.kind !== 'gone') Object.assign(body, { address: s.address ?? '', ...spot() });
+  if (action === 'approve' && s.kind !== 'gone') Object.assign(body, { address: s.address ?? '' }); // keep the user's suggested location: reviewer map movements must not overwrite it
   const btns = [$('suggest-yes'), $('suggest-no')];
   btns.forEach((b) => (b.disabled = true));
   try {

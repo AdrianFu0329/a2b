@@ -130,6 +130,15 @@ def main():
             if dkm > 1.75:
                 kept -= 1
                 continue
+        # Overture sometimes pins "1 Utama"/"One Utama" in the wrong place (a far-off row was landing
+        # in the results). Keep only pins near the real mall cluster in Bandar Utama.
+        utama = name.lower().replace('.', '')
+        if '1 utama' in utama or 'one utama' in utama:
+            dkm = math.hypot((lng - 101.615) * 111.0 * math.cos(math.radians((lat + 3.150) / 2)),
+                              (lat - 3.150) * 111.0)
+            if dkm > 2.0:
+                kept -= 1
+                continue
         for letter in sorted({shard_letter(w) for w in name_words}):
             shards.setdefault(f'{area}/{letter}', []).append((place, name_words))
         for kind, test in TYPES.items():
