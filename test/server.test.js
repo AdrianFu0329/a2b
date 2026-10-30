@@ -45,8 +45,14 @@ function fakeTrip(coords, time) {
   };
 }
 
+let geocodeCalls = 0; // TomTom address lookups (src/lib/addresses.js)
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
+  if (u.includes('api.tomtom.com/search/2/geocode/')) {
+    geocodeCalls++;
+    const address = { streetNumber: '129', streetName: 'Jalan BK 5/6', freeformAddress: '129, Jalan BK 5/6, Bandar Kinrara, 47180 Puchong, Selangor', countrySubdivision: 'Selangor' };
+    return Response.json({ results: [{ type: 'Point Address', address, position: { lat: 3.0414207, lon: 101.6477069 } }] });
+  }
   if (u.includes('api.tomtom.com')) {
     tomtomCalls++;
     lastTomtomMode = new URL(u).searchParams.get('travelMode');
@@ -163,7 +169,7 @@ function client(device) {
 // open even when A2B is full). Everything else (accounts, places, reports, trips) doesn't.
 function needsSpot(method, path) {
   if (path === '/api/presence') return false;
-  if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/reverse') || path.startsWith('/api/parking') || path.startsWith('/api/chargers'))) return true;
+  if (method === 'GET' && (path.startsWith('/api/search') || path.startsWith('/api/address') || path.startsWith('/api/reverse') || path.startsWith('/api/parking') || path.startsWith('/api/chargers'))) return true;
   return method === 'POST' && (path === '/api/route' || path === '/api/transit');
 }
 
@@ -1096,6 +1102,37 @@ test('motorcycle routes keep closures, limits and cameras, but have no tolls to 
     assert.ok(Array.isArray(full.cameras), 'cameras still checked');
   } finally {
     delete env.TOMTOM_KEY;
+  }
+});
+
+test('address search asks TomTom only for addresses, never caches it, and stops at the daily cap', async () => {
+  Object.assign(env, { TOMTOM_KEY: 'test-key', ADDRESS_LOOKUPS_PER_DAY: '2' });
+  try {
+    await env.DB.prepare('DELETE FROM usage_daily').run();
+    geocodeCalls = 0;
+    const c = client();
+    const q = encodeURIComponent('129, BK 5/6, Bandar Kinrara, Puchong, 47180');
+    for (const name of ['nandos', 'trx', 'pavilion']) {
+      assert.deepEqual((await c('GET', `/api/address?q=${name}&lat=3.04&lng=101.64`)).body, { places: [] });
+      await c('GET', `/api/search?q=${name}&lat=3.04&lng=101.64`);
+    }
+    assert.equal(geocodeCalls, 0, 'searching a name never asks TomTom');
+    const first = await c('GET', `/api/address?q=${q}&lat=3.04&lng=101.64`);
+    assert.deepEqual(first.body.places[0], { name: '129 Jalan BK 5/6', address: 'Bandar Kinrara, 47180 Puchong', lat: 3.0414207, lng: 101.6477069, category: 'address', source: 'tomtom' });
+    await c('GET', `/api/address?q=${q}`);
+    assert.deepEqual((await c('GET', `/api/address?q=${q}`)).body, { places: [] }, "the day's lookups are used up");
+    assert.equal(geocodeCalls, 2);
+    const row = await env.DB.prepare('SELECT addresses FROM usage_daily').first();
+    assert.equal(row.addresses, 2);
+    // Never kept: not in the shared cache, not by the browser.
+    await env.DB.prepare('DELETE FROM usage_daily').run();
+    await worker.fetch(new Request('https://a2b.test/api/presence', { method: 'POST', headers: { 'x-a2b-device': 'address-device-1' } }), env);
+    const res = await worker.fetch(new Request(`https://a2b.test/api/address?q=${q}`, { headers: { 'x-a2b-device': 'address-device-1' } }), env);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    assert.equal((await res.json()).places.length, 1);
+  } finally {
+    delete env.TOMTOM_KEY;
+    delete env.ADDRESS_LOOKUPS_PER_DAY;
   }
 });
 

@@ -8,6 +8,7 @@
 
 import { distance } from './geo.js';
 import { words, matchesWordStarts } from './text.js';
+import { addressQuery, streetIndexWords, onStreet, isExact } from './address.js';
 
 const BASE = '/places';
 const MAX_RESULTS = 8;
@@ -75,11 +76,16 @@ const driverRow = (r) => [r.name, r.lng, r.lat, r.address ?? '', r.category];
 export async function searchNearby(q, near) {
   const qWords = words(q).filter((w) => w.length >= 2 || /\d/.test(w));
   if (!qWords.length || !near) return [];
+  // An address ("129, BK 5/6, Puchong"): the places on that street, looked up by its street's words, the house
+  // searched for first (see address.js). Any other search: places with every word of it.
+  const addr = addressQuery(q)?.street ? addressQuery(q) : null;
+  const fits = (name, address) => (addr ? onStreet({ name, address }, addr) : matchesWordStarts(`${name} ${address}`, q));
+  const inName = (name, address) => (addr ? isExact({ name, address }, addr) : matchesWordStarts(name, q));
   const found = [];
   for (const r of driverPlaces) {
-    if (!matchesWordStarts(`${r.name} ${r.address ?? ''}`, q)) continue;
+    if (!fits(r.name, r.address ?? '')) continue;
     const km = distance(near, [r.lng, r.lat]) / 1000;
-    if (km <= RADIUS_KM) found.push({ name: r.name, address: r.address ?? '', lat: r.lat, lng: r.lng, category: r.category || 'place', km, inName: matchesWordStarts(r.name, q), source: 'driver' });
+    if (km <= RADIUS_KM) found.push({ name: r.name, address: r.address ?? '', lat: r.lat, lng: r.lng, category: r.category || 'place', km, inName: inName(r.name, r.address ?? ''), source: 'driver' });
   }
   // The venue the query names first (see markVenues), then places matching on their name alone, then nearest.
   const best = () => found.sort((a, b) => (b.mentions ?? 0) - (a.mentions ?? 0) || b.inName - a.inName || a.km - b.km).slice(0, MAX_RESULTS);
@@ -93,7 +99,7 @@ export async function searchNearby(q, near) {
   areas.forEach((area, i) => {
     const files = lists[i];
     if (!files) return;
-    for (const w of qWords) for (const p of filesForWord(w, files)) urls.add(`${BASE}/${area}/${p}.json?v=${v}`);
+    for (const w of addr ? streetIndexWords(addr.street) : qWords) for (const p of filesForWord(w, files)) urls.add(`${BASE}/${area}/${p}.json?v=${v}`);
   });
   const shards = await Promise.all([...urls].map((u) => getJson(u)));
 
@@ -103,10 +109,10 @@ export async function searchNearby(q, near) {
       const key = `${name}|${lng}|${lat}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      if (!matchesWordStarts(`${name} ${address}`, q)) continue;
+      if (!fits(name, address)) continue;
       const km = distance(near, [lng, lat]) / 1000;
       if (km > RADIUS_KM) continue;
-      const p = { name, address, lat, lng, category: category || 'place', km, inName: matchesWordStarts(name, q), source: 'overture' };
+      const p = { name, address, lat, lng, category: category || 'place', km, inName: inName(name, address), source: 'overture' };
       if (!isHidden(p)) found.push(p);
     }
   }

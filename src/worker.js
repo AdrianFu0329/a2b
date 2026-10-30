@@ -10,6 +10,7 @@ import { probesRepo, annotateWithProbes, PROBE_RETENTION_MS } from './lib/probes
 import { searchPlaces, reverseGeocode, fetchRoutes, fetchRouteAttributes, annotateWithReports, httpError, corridorBox, routeReportBox, roadMidpoint, MAX_EXCLUDE } from './lib/providers.js';
 import { constructionTwins } from './lib/construction.js';
 import { liveTraffic, applyTraffic } from './lib/traffic.js';
+import { lookupAddress, DAILY_LOOKUPS } from './lib/addresses.js';
 import { loadCameras, camerasAlong } from './lib/cameras.js';
 import { parkingNear, parkingQuery, parkingResults } from './lib/parking.js';
 import { plazaDetails } from './lib/tolls.js';
@@ -399,6 +400,18 @@ async function route(request, env, url) {
     const res = json(await searchPlaces(env, { q, lat, lng, lang }), 200, { 'cache-control': 'public, max-age=600' });
     if (cache) await cache.put(key, res.clone());
     return res;
+  }
+
+  // A search that looks like an address no other search answered (public/address.js): asked of TomTom, at most
+  // ADDRESS_LOOKUPS_PER_DAY times a day. Its terms don't allow keeping the answers, so this is never cached.
+  if (path === '/api/address' && method === 'GET') {
+    await needSpot();
+    const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
+    const lat = num(url, 'lat'), lng = num(url, 'lng');
+    const cap = Number(env.ADDRESS_LOOKUPS_PER_DAY ?? DAILY_LOOKUPS);
+    const allow = () => usage.take('addresses', cap).catch(() => false);
+    const places = await lookupAddress(env, q, Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null, allow);
+    return json({ places }, 200, { 'cache-control': 'no-store' });
   }
 
   if (path === '/api/parking' && method === 'GET') {

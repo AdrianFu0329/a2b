@@ -11,7 +11,7 @@ const ECO = [101.468, 3.224]; // Eco Grandeur, Puncak Alam
 // A tiny fake /places/ tree: one area (0.5° grid, row 6, col 202) with an "nan" file and an "st" file.
 const FILES = {
   '/places/index.json': { release: 'test', area: 0.5, areas: ['6_202'] },
-  '/places/6_202/files.json?v=test': { n: 1, nan: 2, st: 1, trx: 6, _: 1, '@fuel': 4, '@ev': 2 },
+  '/places/6_202/files.json?v=test': { n: 1, nan: 2, st: 1, trx: 6, bk: 4, _: 1, '@fuel': 4, '@ev': 2 },
   // Overture's EV chargers here: one the server also lists (30 m away), one only Overture has.
   '/places/6_202/@ev.json?v=test': { p: [
     ['Gentari EV Eco Grandeur', 101.4683, 3.2242, '', 'ev_charging_station'],
@@ -27,6 +27,14 @@ const FILES = {
     ['Gucci The Exchange TRX', 101.4755, 3.2352, 'Unit G.56.0', 'fashion_and_apparel_store'],
     ['Swatch', 101.4752, 3.2348, 'Level 1.18, The Exchange TRX', 'fashion_and_apparel_store'],
     ['TRX Seafood Wharf', 101.469, 3.225, 'Jalan Barat', 'restaurant'],
+  ] },
+  // Places filed under their street's word (scripts/build-places.py street_index_words): two on Jalan BK 5/6, and
+  // two on streets whose codes start the same.
+  '/places/6_202/bk.json?v=test': { p: [
+    ['SRA Bandar Kinrara 5', 101.4665, 3.2244, 'Jalan BK 5/6, Puchong', 'place_of_learning'],
+    ['Nasi Tupe Soho', 101.4652, 3.2242, '5 Jalan BK 5/6, Puchong', 'event_or_party_service'],
+    ['Kedai Lima Empat Belas', 101.469, 3.225, '5 Jalan BK 5/14, Puchong', 'restaurant'],
+    ['BK Laundry', 101.4681, 3.2241, '7 Jalan BK 6/5, Puchong', 'laundromat'],
   ] },
   '/places/6_202/st.json?v=test': { p: [['Starbucks', 101.45806, 3.22737, 'Jalan Keramat', 'coffee_shop']] },
   '/places/6_202/n.json?v=test': { p: [] },
@@ -154,6 +162,15 @@ test('several malls of one name all come before the shops in them ("pavilion")',
   const shop = { name: 'Black Market Pavilion Bukit Jalil', address: '', lat: 3.1335, lng: 101.687, category: 'restaurant' };
   const names = mergeResults([], [shop, bj, kl], 'pavilion', [101.6869, 3.139]).map((p) => p.name);
   assert.deepEqual(names, ['Pavilion Kuala Lumpur', 'Pavilion Bukit Jalil', 'Black Market Pavilion Bukit Jalil']);
+});
+
+test('an address finds the places on that street ("jalan bk 5/6"), not on BK 5/14 or BK 6/5, the house first', async () => {
+  assert.deepEqual((await searchNearby('Jalan BK 5/6', ECO)).map((p) => p.name).sort(), ['Nasi Tupe Soho', 'SRA Bandar Kinrara 5']);
+  assert.deepEqual((await searchNearby('bk 5/6', ECO)).map((p) => p.name).sort(), ['Nasi Tupe Soho', 'SRA Bandar Kinrara 5']);
+  // With a house number, the place at that number first, though the other is nearer.
+  const at5 = await searchNearby('5, BK 5/6, Bandar Kinrara, Puchong, 47180', ECO);
+  assert.deepEqual(at5.map((p) => p.name), ['Nasi Tupe Soho', 'SRA Bandar Kinrara 5']);
+  assert.deepEqual((await searchNearby('jalan bk 5/14', ECO)).map((p) => p.name), ['Kedai Lima Empat Belas']);
 });
 
 test('searches that name a kind of place are recognised, in English and Malay, with any area', () => {

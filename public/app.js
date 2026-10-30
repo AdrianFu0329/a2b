@@ -10,6 +10,7 @@ import { Glide } from './motion.js';
 import { Follow, shouldSend, nextPollDelay } from './follow.js';
 import { sheetGesture, settle, rubberBand } from './sheet-drag.js';
 import { searchNearby, mergeResults, attribution as placesAttribution, typeQuery, placesOfType, placesOfTypesIn, TYPES, addTypeSource, withoutBaseDuplicates } from './places.js';
+import { addressQuery, addressToLookUp, withAddresses } from './address.js';
 import { start as startVehicle, DEFAULT_COLOR, vehicleFor } from './vehicle3d.js';
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
@@ -1312,18 +1313,32 @@ async function runSearch(q, enter = false) {
           searchNearby(q, near).catch(() => []),
         ]);
     // A search for parking is answered with the car parks around the place (or you), nearest first: only those.
-    const places = server.parking ? await withOvertureParking(server) : mergeResults(server.places, local, q, near);
+    let places = server.parking ? await withOvertureParking(server) : mergeResults(server.places, local, q, near);
+    if (!server.parking && !pasted) places = await withAddressSearch(q, near, places);
     const from = server.parking?.from;
     const note = server.parking
       ? places.length ? `Car parks near ${from ?? 'you'}` : `No car parks mapped near ${from ?? 'you'}.`
       : local.length ? null : server.note; // "not in the map data" is moot once Overture found it
     if (seq !== searchSeq) return;
-    showResults(q, near, places, note, places.some((p) => !server.places.includes(p)), enter);
+    showResults(q, near, places, note, places.some((p) => !server.places.includes(p) && p.source !== 'tomtom'), enter);
   } catch (e) {
     if (seq !== searchSeq) return;
     searchMessage(e.message);
   }
 }
+
+// An address ("129, BK 5/6, Puchong, 47180"): the house from TomTom when neither search found it, put first, with the
+// places on that street after it (public/address.js). Any other search is left as it is, and never asks TomTom.
+async function withAddressSearch(q, near, places) {
+  const a = addressQuery(q);
+  if (!a) return places;
+  const found = addressToLookUp(q, places)
+    ? await api(`/api/address?q=${encodeURIComponent(q)}&lat=${near[1]}&lng=${near[0]}`).then((r) => r.places ?? []).catch(() => [])
+    : [];
+  return withAddresses(places, found, a);
+}
+
+const RESULT_ICONS = { parking: 'parking', address: 'house', street: 'street' };
 
 function showResults(q, near, places, note, overture, enter) {
   $('search-home').classList.add('hidden');
@@ -1342,11 +1357,12 @@ function showResults(q, near, places, note, overture, enter) {
   for (const p of places) {
     const li = el('li');
     const d = formatDistance(distance(near, [p.lng, p.lat]), state.settings.units);
-    li.innerHTML = `<button class="place-row"><span class="p-ic">${PLACE_ICONS[p.category === 'parking' ? 'parking' : 'pin']}</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address)}</small></span><span class="p-dist">${d}</span></button>`;
+    li.innerHTML = `<button class="place-row"><span class="p-ic">${PLACE_ICONS[RESULT_ICONS[p.category] ?? 'pin']}</span><span class="p-text"><b>${esc(p.name)}</b><small>${esc(p.address)}</small></span><span class="p-dist">${d}</span></button>`;
     li.firstElementChild.onclick = () => pickPlace(p);
     ul.append(li);
   }
-  if (overture) ul.append(el('li', 'search-note', esc(places.some((p) => p.type === 'ev') ? `${placesAttribution} · ${CHARGERS_ATTRIBUTION}` : placesAttribution)));
+  const credits = [overture && placesAttribution, overture && places.some((p) => p.type === 'ev') && CHARGERS_ATTRIBUTION, places.some((p) => p.source === 'tomtom') && 'Addresses © TomTom'];
+  if (credits.some(Boolean)) ul.append(el('li', 'search-note', esc(credits.filter(Boolean).join(' · '))));
   if (!searchTarget) {
     const li = el('li', 'add-missing-row');
     li.append(addMissingButton(q, 'Can’t find it? Add a missing place', 'btn link'));
@@ -1443,7 +1459,8 @@ async function pickPlace(p) {
   }
   closeScreen('search');
   // Search history: kept on this phone without an account (and on the account with one), so it's there next time.
-  addPlace('recent', p).then(renderSearchHome).catch(() => {});
+  // Not TomTom's addresses: its terms don't allow keeping them.
+  if (p.source !== 'tomtom') addPlace('recent', p).then(renderSearchHome).catch(() => {});
   openPreview(p);
 }
 
@@ -1487,7 +1504,8 @@ async function openPreview(place) {
   $('dest-name').textContent = place.name;
   $('dest-addr').textContent = place.address || '';
   // A wrong place can be fixed; a dropped pin or typed coordinates are just a spot.
-  $('btn-wrong-place').classList.toggle('hidden', ['Dropped pin', 'Coordinates'].includes(place.name));
+  // Not for TomTom's addresses: a fix would keep its answer, which its terms don't allow.
+  $('btn-wrong-place').classList.toggle('hidden', ['Dropped pin', 'Coordinates'].includes(place.name) || place.source === 'tomtom');
   // Placeholder cards the shape of real ones, so the sheet doesn't jump when the routes arrive.
   renderTravel();
   $('route-list').innerHTML = '<div class="route-opt skeleton" aria-hidden="true"><i></i><i></i></div>'.repeat(2);
