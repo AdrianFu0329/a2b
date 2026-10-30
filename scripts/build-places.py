@@ -113,12 +113,23 @@ def main():
 
     shards = {}  # 'area/prefix' -> [(place, words)]
     typed = {}  # 'area/@kind' -> [(place, words)]
+    kept = 0
     for name, lng, lat, street, locality, category, _conf in rows:
+        kept += 1
         area = f'{math.floor(lat / AREA)}_{math.floor(lng / AREA)}'
         address = ', '.join(dict.fromkeys(p.strip() for p in (street, locality) if p and p.strip()))[:70]
         place = [name.strip()[:70], round(lng, 5), round(lat, 5), address, category or '']
         name_words = words(name)
         name_words += [w for w in street_index_words(street) if w not in name_words]  # address search
+        # Overture carries check-in pages where people tagged "KLCC" while sitting in another city or a few
+        # km away. Keep only those within the real Kuala Lumpur City Centre cluster (about 1.75 km), so a
+        # rebuild doesn't re-add them to the static search files.
+        if 'klcc' in name.lower().replace('.', ''):
+            dkm = math.hypot((lng - 101.712) * 111.0 * math.cos(math.radians((lat + 3.158) / 2)),
+                              (lat - 3.158) * 111.0)
+            if dkm > 1.75:
+                kept -= 1
+                continue
         for letter in sorted({shard_letter(w) for w in name_words}):
             shards.setdefault(f'{area}/{letter}', []).append((place, name_words))
         for kind, test in TYPES.items():
@@ -150,7 +161,7 @@ def main():
         'built': time.strftime('%Y-%m-%d'),
         'area': AREA,
         'minConfidence': args.min_confidence,
-        'count': len(rows),
+        'count': kept,
         'areas': sorted(areas),
         'attribution': 'Places: Overture Maps Foundation (Meta, Microsoft, Foursquare, AllThePlaces and others)',
     }
