@@ -7,7 +7,7 @@
 // working. Testers review suggestions on the same screen (Settings › Testing › Feedback › Places). Approved places
 // come back to every phone through GET /api/driver-places and are searched with its own (public/places.js).
 
-import { $, state, api, local, toast, esc, armBack } from './core.js';
+import { $, state, api, local, toast, esc, armBack, sideColumnEnd } from './core.js';
 import { setDriverPlaces } from './places.js';
 import { DEST_PIN } from './icons.js';
 
@@ -139,7 +139,7 @@ function show(title, sub, body) {
 // where the map's padding puts its centre.
 function padding() {
   const sheet = $('suggest').getBoundingClientRect();
-  return innerWidth >= 720 ? { left: sheet.right, top: 0, right: 0, bottom: 0 } : { bottom: sheet.height || innerHeight * 0.45, top: 0, left: 0, right: 0 };
+  return innerWidth >= 720 || sideColumnEnd() ? { left: sheet.right, top: 0, right: 0, bottom: 0 } : { bottom: sheet.height || innerHeight * 0.45, top: 0, left: 0, right: 0 };
 }
 function placePin() {
   const p = padding();

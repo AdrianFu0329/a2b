@@ -690,3 +690,77 @@ body.driving .toast { top: calc(140px + var(--safe-top)); }
 .add-missing { display: block; margin: 16px auto 0; }
 .place-list li.add-missing-row { padding: 6px 16px 12px; }
 .fb-tabs { margin: 8px 16px 4px; }
+
+/* ---------- Phone on its side ---------- */
+/* A landscape phone is wide but short. The sheets, the turn banner and the trip sheet stack in one column on the
+   left, clear of the camera cut-out (the safe area), and the map, the car and the round buttons get the rest.
+   Sheets are compacted so the route list keeps some room between the header and Go. The map is told about the
+   column too (sideColumn in app.js). */
+@media (orientation: landscape) and (max-height: 540px) {
+  :root {
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --side-x: calc(10px + var(--safe-left));
+    --side-w: clamp(340px, 46vw, 400px);
+    --side-end: calc(var(--side-x) + var(--side-w)); /* where the map starts */
+    --tall: calc(100dvh - 20px - var(--safe-top) - var(--safe-bottom));
+  }
+  .sheet {
+    left: var(--side-x); right: auto; width: var(--side-w); bottom: max(10px, var(--safe-bottom)); border-radius: var(--radius);
+    max-height: var(--tall); padding-bottom: 12px;
+  }
+  .sheet.tall, #suggest { max-height: var(--tall); }
+  .screen { left: 0; right: auto; width: calc(var(--side-end) + 30px); padding-left: var(--safe-left); box-shadow: var(--shadow); }
+  .grabber { margin: 2px auto 6px; }
+  .top-right, .map-tools, .report-fab { right: calc(14px + var(--safe-right)); }
+  .speedo { left: calc(14px + var(--safe-left)); }
+  .loc-banner { left: calc(14px + var(--safe-left)); right: calc(70px + var(--safe-right)); }
+  .maplibregl-ctrl-bottom-right { right: calc(84px + var(--safe-right)); }
+  /* Home: "Where to?" as wide as the column, not the whole screen. */
+  .bottom-bar { left: var(--safe-left); right: auto; width: calc(var(--side-w) + 20px); padding-bottom: max(10px, var(--safe-bottom)); }
+
+  /* Route preview: the same rows, tighter. */
+  .dest-text { padding-top: 0; }
+  .dest-text h2 { font-size: 19px; }
+  #dest-addr { margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dest-head .icon-btn { width: 40px; height: 40px; }
+  .wrong-place { height: 26px; margin: 4px 0 0; }
+  .from-row { margin: 6px 0 6px; }
+  .from-btn { padding: 6px 12px; }
+  .seg { margin-top: 6px; }
+  .seg button { height: 34px; }
+  .travel-seg { margin: 0 0 6px; }
+  .route-list { margin-top: 6px; }
+  .route-opt { padding: 8px 12px; }
+  .sheet-actions { margin-top: 8px; }
+  .sheet-actions .btn { height: 46px; white-space: nowrap; }
+  #route-status:empty { display: none; }
+
+  /* Driving and riding: banner on top of the column, trip sheet at its foot. */
+  #drive-ui .drive-top, #ride-ui .drive-top { left: var(--side-x); right: auto; width: var(--side-w); max-width: none; }
+  .banner-main { gap: 12px; padding: 10px 14px; }
+  .turn, .turn svg { width: 50px; height: 50px; }
+  .turn-dist { font-size: 28px; }
+  .turn-street { font-size: 17px; -webkit-line-clamp: 1; }
+  .then { padding: 4px 14px; }
+  .eta-bar { left: var(--side-x); right: auto; width: var(--side-w); bottom: max(10px, var(--safe-bottom)); border-radius: 18px; padding-bottom: 0; }
+  .eta-main { padding: 2px 0 6px; }
+  .eta-col b { white-space: nowrap; }
+  .trip-dest { padding: 6px 14px 8px; }
+  .trip-dest small { -webkit-line-clamp: 1; }
+  /* Open, the menu would run off the top of a short screen: two columns of options. */
+  .eta-menu { display: grid; grid-template-columns: 1fr 1fr; padding: 4px 0 6px; }
+  .eta-menu > .trip-dest { grid-column: 1 / -1; }
+  .eta-menu > .menu-row { padding: 10px 14px; gap: 10px; font-size: 15px; min-width: 0; }
+  .eta-menu > .menu-row > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The speedometer and the speed limit move out of the column, to the map's bottom-left corner; the buttons on the
+     right no longer have to clear the trip sheet. */
+  #drive-ui .speedo { left: calc(var(--side-end) + 14px); bottom: max(14px, var(--safe-bottom)); }
+  .limit { left: calc(var(--side-end) + 62px); bottom: calc(max(14px, var(--safe-bottom)) + 48px); }
+  #drive-ui .report-fab { bottom: max(14px, var(--safe-bottom)); }
+  .map-tools.drive { bottom: calc(max(14px, var(--safe-bottom)) + 76px); }
+  body.driving .maplibregl-ctrl-bottom-right { bottom: max(14px, var(--safe-bottom)); }
+  .alert-card { left: calc(var(--side-end) + 14px); right: calc(92px + var(--safe-right)); bottom: max(14px, var(--safe-bottom)); max-width: 400px; }
+  .ride-sheet { max-height: min(var(--tall), 62dvh); }
+  #ride-ui .map-tools { bottom: calc(14px + var(--safe-bottom)); }
+}

@@ -14,7 +14,7 @@ import { start as startVehicle, DEFAULT_COLOR, vehicleFor } from './vehicle3d.js
 import { turnIcon, roundaboutIcon, laneIcon, CAR, DEST_PIN, DROP_PIN, PLACE_ICONS, soundIcon } from './icons.js';
 import {
   $, state, api, local, toast, esc, timeAgo, speak, loadLocalSettings, saveSettings, loadPlaces, addPlace, removePlace, renamePlace,
-  isSaved, setHomeWork, armBack,
+  isSaved, setHomeWork, armBack, sideColumnEnd,
 } from './core.js';
 import { MAP_THEMES, BASE_STYLES, applyMapTheme } from './map-themes.js';
 import { initPanels, openMenu, openAuth, openSettings, renderAvatar, refreshMe } from './panels.js';
@@ -1929,6 +1929,8 @@ function rideFrame(now) {
 
 // The map left above the sheet, with you low in it like the car when driving, so more of the line ahead shows.
 function ridePadding() {
+  const side = sideColumnEnd(); // on its side, the sheet is beside the map, not under it
+  if (side) return { top: Math.round(innerHeight * 0.42), bottom: 30, left: side, right: 0 };
   const bottom = Math.min(Math.round(innerHeight * 0.6), $('ride-sheet').offsetHeight + 10);
   return { top: Math.round((innerHeight - bottom) * 0.42), bottom, left: 0, right: 0 };
 }
@@ -2058,6 +2060,8 @@ async function requestRoutes(from, to, heading, via = []) {
 
 // Room the map leaves for the route sheet: its real height on a phone, so a collapsed sheet shows more map.
 function sheetPadding() {
+  const side = sideColumnEnd();
+  if (side) return { top: 40, bottom: 40, left: side + 40, right: 60 };
   if (innerWidth >= 720) return { top: 60, bottom: 60, left: 460, right: 60 };
   const sheet = $('preview');
   const h = sheet.classList.contains('hidden') ? Math.min(innerHeight * 0.5, 380) : sheet.offsetHeight + 24;
@@ -2547,7 +2551,11 @@ function driveZoom() {
   return speed > 25 ? 15.3 : speed > 15 ? 16 : 16.8;
 }
 
-const drivePadding = () => ({ top: Math.round(innerHeight * 0.42), bottom: 110, left: 0, right: 0 });
+// The car low on the screen, so more of the road ahead shows. On its side, centred in the map right of the column.
+const drivePadding = () => {
+  const side = sideColumnEnd();
+  return { top: Math.round(innerHeight * 0.42), bottom: side ? 30 : 110, left: side, right: 0 };
+};
 
 // A step's arrow; roundabouts are drawn with their real exit direction (cached per step).
 const roundaboutIcons = new WeakMap();
@@ -2751,7 +2759,8 @@ function fitParking() {
   if (!parkingBounds || $('parking').classList.contains('hidden')) return;
   stopFollowing();
   clearTimeout(recenterTimer); // stay on the car parks until one is picked or the sheet is closed
-  fitTo(parkingBounds, { padding: { top: 160, bottom: Math.min(innerHeight * 0.6, $('parking').offsetHeight + 40), left: 50, right: 50 }, pitch: 0, bearing: 0, duration: 600, maxZoom: 17 });
+  const side = sideColumnEnd();
+  fitTo(parkingBounds, { padding: side ? { top: 40, bottom: 40, left: side + 40, right: 60 } : { top: 160, bottom: Math.min(innerHeight * 0.6, $('parking').offsetHeight + 40), left: 50, right: 50 }, pitch: 0, bearing: 0, duration: 600, maxZoom: 17 });
 }
 
 function clearParkingPins() {
@@ -2806,7 +2815,8 @@ function overview() {
   stopFollowing();
   const b = new maplibregl.LngLatBounds();
   for (const c of nav.coords) b.extend(c);
-  fitTo(b, { padding: { top: 160, bottom: 140, left: 50, right: 50 }, pitch: 0, bearing: 0, duration: 800 });
+  const side = sideColumnEnd();
+  fitTo(b, { padding: side ? { top: 40, bottom: 40, left: side + 40, right: 90 } : { top: 160, bottom: 140, left: 50, right: 50 }, pitch: 0, bearing: 0, duration: 800 });
 }
 
 async function arrive() {
