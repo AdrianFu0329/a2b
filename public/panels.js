@@ -325,6 +325,7 @@ export function openSettings() {
     <div class="set-group"><h3>Voice</h3><div id="voice-list"></div></div>
     <div class="set-group"><h3>Navigation</h3>
       ${toggleRow('avoid_tolls', 'Avoid toll roads')}
+      ${toggleRow('toll_free', 'Toll-free routes', 'Adds a toll-free alternative to the route choices')}
       ${toggleRow('avoid_highways', 'Avoid highways')}
       ${toggleRow('avoid_ferries', 'Avoid ferries')}
       ${toggleRow('map_pois', 'Petrol, hospitals, clinics and shops on the map', 'Shown when zoomed in. Tap one, or a station or landmark, for routes there.')}

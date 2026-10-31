@@ -2264,6 +2264,7 @@ async function requestRoutes(from, to, heading, via = [], { check = null } = {})
       units: s.units,
       lang: navigator.language || 'en-US',
       avoid: { tolls: s.avoid_tolls, highways: s.avoid_highways, ferries: s.avoid_ferries },
+      toll_free: s.toll_free ?? false,
     },
   });
   for (const r of rs) r.cum = cumulative(r.coords);
