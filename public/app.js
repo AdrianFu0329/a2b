@@ -293,6 +293,7 @@ async function boot() {
 
 async function onUserChanged() {
   renderAvatar();
+  setupVehicle(); // apply the signed-in account's night-light preference
   if (state.presence && !state.presence.admitted) checkIn(); // an account may get in where a guest couldn't
   await loadPlaces();
   renderSearchHome();
@@ -423,7 +424,7 @@ async function setupVehicle() {
   const onTrain = kind === 'train';
   vehicleShown = `${kind}:${color}`;
   const pose = onTrain ? () => (mode === 'ride' ? trainPose : null) : () => (mode === 'watch' || mode === 'ride' || !carMarker._map ? null : shown);
-  vehicle3d = await startVehicle(map, kind, color, pose);
+  vehicle3d = await startVehicle(map, kind, color, pose, { night: themeNow === 'night' && state.settings.night_vehicle_lights !== false });
   carMarker.getElement().classList.toggle('as-3d', vehicle3d);
   map.triggerRepaint();
 }
