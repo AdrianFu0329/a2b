@@ -32,7 +32,7 @@ const LOGIN_MAX_FAILURES = 8; // per address: wrong passwords for one account st
 const RECENTS_KEPT = 20;
 const FULL_MESSAGE = 'A2B is full right now. You will be let in when a spot opens.';
 const UNEXPECTED_MESSAGE = 'Something went wrong on our side. Please try again in a minute.';
-const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', toll_free: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean', traffic_probe: 'boolean', map_pois: 'boolean', night_vehicle_lights: 'boolean' };
+const SETTINGS_KEYS = { voice: 'boolean', speed_warning: 'boolean', units: ['metric', 'imperial'], theme: ['auto', 'day', 'night'], avoid_tolls: 'boolean', avoid_highways: 'boolean', avoid_ferries: 'boolean', alerts: 'boolean', traffic_probe: 'boolean', map_pois: 'boolean', night_vehicle_lights: 'boolean' };
 
 export default {
   async fetch(request, env) {
@@ -499,21 +499,6 @@ async function route(request, env, url) {
     }
     let { routes } = first;
     const closuresIgnored = first.dropped;
-    // When toll-free routes are on, fetch a toll-avoiding alternative and keep it beside the toll route.
-    const wantsTollFree = travel === 'drive' && Boolean(body.toll_free) && !check;
-    if (wantsTollFree) {
-      const alt = await fetchRoutes(env, { ...opts, avoid: { ...(opts.avoid ?? {}), tolls: true } }).catch(() => null);
-      if (alt && !alt.dropped) {
-        const sig = (r) => JSON.stringify((r.coords ?? []).map(([a, b]) => [Math.round(a * 100000), Math.round(b * 100000)]));
-        const seen = new Set(routes.map(sig));
-        for (const r of alt.routes) {
-          const key = sig(r);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          routes.push(r);
-        }
-      }
-    }
     // The extras on a route, each a nice-to-have: a slow or failing lookup never holds up the route.
     // Speed limits and toll plazas, from Valhalla's trace_attributes.
     const attributes = async (r) => {

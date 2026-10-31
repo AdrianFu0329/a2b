@@ -2264,10 +2264,18 @@ async function requestRoutes(from, to, heading, via = [], { check = null } = {})
       units: s.units,
       lang: navigator.language || 'en-US',
       avoid: { tolls: s.avoid_tolls, highways: s.avoid_highways, ferries: s.avoid_ferries },
-      toll_free: s.toll_free ?? false,
     },
   });
   for (const r of rs) r.cum = cumulative(r.coords);
+  if (s.avoid_tolls) {
+    const isTollFree = (r) => !r.toll && !(r.tolls?.length);
+    rs.sort((a, b) => {
+      const aFree = isTollFree(a) ? 0 : 1;
+      const bFree = isTollFree(b) ? 0 : 1;
+      if (aFree !== bFree) return aFree - bFree;
+      return (a.duration ?? 0) - (b.duration ?? 0);
+    });
+  }
   return Object.assign(rs, { closuresIgnored, constructionAvoided });
 }
 
