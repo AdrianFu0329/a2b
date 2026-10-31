@@ -339,6 +339,7 @@ export function openSettings() {
       <div class="set-row"><span>Vehicle<small>How you appear on the map</small></span><div class="choice" id="s-vehicle">${VEHICLES
         .map(([v, l]) => `<button data-v="${v}" class="${local.get('vehicle', 'chevron') === v ? 'on' : ''}">${l}</button>`)
         .join('')}</div></div>
+      ${toggleRow('night_vehicle_lights', 'Night vehicle lights', 'Soft vehicle-light glow in night mode. On by default.')}
       <div class="set-row swatch-row"><span>Colour</span><div class="swatches" id="s-vehicle-color">${COLORS
         .map(([c, l]) => `<button data-c="${c}" aria-label="${l}" title="${l}" class="${local.get('vehicleColor', DEFAULT_COLOR) === c ? 'on' : ''}" style="--c:${c}"></button>`)
         .join('')}</div></div>
@@ -377,7 +378,9 @@ export function openSettings() {
         return;
       }
       if (c.dataset.set === 'traffic_probe' && !c.checked) stopSharing();
-      await saveSettings({ [c.dataset.set]: c.checked });
+      const saving = saveSettings({ [c.dataset.set]: c.checked });
+      if (c.dataset.set === 'night_vehicle_lights') ctx.setupVehicle();
+      await saving;
       if (c.dataset.set === 'voice') ctx.refreshSound();
       if (c.dataset.set === 'map_pois') ctx.drawPois();
     };
