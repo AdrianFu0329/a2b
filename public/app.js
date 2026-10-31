@@ -2393,6 +2393,7 @@ function renderRouteOptions() {
     if (r.tolls?.length) badges.push(`<span class="badge warn">${esc(tollSummary(r.tolls))}</span>`);
     else if (r.toll) badges.push('<span class="badge warn">Toll</span>');
     else if (r.toll_free_bike) badges.push('<span class="badge">No toll for motorcycles</span>');
+    else badges.push('<span class="badge">Toll-free</span>');
     if (r.ferry) badges.push('<span class="badge warn">Ferry</span>');
     const reps = (r.reports ?? []).length;
     if (reps) badges.push(`<span class="badge">${reps} report${reps > 1 ? 's' : ''}</span>`);
